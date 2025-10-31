@@ -2,7 +2,7 @@
 Modèle SQLAlchemy pour la table partants (participants/runners dans une course)
 """
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 from sqlalchemy import Column, Integer, String, TIMESTAMP, ForeignKey, DECIMAL, Boolean, JSON
 from sqlalchemy.sql import func
@@ -27,6 +27,7 @@ class Partant(Base):
     poids_porte = Column(DECIMAL(4, 1), nullable=True)  # Poids porté en kg
     handicap_value = Column(Integer, nullable=True)  # Valeur de handicap
     equipment = Column(JSON, nullable=True)  # Équipement (œillères, etc.)
+    aspiturf_stats = Column(JSON, nullable=True)  # Statistiques enrichies Aspiturf
     days_since_last_race = Column(Integer, nullable=True)  # Jours depuis dernière course
     recent_form = Column(String(50), nullable=True)  # Forme récente (ex: "1-3-2-5")
     odds_pmu = Column(DECIMAL(6, 2), nullable=True)  # Cote PMU
@@ -61,6 +62,13 @@ class Partant(Base):
         if self.equipment and isinstance(self.equipment, dict):
             return self.equipment.get("items", [])
         return None
+
+    @property
+    def aspiturf_data(self) -> Dict[str, Any]:
+        """Retourne les statistiques Aspiturf (toujours un dictionnaire)."""
+        if isinstance(self.aspiturf_stats, dict):
+            return self.aspiturf_stats
+        return {}
 
     @property
     def has_oeilleres(self) -> bool:

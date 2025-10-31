@@ -6,6 +6,7 @@ de prédiction basé sur les données disponibles (chevaux, jockeys, entraîneur
 """
 
 import logging
+import re
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 import numpy as np
@@ -72,6 +73,9 @@ class FeatureEngineer:
 
         # Features de l'hippodrome
         features.update(self._extract_hippodrome_features(partant))
+
+        # Features enrichies Aspiturf (si disponibles)
+        features.update(self._extract_aspiturf_features(partant))
 
         return features
 
@@ -306,6 +310,74 @@ class FeatureEngineer:
             "hippodrome_affinity_win_rate": affinity.get("win_rate", 0),
             "hippodrome_affinity_runs": affinity.get("total_runs", 0),
         }
+
+    def _extract_aspiturf_features(self, partant: Partant) -> Dict[str, Any]:
+        """Extrait les features enrichies issues des données Aspiturf."""
+
+        stats = getattr(partant, "aspiturf_data", None)
+        features = self._get_default_aspiturf_features()
+
+        if not stats:
+            return features
+
+        # Statistiques cheval
+        total_runs = self._parse_numeric(stats.get("courses_total"))
+        total_wins = self._parse_numeric(stats.get("victoires_total"))
+        total_places = self._parse_numeric(stats.get("places_total"))
+
+        features.update({
+            "aspiturf_horse_gains_total": self._parse_numeric(stats.get("gains_carriere")),
+            "aspiturf_horse_gains_year": self._parse_numeric(stats.get("gains_annee")),
+            "aspiturf_horse_total_runs": total_runs,
+            "aspiturf_horse_total_wins": total_wins,
+            "aspiturf_horse_total_places": total_places,
+            "aspiturf_horse_win_rate": (total_wins / total_runs) if total_runs else 0,
+            "aspiturf_horse_place_rate": (total_places / total_runs) if total_runs else 0,
+            "aspiturf_horse_win_rate_hippodrome": self._parse_percentage(stats.get("pourc_vict_hippo")),
+            "aspiturf_horse_place_rate_hippodrome": self._parse_percentage(stats.get("pourc_place_hippo")),
+            "aspiturf_horse_record_seconds": self._parse_time_to_seconds(stats.get("record_general")),
+            "aspiturf_horse_is_inedit": self._to_bool_flag(stats.get("indicateur_inedit")),
+        })
+
+        # Statistiques jockey
+        jockey_runs = self._parse_numeric(stats.get("jockey_courses"))
+        jockey_wins = self._parse_numeric(stats.get("jockey_victoires"))
+        features.update({
+            "aspiturf_jockey_total_runs": jockey_runs,
+            "aspiturf_jockey_total_wins": jockey_wins,
+            "aspiturf_jockey_win_rate": self._parse_percentage(stats.get("jockey_pourc_vict")) or ((jockey_wins / jockey_runs) if jockey_runs else 0),
+        })
+
+        # Statistiques entraîneur
+        trainer_runs = self._parse_numeric(stats.get("entraineur_courses"))
+        trainer_wins = self._parse_numeric(stats.get("entraineur_victoires"))
+        features.update({
+            "aspiturf_trainer_total_runs": trainer_runs,
+            "aspiturf_trainer_total_wins": trainer_wins,
+            "aspiturf_trainer_win_rate_hippodrome": self._parse_percentage(stats.get("entraineur_pourc_vict_hippo")),
+        })
+
+        # Statistiques couple cheval/jockey
+        couple_runs = self._parse_numeric(stats.get("couple_courses"))
+        couple_wins = self._parse_numeric(stats.get("couple_victoires"))
+        features.update({
+            "aspiturf_couple_total_runs": couple_runs,
+            "aspiturf_couple_total_wins": couple_wins,
+            "aspiturf_couple_win_rate": self._parse_percentage(stats.get("couple_tx_vict")) or ((couple_wins / couple_runs) if couple_runs else 0),
+        })
+
+        # Préférences de terrain (mots clés)
+        terrain_pref = stats.get("appet_terrain")
+        if terrain_pref:
+            terrain_text = str(terrain_pref).lower()
+            if "bon" in terrain_text:
+                features["aspiturf_terrain_prefers_bon"] = 1
+            if any(keyword in terrain_text for keyword in ["lourd", "collant", "souple"]):
+                features["aspiturf_terrain_prefers_lourd"] = 1
+            if any(keyword in terrain_text for keyword in ["psf", "sable", "fibre"]):
+                features["aspiturf_terrain_prefers_psf"] = 1
+
+        return features
 
     def _calculate_recent_form(
         self,
@@ -559,6 +631,34 @@ class FeatureEngineer:
             "trainer_recent_runs": 0,
         }
 
+    def _get_default_aspiturf_features(self) -> Dict[str, Any]:
+        """Retourne les features Aspiturf par défaut."""
+        return {
+            "aspiturf_horse_gains_total": 0.0,
+            "aspiturf_horse_gains_year": 0.0,
+            "aspiturf_horse_total_runs": 0.0,
+            "aspiturf_horse_total_wins": 0.0,
+            "aspiturf_horse_total_places": 0.0,
+            "aspiturf_horse_win_rate": 0.0,
+            "aspiturf_horse_place_rate": 0.0,
+            "aspiturf_horse_win_rate_hippodrome": 0.0,
+            "aspiturf_horse_place_rate_hippodrome": 0.0,
+            "aspiturf_horse_record_seconds": 0.0,
+            "aspiturf_horse_is_inedit": 0,
+            "aspiturf_jockey_total_runs": 0.0,
+            "aspiturf_jockey_total_wins": 0.0,
+            "aspiturf_jockey_win_rate": 0.0,
+            "aspiturf_trainer_total_runs": 0.0,
+            "aspiturf_trainer_total_wins": 0.0,
+            "aspiturf_trainer_win_rate_hippodrome": 0.0,
+            "aspiturf_couple_total_runs": 0.0,
+            "aspiturf_couple_total_wins": 0.0,
+            "aspiturf_couple_win_rate": 0.0,
+            "aspiturf_terrain_prefers_bon": 0,
+            "aspiturf_terrain_prefers_lourd": 0,
+            "aspiturf_terrain_prefers_psf": 0,
+        }
+
     def get_feature_names(self) -> List[str]:
         """
         Retourne la liste ordonnée de tous les noms de features
@@ -622,4 +722,113 @@ class FeatureEngineer:
             # Hippodrome features
             "hippodrome_affinity_win_rate",
             "hippodrome_affinity_runs",
+
+            # Aspiturf enriched features
+            "aspiturf_horse_gains_total",
+            "aspiturf_horse_gains_year",
+            "aspiturf_horse_total_runs",
+            "aspiturf_horse_total_wins",
+            "aspiturf_horse_total_places",
+            "aspiturf_horse_win_rate",
+            "aspiturf_horse_place_rate",
+            "aspiturf_horse_win_rate_hippodrome",
+            "aspiturf_horse_place_rate_hippodrome",
+            "aspiturf_horse_record_seconds",
+            "aspiturf_horse_is_inedit",
+            "aspiturf_jockey_total_runs",
+            "aspiturf_jockey_total_wins",
+            "aspiturf_jockey_win_rate",
+            "aspiturf_trainer_total_runs",
+            "aspiturf_trainer_total_wins",
+            "aspiturf_trainer_win_rate_hippodrome",
+            "aspiturf_couple_total_runs",
+            "aspiturf_couple_total_wins",
+            "aspiturf_couple_win_rate",
+            "aspiturf_terrain_prefers_bon",
+            "aspiturf_terrain_prefers_lourd",
+            "aspiturf_terrain_prefers_psf",
         ]
+
+    @staticmethod
+    def _parse_numeric(value: Any) -> float:
+        """Convertit une valeur Aspiturf en float robuste."""
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip()
+        if not text:
+            return 0.0
+
+        normalized = text.replace("\u202f", "").replace(" ", "").replace(",", ".")
+
+        try:
+            return float(normalized)
+        except ValueError:
+            match = re.search(r"-?\d+(?:\.\d+)?", normalized)
+            if match:
+                try:
+                    return float(match.group(0))
+                except ValueError:
+                    return 0.0
+            return 0.0
+
+    @classmethod
+    def _parse_percentage(cls, value: Any) -> float:
+        """Normalise un pourcentage Aspiturf en valeur entre 0 et 1."""
+        if value is None:
+            return 0.0
+
+        numeric = cls._parse_numeric(value)
+        if isinstance(value, str) and "%" in value:
+            return numeric / 100 if numeric > 1 else numeric
+
+        if numeric > 1:
+            return numeric / 100
+        return numeric
+
+    @staticmethod
+    def _parse_time_to_seconds(value: Any) -> float:
+        """Convertit un chrono Aspiturf en secondes."""
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip()
+        if not text:
+            return 0.0
+
+        cleaned = text.replace(" ", "")
+        pattern = re.match(r"(?:(\d+)[\'’])?(\d{1,2})(?:[\"”](\d+))?", cleaned)
+        if pattern:
+            minutes = int(pattern.group(1)) if pattern.group(1) else 0
+            seconds = int(pattern.group(2))
+            hundredths = pattern.group(3)
+            fraction = 0.0
+            if hundredths:
+                try:
+                    fraction = float(f"0.{hundredths}")
+                except ValueError:
+                    fraction = 0.0
+            return minutes * 60 + seconds + fraction
+
+        fallback = cleaned.replace("'", ":").replace("\"", ".").replace("”", ".").replace("’", ":")
+        try:
+            return float(fallback.replace(",", "."))
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _to_bool_flag(value: Any) -> int:
+        """Convertit une valeur Aspiturf en indicateur binaire."""
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, (int, float)):
+            return 1 if value != 0 else 0
+
+        text = str(value).strip().lower()
+        return 1 if text in {"1", "true", "vrai", "oui", "o", "y"} else 0
