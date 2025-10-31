@@ -1128,6 +1128,24 @@ def _categorise_field_size(field_size: Optional[int]) -> str:
     return "large_field"
 
 
+def _categorise_rest_period(rest_days: Optional[int]) -> str:
+    """Segmente les jours de repos pour analyser l'effet de la fraîcheur."""
+
+    if rest_days is None:
+        return "unknown"
+
+    if rest_days < 14:
+        return "very_fresh"
+
+    if rest_days < 30:
+        return "fresh"
+
+    if rest_days < 90:
+        return "normal_cycle"
+
+    return "extended_break"
+
+
 def _summarise_field_size_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -1158,6 +1176,38 @@ def _summarise_field_size_performance(
         field_metrics[segment] = summary
 
     return field_metrics
+
+
+def _summarise_rest_period_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la qualité prédictive selon le nombre de jours de repos."""
+
+    if not breakdown:
+        return {}
+
+    rest_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        rest_days = [int(value) for value in payload.get("rest_days", []) if value is not None]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["average_rest_days"] = _safe_average(rest_days)
+        summary["min_rest_days"] = min(rest_days) if rest_days else None
+        summary["max_rest_days"] = max(rest_days) if rest_days else None
+
+        rest_metrics[segment] = summary
+
+    return rest_metrics
 
 
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
@@ -1242,6 +1292,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
+        rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -1386,6 +1437,27 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             courses_seen.add(course.course_id)
             if field_size and is_new_course:
                 field_bucket.setdefault("field_sizes", []).append(int(field_size))
+
+            rest_segment = _categorise_rest_period(
+                getattr(partant, "days_since_last_race", None)
+            )
+            rest_bucket = rest_period_breakdown.setdefault(
+                rest_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "rest_days": [],
+                },
+            )
+            rest_bucket["truths"].append(is_top3)
+            rest_bucket["predictions"].append(predicted_label)
+            rest_bucket["scores"].append(probability)
+            rest_bucket.setdefault("courses", set()).add(course.course_id)
+            rest_days_value = getattr(partant, "days_since_last_race", None)
+            if rest_days_value is not None:
+                rest_bucket.setdefault("rest_days", []).append(int(rest_days_value))
 
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
@@ -1571,6 +1643,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_performance = _summarise_segment_performance(surface_breakdown)
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
+        rest_period_performance = _summarise_rest_period_performance(
+            rest_period_breakdown
+        )
         model_version_performance = _summarise_model_version_performance(
             model_version_breakdown,
             len(y_true),
@@ -1615,6 +1690,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
+            "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
         }
 
@@ -1645,6 +1721,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
+            "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
         }
 
@@ -1693,6 +1770,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
+            "rest_period_performance": rest_period_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,

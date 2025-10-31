@@ -169,6 +169,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=1,
             final_position=1,
             odds_pmu=Decimal("3.0"),
+            days_since_last_race=10,
         ),
         Partant(
             course_id=course1.course_id,
@@ -178,6 +179,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=2,
             final_position=2,
             odds_pmu=Decimal("4.0"),
+            days_since_last_race=25,
         ),
         Partant(
             course_id=course1.course_id,
@@ -187,6 +189,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=3,
             final_position=4,
             odds_pmu=Decimal("12.0"),
+            days_since_last_race=75,
         ),
         Partant(
             course_id=course2.course_id,
@@ -196,6 +199,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=1,
             final_position=1,
             odds_pmu=Decimal("5.5"),
+            days_since_last_race=45,
         ),
         Partant(
             course_id=course2.course_id,
@@ -205,6 +209,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=2,
             final_position=4,
             odds_pmu=Decimal("7.0"),
+            days_since_last_race=210,
         ),
         Partant(
             course_id=course2.course_id,
@@ -496,6 +501,26 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert field_size_performance["large_field"]["samples"] == 3
     assert field_size_performance["large_field"]["max_field_size"] == 14
 
+    rest_period_performance = metrics["rest_period_performance"]
+    assert set(rest_period_performance.keys()) == {
+        "extended_break",
+        "fresh",
+        "normal_cycle",
+        "unknown",
+        "very_fresh",
+    }
+    assert rest_period_performance["very_fresh"]["samples"] == 1
+    assert rest_period_performance["very_fresh"]["average_rest_days"] == pytest.approx(10.0, abs=1e-6)
+    assert rest_period_performance["fresh"]["samples"] == 1
+    assert rest_period_performance["fresh"]["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert rest_period_performance["normal_cycle"]["samples"] == 2
+    assert rest_period_performance["normal_cycle"]["average_rest_days"] == pytest.approx(60.0, abs=1e-6)
+    assert rest_period_performance["normal_cycle"]["min_rest_days"] == 45
+    assert rest_period_performance["extended_break"]["samples"] == 1
+    assert rest_period_performance["extended_break"]["average_rest_days"] == pytest.approx(210.0, abs=1e-6)
+    assert rest_period_performance["unknown"]["samples"] == 1
+    assert rest_period_performance["unknown"]["average_rest_days"] is None
+
     version_performance = metrics["model_version_performance"]
     assert set(version_performance.keys()) == {"v1.0", "v2.0"}
 
@@ -544,6 +569,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
