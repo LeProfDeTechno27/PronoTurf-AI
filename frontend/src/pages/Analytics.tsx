@@ -12,6 +12,7 @@ import type {
   AnalyticsFormResponse,
   AnalyticsValueResponse,
   AnalyticsVolatilityResponse,
+  AnalyticsMomentumResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
@@ -33,6 +34,7 @@ import type {
   CalendarRaceDetail,
   ValueOpportunitySample,
   VolatilityRaceSample,
+  MomentumSlice,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -151,6 +153,16 @@ type VolatilityFilters = {
   hippodrome?: string
   startDate?: string
   endDate?: string
+}
+
+type MomentumFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  window?: number
+  baselineWindow?: number
 }
 
 type ComparisonFilters = {
@@ -1352,6 +1364,136 @@ function VolatilityPanel({ data }: { data: AnalyticsVolatilityResponse }) {
   )
 }
 
+function MomentumSliceTable({ title, slice }: { title: string; slice: MomentumSlice }) {
+  return (
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-lg font-semibold text-gray-900">{title}</h4>
+          <p className="text-sm text-gray-500">
+            {`${formatDate(slice.start_date ?? null)} → ${formatDate(slice.end_date ?? null)}`}
+          </p>
+        </div>
+        <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700">
+          {slice.label}
+        </span>
+      </div>
+
+      {/* Synthèse compacte pour visualiser rapidement les indicateurs clefs de la fenêtre. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <SummaryStats label="Courses" value={formatNumber(slice.race_count)} />
+        <SummaryStats label="Victoires" value={formatNumber(slice.wins)} />
+        <SummaryStats label="Podiums" value={formatNumber(slice.podiums)} />
+        <SummaryStats label="Taux de victoire" value={formatPercent(slice.win_rate, 1)} />
+        <SummaryStats label="Taux de podium" value={formatPercent(slice.podium_rate, 1)} />
+        <SummaryStats label="Position moyenne" value={formatAverage(slice.average_finish)} />
+        <SummaryStats label="Cote moyenne" value={formatAverage(slice.average_odds)} />
+        <SummaryStats label="ROI théorique" value={formatAverage(slice.roi)} />
+      </div>
+
+      {slice.races.length ? (
+        <div className="overflow-x-auto rounded-lg ring-1 ring-black/5">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Date
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Hippodrome
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Course
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Distance
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Arrivée
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Cote
+                </th>
+                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Victoire
+                </th>
+                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Podium
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              {slice.races.map((race, index) => (
+                <tr key={`${race.date}-${race.course_number}-${index}`}>
+                  <td className="px-3 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
+                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
+                  <td className="px-3 py-2 text-sm text-right text-gray-700">
+                    {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
+                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds)}</td>
+                  <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
+                  <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">
+          Aucune course ne correspond aux filtres pour cette fenêtre temporelle.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function MomentumPanel({ data }: { data: AnalyticsMomentumResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+
+  return (
+    <div className="space-y-6">
+      {/* Comparaison synthétique entre la fenêtre récente et la fenêtre de référence. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Fenêtre récente" value={data.recent_window.label} />
+        <SummaryStats
+          label="Fenêtre de référence"
+          value={data.reference_window ? data.reference_window.label : 'Insuffisant'}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage des données"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats label="Évolution du podium" value={formatPercent(data.deltas.podium_rate, 1)} />
+        <SummaryStats label="Variation ROI" value={formatAverage(data.deltas.roi)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <MomentumSliceTable title="Fenêtre récente" slice={data.recent_window} />
+        {data.reference_window ? (
+          <MomentumSliceTable title="Fenêtre de référence" slice={data.reference_window} />
+        ) : (
+          <div className="rounded-lg border border-dashed border-gray-300 p-6 text-sm text-gray-500">
+            <p>
+              Ajoutez davantage de courses (paramètre « baseline ») pour comparer la dynamique à une période
+              précédente.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -1423,6 +1565,16 @@ export default function AnalyticsPage() {
   const [volatilityEndInput, setVolatilityEndInput] = useState('')
   const [volatilityError, setVolatilityError] = useState<string | null>(null)
   const [volatilityFilters, setVolatilityFilters] = useState<VolatilityFilters | null>(null)
+
+  const [momentumTypeInput, setMomentumTypeInput] = useState<TrendEntityType>('horse')
+  const [momentumIdInput, setMomentumIdInput] = useState('')
+  const [momentumHippoInput, setMomentumHippoInput] = useState('')
+  const [momentumStartInput, setMomentumStartInput] = useState('')
+  const [momentumEndInput, setMomentumEndInput] = useState('')
+  const [momentumWindowInput, setMomentumWindowInput] = useState('5')
+  const [momentumBaselineInput, setMomentumBaselineInput] = useState('5')
+  const [momentumError, setMomentumError] = useState<string | null>(null)
+  const [momentumFilters, setMomentumFilters] = useState<MomentumFilters | null>(null)
 
   const [comparisonTypeInput, setComparisonTypeInput] = useState<TrendEntityType>('horse')
   const [comparisonIdInput, setComparisonIdInput] = useState('')
@@ -1703,6 +1855,39 @@ export default function AnalyticsPage() {
     enabled: Boolean(volatilityFilters?.entityId),
   })
 
+  const momentumQueryKey = useMemo(
+    () =>
+      momentumFilters
+        ? [
+            'analytics',
+            'momentum',
+            momentumFilters.entityType,
+            momentumFilters.entityId,
+            momentumFilters.hippodrome ?? '',
+            momentumFilters.startDate ?? '',
+            momentumFilters.endDate ?? '',
+            momentumFilters.window ?? '',
+            momentumFilters.baselineWindow ?? '',
+          ]
+        : ['analytics', 'momentum', 'idle'],
+    [momentumFilters],
+  )
+
+  const momentumQuery = useQuery({
+    queryKey: momentumQueryKey,
+    queryFn: () =>
+      analyticsService.getMomentumProfile({
+        entityType: momentumFilters!.entityType,
+        entityId: momentumFilters!.entityId,
+        hippodrome: momentumFilters?.hippodrome,
+        startDate: momentumFilters?.startDate,
+        endDate: momentumFilters?.endDate,
+        window: momentumFilters?.window,
+        baselineWindow: momentumFilters?.baselineWindow,
+      }),
+    enabled: Boolean(momentumFilters?.entityId),
+  })
+
   const comparisonQueryKey = useMemo(
     () =>
       comparisonFilters
@@ -1980,6 +2165,49 @@ export default function AnalyticsPage() {
       hippodrome: volatilityHippoInput.trim() || undefined,
       startDate: volatilityStartInput || undefined,
       endDate: volatilityEndInput || undefined,
+    })
+  }
+
+  const handleMomentumSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = momentumIdInput.trim()
+    const windowValue = Number(momentumWindowInput.trim() || '5')
+    const baselineRaw = momentumBaselineInput.trim()
+    const baselineValue = baselineRaw ? Number(baselineRaw) : windowValue
+
+    if (!id) {
+      setMomentumError("Veuillez saisir un identifiant Aspiturf valide.")
+      setMomentumFilters(null)
+      return
+    }
+
+    if (Number.isNaN(windowValue) || windowValue < 1 || windowValue > 50) {
+      setMomentumError('La fenêtre récente doit être comprise entre 1 et 50 courses.')
+      setMomentumFilters(null)
+      return
+    }
+
+    if (baselineRaw && (Number.isNaN(baselineValue) || baselineValue < 1 || baselineValue > 50)) {
+      setMomentumError('La fenêtre de référence doit être comprise entre 1 et 50 courses.')
+      setMomentumFilters(null)
+      return
+    }
+
+    if (momentumStartInput && momentumEndInput && momentumStartInput > momentumEndInput) {
+      setMomentumError('La date de début doit précéder la date de fin.')
+      setMomentumFilters(null)
+      return
+    }
+
+    setMomentumError(null)
+    setMomentumFilters({
+      entityType: momentumTypeInput,
+      entityId: id,
+      hippodrome: momentumHippoInput.trim() || undefined,
+      startDate: momentumStartInput || undefined,
+      endDate: momentumEndInput || undefined,
+      window: windowValue,
+      baselineWindow: baselineValue,
     })
   }
 
@@ -2495,6 +2723,79 @@ export default function AnalyticsPage() {
         <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
       )}
       {volatilityQuery.data && <VolatilityPanel data={volatilityQuery.data} />}
+    </SectionCard>
+
+    <SectionCard
+      title="Momentum récent"
+      description="Comparez la dynamique actuelle d'un cheval, jockey ou entraîneur à sa période précédente pour détecter un regain ou une baisse de forme."
+    >
+      <form
+        onSubmit={handleMomentumSubmit}
+        className="grid gap-4 md:grid-cols-[repeat(7,minmax(0,1fr)),auto]"
+      >
+        <select
+          value={momentumTypeInput}
+          onChange={(event) => setMomentumTypeInput(event.target.value as TrendEntityType)}
+          className="input"
+        >
+          <option value="horse">Cheval</option>
+          <option value="jockey">Jockey</option>
+          <option value="trainer">Entraîneur</option>
+        </select>
+        <input
+          value={momentumIdInput}
+          onChange={(event) => setMomentumIdInput(event.target.value)}
+          placeholder="Identifiant Aspiturf (id)"
+          className="input"
+        />
+        <input
+          value={momentumHippoInput}
+          onChange={(event) => setMomentumHippoInput(event.target.value)}
+          placeholder="Filtrer par hippodrome (optionnel)"
+          className="input"
+        />
+        <input
+          type="date"
+          value={momentumStartInput}
+          onChange={(event) => setMomentumStartInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="date"
+          value={momentumEndInput}
+          onChange={(event) => setMomentumEndInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={momentumWindowInput}
+          onChange={(event) => setMomentumWindowInput(event.target.value)}
+          placeholder="Fenêtre récente"
+          className="input"
+        />
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={momentumBaselineInput}
+          onChange={(event) => setMomentumBaselineInput(event.target.value)}
+          placeholder="Fenêtre référence"
+          className="input"
+        />
+        <button type="submit" className="btn btn-primary">
+          Comparer
+        </button>
+      </form>
+      {momentumError && <p className="text-sm text-red-600">{momentumError}</p>}
+      {momentumQuery.isPending && (
+        <p className="text-sm text-gray-500">Analyse du momentum en cours…</p>
+      )}
+      {momentumQuery.isError && (
+        <p className="text-sm text-red-600">Erreur: {(momentumQuery.error as Error).message}</p>
+      )}
+      {momentumQuery.data && <MomentumPanel data={momentumQuery.data} />}
     </SectionCard>
 
     <SectionCard

@@ -1186,6 +1186,102 @@ def analytics_rows() -> List[Dict[str, Any]]:
             "coteprob": 9.0,
             "numero": 4,
         },
+        {
+            "jour": date(2024, 7, 20),
+            "hippo": "CHARTRES",
+            "prix": 6,
+            "dist": 2000,
+            "cl": 8,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 15.0,
+            "coteprob": 14.5,
+            "numero": 7,
+        },
+        {
+            "jour": date(2024, 7, 5),
+            "hippo": "ANGERS",
+            "prix": 2,
+            "dist": 2100,
+            "cl": 4,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 7.0,
+            "coteprob": 6.8,
+            "numero": 2,
+        },
+        {
+            "jour": date(2024, 4, 25),
+            "hippo": "CAEN",
+            "prix": 4,
+            "dist": 2300,
+            "cl": 1,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 2.8,
+            "coteprob": 3.0,
+            "numero": 5,
+        },
+        {
+            "jour": date(2024, 4, 5),
+            "hippo": "CAEN",
+            "prix": 3,
+            "dist": 2300,
+            "cl": 3,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 5.5,
+            "coteprob": 5.0,
+            "numero": 8,
+        },
+        {
+            "jour": date(2024, 3, 20),
+            "hippo": "LAVAL",
+            "prix": 7,
+            "dist": 2500,
+            "cl": 6,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 12.0,
+            "coteprob": 10.0,
+            "numero": 9,
+        },
+        {
+            "jour": date(2024, 3, 5),
+            "hippo": "LAVAL",
+            "prix": 5,
+            "dist": 2500,
+            "cl": 1,
+            "idChe": "H-3",
+            "nom_cheval": "Vent Rapide",
+            "idJockey": "J-66",
+            "jockey": "Luc Morel",
+            "idEntraineur": "T-66",
+            "entraineur": "Sophie Bernard",
+            "cotedirect": 4.4,
+            "coteprob": 4.2,
+            "numero": 3,
+        },
     ]
 
 
@@ -1554,6 +1650,71 @@ async def test_volatility_endpoint_returns_404_on_missing_data(
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_momentum_endpoint_returns_comparative_windows(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/momentum",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+            "window": 3,
+            "baseline_window": 3,
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_id"] == "H-3"
+    assert payload["recent_window"]["race_count"] == 3
+    assert payload["recent_window"]["wins"] == 1
+    assert payload["recent_window"]["average_finish"] == 4.33
+    assert payload["recent_window"]["roi"] == -0.067
+
+    reference = payload["reference_window"]
+    assert reference is not None
+    assert reference["race_count"] == 3
+    assert reference["podiums"] == 2
+    assert reference["average_odds"] == 7.3
+    assert reference["roi"] == 0.467
+
+    deltas = payload["deltas"]
+    assert deltas["win_rate"] == 0.0
+    assert deltas["podium_rate"] == pytest.approx(-0.3334, rel=1e-3)
+    assert deltas["average_finish"] == 1.0
+    assert deltas["roi"] == pytest.approx(-0.534, rel=1e-3)
+
+    metadata = payload["metadata"]
+    assert metadata["date_start"] == "2024-03-05"
+    assert metadata["date_end"] == "2024-07-20"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_momentum_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/momentum",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+            "start_date": "2024-07-01",
+            "end_date": "2024-06-01",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_momentum_endpoint_returns_404_on_missing_data(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/momentum",
+        params={
+            "entity_type": "horse",
+            "entity_id": "UNKNOWN",
+        },
+    )
+    assert response.status_code == 404
 
 
 @pytest.mark.anyio("asyncio")

@@ -19,6 +19,7 @@ import type {
   AnalyticsCalendarResponse,
   AnalyticsValueResponse,
   AnalyticsVolatilityResponse,
+  AnalyticsMomentumResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -230,6 +231,30 @@ export const analyticsService = {
         ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getMomentumProfile(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+    window?: number
+    baselineWindow?: number
+  }) {
+    const response = await apiClient.get<AnalyticsMomentumResponse>('/analytics/momentum', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+        ...(params.window ? { window: params.window } : {}),
+        ...(params.baselineWindow ? { baseline_window: params.baselineWindow } : {}),
       },
     })
 

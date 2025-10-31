@@ -245,6 +245,38 @@ export interface AnalyticsVolatilityResponse {
   races: VolatilityRaceSample[]
 }
 
+export interface MomentumSlice {
+  label: string
+  start_date?: string | null
+  end_date?: string | null
+  race_count: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+  roi?: number | null
+  races: RecentRace[]
+}
+
+export interface MomentumShift {
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  roi?: number | null
+}
+
+export interface AnalyticsMomentumResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  recent_window: MomentumSlice
+  reference_window?: MomentumSlice | null
+  deltas: MomentumShift
+}
+
 export interface PerformanceStreak {
   type: 'win' | 'podium'
   length: number

@@ -907,3 +907,87 @@ class AnalyticsVolatilityResponse(BaseModel):
         default_factory=list,
         description="Liste des courses retenues, triées par date décroissante",
     )
+
+
+class MomentumSlice(BaseModel):
+    """Vue consolidée d'une période d'observation pour le momentum."""
+
+    label: str = Field(..., description="Nom lisible de la fenêtre d'analyse")
+    start_date: Optional[date_type] = Field(
+        default=None, description="Première date incluse dans la fenêtre"
+    )
+    end_date: Optional[date_type] = Field(
+        default=None, description="Dernière date incluse dans la fenêtre"
+    )
+    race_count: int = Field(
+        ..., ge=0, description="Nombre de courses prises en compte dans la période"
+    )
+    wins: int = Field(..., ge=0, description="Victoires relevées sur la période")
+    podiums: int = Field(..., ge=0, description="Podiums relevés sur la période")
+    win_rate: Optional[float] = Field(
+        default=None, ge=0, le=1, description="Taux de victoire (0-1)"
+    )
+    podium_rate: Optional[float] = Field(
+        default=None, ge=0, le=1, description="Taux de podium (0-1)"
+    )
+    average_finish: Optional[float] = Field(
+        default=None, description="Position moyenne d'arrivée"
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote directe moyenne observée"
+    )
+    roi: Optional[float] = Field(
+        default=None,
+        description="Retour sur investissement théorique (mise unitaire)"
+    )
+    races: List[RecentRace] = Field(
+        default_factory=list,
+        description="Détail des courses composant la fenêtre, du plus récent au plus ancien",
+    )
+
+
+class MomentumShift(BaseModel):
+    """Différences élémentaires entre deux fenêtres de momentum."""
+
+    win_rate: Optional[float] = Field(
+        default=None,
+        description="Écart de taux de victoire entre la fenêtre récente et la fenêtre de référence",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        description="Écart de taux de podium entre les deux périodes",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Variation de la position moyenne (valeurs négatives = amélioration)",
+    )
+    roi: Optional[float] = Field(
+        default=None,
+        description="Écart de ROI théorique calculé sur les courses disposant d'une cote",
+    )
+
+
+class AnalyticsMomentumResponse(BaseModel):
+    """Réponse structurée pour l'endpoint `/analytics/momentum`."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible correspondant à l'entité"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées globales sur l'échantillon considéré",
+    )
+    recent_window: MomentumSlice = Field(
+        ..., description="Fenêtre d'analyse la plus récente"
+    )
+    reference_window: Optional[MomentumSlice] = Field(
+        default=None, description="Fenêtre de comparaison (baseline)"
+    )
+    deltas: MomentumShift = Field(
+        default_factory=MomentumShift,
+        description="Écarts calculés entre les fenêtres récente et de référence",
+    )

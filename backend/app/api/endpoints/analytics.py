@@ -15,6 +15,7 @@ from app.schemas.analytics import (
     AnalyticsComparisonResponse,
     ComparisonEntitySummary,
     HeadToHeadBreakdown,
+    AnalyticsMomentumResponse,
     AnalyticsFormResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
@@ -39,6 +40,8 @@ from app.schemas.analytics import (
     PerformanceDistributionResponse,
     PartantInsight,
     PerformanceBreakdown,
+    MomentumSlice,
+    MomentumShift,
     PerformanceSummary,
     RecentRace,
     ValueOpportunitySample,
@@ -264,6 +267,99 @@ def _consistency_index(positions: List[int]) -> Optional[float]:
     deviation = pstdev(cleaned)
     # Plus l'écart-type est faible, plus l'indice tend vers 1.
     return round(1 / (1 + deviation), 3)
+
+
+def _momentum_slice(label: str, rows: List[Dict[str, Any]]) -> MomentumSlice:
+    """Construit un résumé statistique pour une fenêtre temporelle donnée."""
+
+    race_count = len(rows)
+    wins = sum(1 for row in rows if _is_win(row))
+    podiums = sum(1 for row in rows if _is_podium(row))
+
+    sorted_rows = _sorted_races(rows)
+
+    positions: List[int] = []
+    odds_values: List[float] = []
+    first_date: Optional[date] = None
+    last_date: Optional[date] = None
+    profit_sum = 0.0
+    bet_count = 0
+    races: List[RecentRace] = []
+
+    for row in sorted_rows:
+        race_date = row.get("jour")
+        if isinstance(race_date, date):
+            first_date = race_date if first_date is None else min(first_date, race_date)
+            last_date = race_date if last_date is None else max(last_date, race_date)
+
+        position = row.get("cl")
+        if isinstance(position, int):
+            positions.append(position)
+
+        actual_odds = _parse_float(row.get("cotedirect") or row.get("cote_direct"))
+        implied_odds = _parse_float(row.get("coteprob") or row.get("cote_prob"))
+        display_odds = actual_odds if actual_odds is not None else implied_odds
+
+        if actual_odds is not None:
+            odds_values.append(actual_odds)
+            bet_count += 1
+            profit_sum += (actual_odds - 1) if _is_win(row) else -1
+
+        races.append(
+            RecentRace(
+                date=race_date if isinstance(race_date, date) else None,
+                hippodrome=row.get("hippo"),
+                course_number=row.get("prix"),
+                distance=row.get("dist"),
+                final_position=position if isinstance(position, int) else None,
+                odds=display_odds,
+                is_win=_is_win(row),
+                is_podium=_is_podium(row),
+            )
+        )
+
+    average_finish = None
+    if positions:
+        average_finish = round(sum(positions) / len(positions), 2)
+
+    average_odds = _safe_mean(odds_values)
+    roi = None
+    if bet_count:
+        roi = round(profit_sum / bet_count, 3)
+
+    return MomentumSlice(
+        label=label,
+        start_date=first_date,
+        end_date=last_date,
+        race_count=race_count,
+        wins=wins,
+        podiums=podiums,
+        win_rate=_safe_rate(wins, race_count) if race_count else None,
+        podium_rate=_safe_rate(podiums, race_count) if race_count else None,
+        average_finish=average_finish,
+        average_odds=average_odds,
+        roi=roi,
+        races=races,
+    )
+
+
+def _momentum_shift(recent: MomentumSlice, reference: Optional[MomentumSlice]) -> MomentumShift:
+    """Calcule les écarts élémentaires entre deux fenêtres de momentum."""
+
+    if reference is None:
+        return MomentumShift()
+
+    def _delta(current: Optional[float], baseline: Optional[float], precision: int) -> Optional[float]:
+        if current is None or baseline is None:
+            return None
+        return round(current - baseline, precision)
+
+    return MomentumShift(
+        win_rate=_delta(recent.win_rate, reference.win_rate, 4),
+        podium_rate=_delta(recent.podium_rate, reference.podium_rate, 4),
+        average_finish=_delta(recent.average_finish, reference.average_finish, 2),
+        roi=_delta(recent.roi, reference.roi, 3),
+    )
 
 
 def _to_leaderboard_entries(rows: List[Dict[str, Any]]) -> List[LeaderboardEntry]:
@@ -1229,6 +1325,125 @@ async def get_volatility_profile(
         metadata=metadata,
         metrics=metrics,
         races=race_samples,
+    )
+
+
+@router.get(
+    "/momentum",
+    response_model=AnalyticsMomentumResponse,
+    summary="Comparer la dynamique récente à une période de référence",
+    description=(
+        "Analyse la forme actuelle d'une entité Aspiturf en la comparant à la période précédente "
+        "afin de détecter un changement de tendance sur les dernières courses."
+    ),
+)
+async def get_momentum_profile(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date"
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date"
+    ),
+    window: int = Query(
+        5,
+        ge=1,
+        le=50,
+        description="Nombre de courses à inclure dans la fenêtre récente",
+    ),
+    baseline_window: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description=(
+            "Nombre de courses à utiliser pour la période de référence. "
+            "Par défaut, la même taille que la fenêtre récente est utilisée."
+        ),
+    ),
+) -> AnalyticsMomentumResponse:
+    """Retourne un comparatif de momentum basé sur deux fenêtres glissantes."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    sorted_rows = _sorted_races(rows)
+
+    window_size = max(1, min(window, len(sorted_rows)))
+    reference_size = baseline_window or window_size
+
+    recent_rows = sorted_rows[:window_size]
+    reference_rows = sorted_rows[window_size : window_size + reference_size]
+
+    if entity_type == TrendEntityType.HORSE:
+        label_fields: Tuple[str, ...] = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(sorted_rows, label_fields)
+
+    recent_label = (
+        "Dernière course" if len(recent_rows) == 1 else f"Dernières {len(recent_rows)} courses"
+    )
+    reference_label = None
+    if reference_rows:
+        reference_label = (
+            "Période précédente"
+            if len(reference_rows) == 1
+            else f"Période précédente ({len(reference_rows)} courses)"
+        )
+
+    recent_window = _momentum_slice(recent_label, recent_rows)
+    reference_window = (
+        _momentum_slice(reference_label, reference_rows) if reference_rows and reference_label else None
+    )
+    deltas = _momentum_shift(recent_window, reference_window)
+
+    all_dates = [row.get("jour") for row in sorted_rows if isinstance(row.get("jour"), date)]
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=min(all_dates) if all_dates else None,
+        date_end=max(all_dates) if all_dates else None,
+    )
+
+    return AnalyticsMomentumResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        recent_window=recent_window,
+        reference_window=reference_window,
+        deltas=deltas,
     )
 
 

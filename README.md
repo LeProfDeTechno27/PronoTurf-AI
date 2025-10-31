@@ -27,6 +27,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Calendrier de performances** : l'endpoint `/api/v1/analytics/calendar` agrège les résultats jour par jour et l'explorateur React affiche un tableau détaillé des réunions et partants associés.
 - **Chasse aux value bets** : l'endpoint `/api/v1/analytics/value` compare la cote observée et la cote probable Aspiturf pour identifier les opportunités les plus rentables et restitue un ROI théorique directement dans l'interface.
 - **Analyse de volatilité** : l'endpoint `/api/v1/analytics/volatility` calcule les écarts-types de positions et de cotes pour visualiser la régularité d'une entité, avec un module dédié dans la page Analytics.
+- **Momentum comparatif** : l'endpoint `/api/v1/analytics/momentum` confronte les dernières courses d'une entité à sa période de référence pour mesurer l'évolution des taux de victoire/podium et du ROI, le tout visualisé dans un nouveau panneau React.
 
 ## Technologies
 
