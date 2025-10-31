@@ -1195,6 +1195,36 @@ def _categorise_field_size(field_size: Optional[int]) -> str:
     return "large_field"
 
 
+def _categorise_draw_position(
+    draw: Optional[int],
+    field_size: Optional[int],
+) -> str:
+    """Regroupe les numéros de corde pour comparer inside/middle/outside."""
+
+    if not draw or draw <= 0:
+        return "unknown"
+
+    if field_size and field_size > 0:
+        inside_boundary = max(1, ceil(field_size / 3))
+        outside_boundary = max(inside_boundary, field_size - inside_boundary + 1)
+
+        if draw <= inside_boundary:
+            return "inside"
+
+        if draw >= outside_boundary:
+            return "outside"
+
+        return "middle"
+
+    if draw <= 4:
+        return "inside"
+
+    if draw >= 9:
+        return "outside"
+
+    return "middle"
+
+
 def _categorise_rest_period(rest_days: Optional[int]) -> str:
     """Segmente les jours de repos pour analyser l'effet de la fraîcheur."""
 
@@ -1275,6 +1305,42 @@ def _summarise_field_size_performance(
         field_metrics[segment] = summary
 
     return field_metrics
+
+
+def _summarise_draw_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Compare la précision selon la position dans les stalles de départ."""
+
+    if not breakdown:
+        return {}
+
+    draw_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        draws = [int(draw) for draw in payload.get("draws", []) if draw]
+        field_sizes = [int(size) for size in payload.get("field_sizes", []) if size]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["average_draw"] = _safe_average(draws)
+        summary["min_draw"] = min(draws) if draws else None
+        summary["max_draw"] = max(draws) if draws else None
+        summary["average_field_size"] = _safe_average(field_sizes)
+        summary["min_field_size"] = min(field_sizes) if field_sizes else None
+        summary["max_field_size"] = max(field_sizes) if field_sizes else None
+
+        draw_metrics[segment] = summary
+
+    return draw_metrics
 
 
 def _summarise_rest_period_performance(
@@ -1392,6 +1458,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
+        draw_breakdown: Dict[str, Dict[str, object]] = {}
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1562,6 +1629,31 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             courses_seen.add(course.course_id)
             if field_size and is_new_course:
                 field_bucket.setdefault("field_sizes", []).append(int(field_size))
+
+            draw_value = getattr(partant, "numero_corde", None)
+            draw_segment = _categorise_draw_position(
+                int(draw_value) if draw_value is not None else None,
+                int(field_size) if field_size else None,
+            )
+            draw_bucket = draw_breakdown.setdefault(
+                draw_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "draws": [],
+                    "field_sizes": [],
+                },
+            )
+            draw_bucket["truths"].append(is_top3)
+            draw_bucket["predictions"].append(predicted_label)
+            draw_bucket["scores"].append(probability)
+            draw_bucket.setdefault("courses", set()).add(course.course_id)
+            if draw_value is not None:
+                draw_bucket.setdefault("draws", []).append(int(draw_value))
+            if field_size:
+                draw_bucket.setdefault("field_sizes", []).append(int(field_size))
 
             rest_segment = _categorise_rest_period(
                 getattr(partant, "days_since_last_race", None)
@@ -1817,6 +1909,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_performance = _summarise_segment_performance(surface_breakdown)
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
+        draw_performance = _summarise_draw_performance(draw_breakdown)
         rest_period_performance = _summarise_rest_period_performance(
             rest_period_breakdown
         )
@@ -1867,6 +1960,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
+            "draw_performance": draw_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,
@@ -1901,6 +1995,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
+            "draw_performance": draw_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,
@@ -1951,6 +2046,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "distance_performance": distance_performance,
+            "draw_performance": draw_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,

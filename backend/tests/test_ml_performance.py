@@ -176,7 +176,7 @@ def _seed_reference_data(db: Session) -> None:
             horse_id=horses[1].horse_id,
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
-            numero_corde=2,
+            numero_corde=5,
             final_position=2,
             odds_pmu=Decimal("4.0"),
             days_since_last_race=25,
@@ -186,7 +186,7 @@ def _seed_reference_data(db: Session) -> None:
             horse_id=horses[2].horse_id,
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
-            numero_corde=3,
+            numero_corde=8,
             final_position=4,
             odds_pmu=Decimal("12.0"),
             days_since_last_race=75,
@@ -196,7 +196,7 @@ def _seed_reference_data(db: Session) -> None:
             horse_id=horses[3].horse_id,
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
-            numero_corde=1,
+            numero_corde=2,
             final_position=1,
             odds_pmu=Decimal("5.5"),
             days_since_last_race=45,
@@ -206,7 +206,7 @@ def _seed_reference_data(db: Session) -> None:
             horse_id=horses[4].horse_id,
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
-            numero_corde=2,
+            numero_corde=8,
             final_position=4,
             odds_pmu=Decimal("7.0"),
             days_since_last_race=210,
@@ -216,7 +216,7 @@ def _seed_reference_data(db: Session) -> None:
             horse_id=horses[5].horse_id,
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
-            numero_corde=3,
+            numero_corde=13,
             final_position=2,
             odds_pmu=Decimal("6.0"),
         ),
@@ -510,6 +510,17 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert field_size_performance["large_field"]["samples"] == 3
     assert field_size_performance["large_field"]["max_field_size"] == 14
 
+    draw_performance = metrics["draw_performance"]
+    assert set(draw_performance.keys()) == {"inside", "middle", "outside"}
+    assert draw_performance["inside"]["samples"] == 2
+    assert draw_performance["inside"]["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_performance["inside"]["average_draw"] == pytest.approx(1.5, abs=1e-6)
+    assert draw_performance["inside"]["average_field_size"] == pytest.approx(11.0, abs=1e-6)
+    assert draw_performance["middle"]["courses"] == 2
+    assert draw_performance["middle"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_performance["outside"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert draw_performance["outside"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+
     rest_period_performance = metrics["rest_period_performance"]
     assert set(rest_period_performance.keys()) == {
         "extended_break",
@@ -603,6 +614,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
