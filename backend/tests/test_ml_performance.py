@@ -168,6 +168,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=1,
             final_position=1,
+            odds_pmu=Decimal("3.0"),
         ),
         Partant(
             course_id=course1.course_id,
@@ -176,6 +177,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=2,
             final_position=2,
+            odds_pmu=Decimal("4.0"),
         ),
         Partant(
             course_id=course1.course_id,
@@ -184,6 +186,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=3,
             final_position=4,
+            odds_pmu=Decimal("12.0"),
         ),
         Partant(
             course_id=course2.course_id,
@@ -192,6 +195,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=1,
             final_position=1,
+            odds_pmu=Decimal("5.5"),
         ),
         Partant(
             course_id=course2.course_id,
@@ -200,6 +204,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=2,
             final_position=4,
+            odds_pmu=Decimal("7.0"),
         ),
         Partant(
             course_id=course2.course_id,
@@ -208,6 +213,7 @@ def _seed_reference_data(db: Session) -> None:
             trainer_id=trainer.trainer_id,
             numero_corde=3,
             final_position=2,
+            odds_pmu=Decimal("6.0"),
         ),
     ]
     db.add_all(partants)
@@ -365,6 +371,19 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert metrics["average_precision"] == pytest.approx(0.8041666, rel=1e-3)
 
+    betting_value = metrics["betting_value_analysis"]
+    assert betting_value["priced_samples"] == 6
+    assert betting_value["bets_considered"] == 4
+    assert betting_value["actual_win_rate"] == pytest.approx(0.25, rel=1e-3)
+    assert betting_value["realized_roi"] == pytest.approx(-0.25, rel=1e-3)
+    assert betting_value["expected_value_per_bet"] == pytest.approx(0.9375, rel=1e-3)
+    assert betting_value["average_edge"] == pytest.approx(0.1767857, rel=1e-3)
+    assert betting_value["average_implied_probability"] == pytest.approx(0.223214, rel=1e-3)
+    assert betting_value["average_predicted_probability"] == pytest.approx(0.4, rel=1e-3)
+    assert len(betting_value["best_value_candidates"]) == 3
+    assert betting_value["best_value_candidates"][0]["edge"] == pytest.approx(0.2571428, rel=1e-3)
+    assert betting_value["best_value_candidates"][0]["won"] is False
+
     pr_curve = metrics["precision_recall_curve"]
     assert len(pr_curve) == 7
     assert pr_curve[0]["threshold"] == pytest.approx(0.15, rel=1e-3)
@@ -466,6 +485,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]

@@ -683,6 +683,120 @@ def _summarise_threshold_recommendations(
     }
 
 
+def _summarise_betting_value(
+    samples: List[Dict[str, object]],
+    threshold: float,
+) -> Dict[str, object]:
+    """Estime la rentabilité théorique et réalisée des paris."""
+
+    if not samples:
+        return {
+            "priced_samples": 0,
+            "bets_considered": 0,
+            "realized_roi": None,
+            "expected_value_per_bet": None,
+            "average_edge": None,
+            "average_predicted_probability": None,
+            "average_implied_probability": None,
+            "actual_win_rate": None,
+            "best_value_candidates": [],
+        }
+
+    priced_samples = [
+        sample
+        for sample in samples
+        if sample.get("odds") is not None and float(sample.get("odds")) > 1.0
+    ]
+
+    if not priced_samples:
+        return {
+            "priced_samples": 0,
+            "bets_considered": 0,
+            "realized_roi": None,
+            "expected_value_per_bet": None,
+            "average_edge": None,
+            "average_predicted_probability": None,
+            "average_implied_probability": None,
+            "actual_win_rate": None,
+            "best_value_candidates": [],
+        }
+
+    bets = [
+        sample
+        for sample in priced_samples
+        if float(sample.get("probability", 0.0)) >= threshold
+    ]
+
+    if not bets:
+        return {
+            "priced_samples": len(priced_samples),
+            "bets_considered": 0,
+            "realized_roi": None,
+            "expected_value_per_bet": None,
+            "average_edge": None,
+            "average_predicted_probability": None,
+            "average_implied_probability": None,
+            "actual_win_rate": None,
+            "best_value_candidates": [],
+        }
+
+    realized_return = 0.0
+    expected_values: List[float] = []
+    edges: List[float] = []
+    predicted_probs: List[float] = []
+    implied_probs: List[float] = []
+
+    for bet in bets:
+        probability = float(bet.get("probability", 0.0))
+        odds = float(bet.get("odds", 0.0))
+        implied = 1.0 / odds if odds > 0 else 0.0
+
+        predicted_probs.append(probability)
+        implied_probs.append(implied)
+        edges.append(probability - implied)
+
+        expected_gain = probability * (odds - 1.0) - (1.0 - probability)
+        expected_values.append(expected_gain)
+
+        if bet.get("is_winner"):
+            realized_return += odds - 1.0
+        else:
+            realized_return -= 1.0
+
+    bets_considered = len(bets)
+    realized_roi = realized_return / bets_considered if bets_considered else None
+
+    best_value_candidates = sorted(
+        (
+            {
+                "course_id": bet.get("course_id"),
+                "partant_id": bet.get("partant_id"),
+                "horse_name": bet.get("horse_name"),
+                "probability": float(bet.get("probability", 0.0)),
+                "odds": float(bet.get("odds", 0.0)),
+                "edge": float(edge),
+                "won": bool(bet.get("is_winner")),
+                "final_position": bet.get("final_position"),
+            }
+            for bet, edge in zip(bets, edges)
+        ),
+        key=lambda candidate: candidate["edge"],
+        reverse=True,
+    )[:3]
+
+    return {
+        "priced_samples": len(priced_samples),
+        "bets_considered": bets_considered,
+        "realized_roi": realized_roi,
+        "expected_value_per_bet": sum(expected_values) / bets_considered,
+        "average_edge": sum(edges) / bets_considered,
+        "average_predicted_probability": sum(predicted_probs) / bets_considered,
+        "average_implied_probability": sum(implied_probs) / bets_considered,
+        "actual_win_rate": sum(1 for bet in bets if bet.get("is_winner")) / bets_considered,
+        "best_value_candidates": best_value_candidates,
+    }
+
+
 def _summarise_group_performance(
     truths: List[int],
     predicted: List[int],
@@ -889,6 +1003,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_versions: Counter[str] = Counter()
         course_stats: Dict[int, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
+        betting_samples: List[Dict[str, object]] = []
 
         # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
         # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
@@ -925,6 +1040,18 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "probability": probability,
                     "final_position": partant.final_position,
                     "is_top3": bool(is_top3),
+                }
+            )
+
+            betting_samples.append(
+                {
+                    "probability": probability,
+                    "odds": float(partant.odds_pmu) if partant.odds_pmu is not None else None,
+                    "is_winner": bool(partant.final_position == 1),
+                    "course_id": course.course_id,
+                    "partant_id": partant.partant_id,
+                    "horse_name": partant.horse.name if getattr(partant, "horse", None) else None,
+                    "final_position": partant.final_position,
                 }
             )
 
@@ -1073,6 +1200,13 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             threshold_grid
         )
 
+        # Analyse la valeur financière potentielle des paris générés par le
+        # modèle en confrontant les probabilités projetées aux cotes publiques.
+        betting_value_analysis = _summarise_betting_value(
+            betting_samples,
+            probability_threshold,
+        )
+
         # Fournit une vision cumulative du gain : en ne conservant que les
         # meilleures probabilités, quelle part des arrivées dans les 3 est
         # capturée ? Cette courbe complète la calibration en évaluant la
@@ -1167,6 +1301,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_sensitivity": threshold_grid,
             "threshold_recommendations": threshold_recommendations,
+            "betting_value_analysis": betting_value_analysis,
             "gain_curve": gain_curve,
             "lift_analysis": lift_analysis,
             "average_precision": average_precision,
@@ -1197,6 +1332,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
+            "betting_value_analysis": betting_value_analysis,
             "lift_analysis": lift_analysis,
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
@@ -1245,6 +1381,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
+            "betting_value_analysis": betting_value_analysis,
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),
