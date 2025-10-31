@@ -28,6 +28,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Chasse aux value bets** : l'endpoint `/api/v1/analytics/value` compare la cote observée et la cote probable Aspiturf pour identifier les opportunités les plus rentables et restitue un ROI théorique directement dans l'interface.
 - **Analyse de volatilité** : l'endpoint `/api/v1/analytics/volatility` calcule les écarts-types de positions et de cotes pour visualiser la régularité d'une entité, avec un module dédié dans la page Analytics.
 - **Efficacité vs cotes** : l'endpoint `/api/v1/analytics/efficiency` confronte les probabilités implicites aux résultats observés afin de repérer les profils surperformants/sous-performants, avec un panneau React détaillant ROI, écarts attendus et tableau des courses.
+- **Segments de cotes** : l'endpoint `/api/v1/analytics/odds` répartit les courses par profils (favori, challenger, outsider, long shot) et expose taux de réussite, profits et ROI dans l'explorateur React.
 - **Momentum comparatif** : l'endpoint `/api/v1/analytics/momentum` confronte les dernières courses d'une entité à sa période de référence pour mesurer l'évolution des taux de victoire/podium et du ROI, le tout visualisé dans un nouveau panneau React.
 - **Charge de travail & repos** : l'endpoint `/api/v1/analytics/workload` analyse les jours de repos entre chaque participation, synthétise les rythmes d'engagement et fournit un tableau chronologique détaillé côté frontend.
 
@@ -860,7 +861,7 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Client Aspiturf enrichi avec agrégateurs (classements, tendances, séries, distributions, forme, comparaisons, calendrier) et stubs de tests
 - [x] Suite de tests FastAPI couvrant recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier
 - [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
-- [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/momentum` et `/workload` avec UI dédiée (value bets, efficacité vs cotes, dispersion, momentum, charge de travail)
+- [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/odds`, `/momentum` et `/workload` avec UI dédiée (value bets, dispersion, efficacité vs cotes, segments de cotes, momentum, charge de travail)
 
 ### Sprint 7 (Planifié)
 - [ ] Service Telegram pour notifications

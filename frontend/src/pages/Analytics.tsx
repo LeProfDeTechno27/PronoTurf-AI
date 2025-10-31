@@ -12,6 +12,7 @@ import type {
   AnalyticsFormResponse,
   AnalyticsValueResponse,
   AnalyticsVolatilityResponse,
+  AnalyticsOddsResponse,
   AnalyticsEfficiencyResponse,
   AnalyticsWorkloadResponse,
   AnalyticsMomentumResponse,
@@ -36,6 +37,7 @@ import type {
   CalendarRaceDetail,
   ValueOpportunitySample,
   VolatilityRaceSample,
+  OddsBucketMetrics,
   EfficiencySample,
   WorkloadTimelineEntry,
   MomentumSlice,
@@ -160,6 +162,14 @@ type VolatilityFilters = {
 }
 
 type EfficiencyFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+}
+
+type OddsFilters = {
   entityType: TrendEntityType
   entityId: string
   hippodrome?: string
@@ -1515,6 +1525,111 @@ function EfficiencyPanel({ data }: { data: AnalyticsEfficiencyResponse }) {
   )
 }
 
+function OddsTable({ buckets }: { buckets: OddsBucketMetrics[] }) {
+  if (!buckets.length) {
+    return <p className="text-sm text-gray-500">Aucune cote exploitable sur la période sélectionnée.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Segment
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Courses
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Victoires
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Podiums
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Taux victoire
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Taux podium
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Arrivée moy.
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote moy.
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Profit
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              ROI
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {buckets.map((bucket) => (
+            <tr key={bucket.label}>
+              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.sample_size)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_odds)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.profit)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.roi, 3)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function OddsPanel({ data }: { data: AnalyticsOddsResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const winRate = data.overall.win_rate ?? null
+  const podiumRate = data.overall.podium_rate ?? null
+
+  return (
+    <div className="space-y-6">
+      {/* Synthèse globale pour appréhender la rentabilité par segments de cotes. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats
+          label="Courses analysées"
+          value={`${formatNumber(data.total_races)} (${formatNumber(data.races_with_odds)} avec cote)`}
+        />
+        <SummaryStats
+          label="Victoires"
+          value={`${formatNumber(data.overall.wins)} (${formatPercent(winRate)})`}
+        />
+        <SummaryStats
+          label="Podiums"
+          value={`${formatNumber(data.overall.podiums)} (${formatPercent(podiumRate)})`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Profit cumulé" value={formatAverage(data.overall.profit)} />
+        <SummaryStats label="ROI moyen" value={formatAverage(data.overall.roi, 3)} />
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+      </div>
+
+      <OddsTable buckets={data.buckets} />
+    </div>
+  )
+}
+
 function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
   const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
   const { summary, timeline } = data
@@ -1838,6 +1953,14 @@ export default function AnalyticsPage() {
   const [efficiencyEndInput, setEfficiencyEndInput] = useState('')
   const [efficiencyError, setEfficiencyError] = useState<string | null>(null)
   const [efficiencyFilters, setEfficiencyFilters] = useState<EfficiencyFilters | null>(null)
+
+  const [oddsTypeInput, setOddsTypeInput] = useState<TrendEntityType>('horse')
+  const [oddsIdInput, setOddsIdInput] = useState('')
+  const [oddsHippoInput, setOddsHippoInput] = useState('')
+  const [oddsStartInput, setOddsStartInput] = useState('')
+  const [oddsEndInput, setOddsEndInput] = useState('')
+  const [oddsError, setOddsError] = useState<string | null>(null)
+  const [oddsFilters, setOddsFilters] = useState<OddsFilters | null>(null)
 
   const [workloadTypeInput, setWorkloadTypeInput] = useState<TrendEntityType>('horse')
   const [workloadIdInput, setWorkloadIdInput] = useState('')
@@ -2163,6 +2286,35 @@ export default function AnalyticsPage() {
         endDate: efficiencyFilters?.endDate,
       }),
     enabled: Boolean(efficiencyFilters?.entityId),
+  })
+
+  const oddsQueryKey = useMemo(
+    () =>
+      oddsFilters
+        ? [
+            'analytics',
+            'odds',
+            oddsFilters.entityType,
+            oddsFilters.entityId,
+            oddsFilters.hippodrome ?? '',
+            oddsFilters.startDate ?? '',
+            oddsFilters.endDate ?? '',
+          ]
+        : ['analytics', 'odds', 'idle'],
+    [oddsFilters],
+  )
+
+  const oddsQuery = useQuery({
+    queryKey: oddsQueryKey,
+    queryFn: () =>
+      analyticsService.getOddsProfile({
+        entityType: oddsFilters!.entityType,
+        entityId: oddsFilters!.entityId,
+        hippodrome: oddsFilters?.hippodrome,
+        startDate: oddsFilters?.startDate,
+        endDate: oddsFilters?.endDate,
+      }),
+    enabled: Boolean(oddsFilters?.entityId),
   })
 
   const workloadQueryKey = useMemo(
@@ -2530,6 +2682,32 @@ export default function AnalyticsPage() {
       hippodrome: efficiencyHippoInput.trim() || undefined,
       startDate: efficiencyStartInput || undefined,
       endDate: efficiencyEndInput || undefined,
+    })
+  }
+
+  const handleOddsSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = oddsIdInput.trim()
+
+    if (!id) {
+      setOddsError("Veuillez saisir un identifiant Aspiturf valide.")
+      setOddsFilters(null)
+      return
+    }
+
+    if (oddsStartInput && oddsEndInput && oddsStartInput > oddsEndInput) {
+      setOddsError('La date de début doit précéder la date de fin.')
+      setOddsFilters(null)
+      return
+    }
+
+    setOddsError(null)
+    setOddsFilters({
+      entityType: oddsTypeInput,
+      entityId: id,
+      hippodrome: oddsHippoInput.trim() || undefined,
+      startDate: oddsStartInput || undefined,
+      endDate: oddsEndInput || undefined,
     })
   }
 
@@ -3169,6 +3347,61 @@ export default function AnalyticsPage() {
       <p className="text-sm text-red-600">Erreur: {(efficiencyQuery.error as Error).message}</p>
     )}
     {efficiencyQuery.data && <EfficiencyPanel data={efficiencyQuery.data} />}
+  </SectionCard>
+
+  <SectionCard
+    title="Segments de cotes"
+    description="Déterminez si un cheval, un jockey ou un entraîneur performe selon qu'il soit favori ou outsider."
+  >
+    <form
+      onSubmit={handleOddsSubmit}
+      className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
+    >
+      <select
+        value={oddsTypeInput}
+        onChange={(event) => setOddsTypeInput(event.target.value as TrendEntityType)}
+        className="input"
+      >
+        <option value="horse">Cheval</option>
+        <option value="jockey">Jockey</option>
+        <option value="trainer">Entraîneur</option>
+      </select>
+      <input
+        value={oddsIdInput}
+        onChange={(event) => setOddsIdInput(event.target.value)}
+        placeholder="Identifiant Aspiturf (id)"
+        className="input"
+      />
+      <input
+        value={oddsHippoInput}
+        onChange={(event) => setOddsHippoInput(event.target.value)}
+        placeholder="Filtrer par hippodrome (optionnel)"
+        className="input"
+      />
+      <input
+        type="date"
+        value={oddsStartInput}
+        onChange={(event) => setOddsStartInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="date"
+        value={oddsEndInput}
+        onChange={(event) => setOddsEndInput(event.target.value)}
+        className="input"
+      />
+      <button type="submit" className="btn btn-primary">
+        Segmenter
+      </button>
+    </form>
+    {oddsError && <p className="text-sm text-red-600">{oddsError}</p>}
+    {oddsQuery.isPending && (
+      <p className="text-sm text-gray-500">Calcul des segments de cotes en cours…</p>
+    )}
+    {oddsQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(oddsQuery.error as Error).message}</p>
+    )}
+    {oddsQuery.data && <OddsPanel data={oddsQuery.data} />}
   </SectionCard>
 
   <SectionCard

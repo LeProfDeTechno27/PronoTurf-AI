@@ -909,6 +909,75 @@ class AnalyticsVolatilityResponse(BaseModel):
     )
 
 
+class OddsBucketMetrics(BaseModel):
+    """Statistiques agrégées pour une tranche de cotes homogène."""
+
+    label: str = Field(..., description="Libellé lisible du segment de cotes")
+    sample_size: int = Field(
+        ..., ge=0, description="Nombre de courses disposant d'une cote dans le segment"
+    )
+    wins: int = Field(..., ge=0, description="Victoires enregistrées dans le segment")
+    podiums: int = Field(
+        ..., ge=0, description="Arrivées dans les trois premiers pour le segment"
+    )
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Proportion de victoires calculée sur le segment",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Proportion de podiums calculée sur le segment",
+    )
+    average_finish: Optional[float] = Field(
+        default=None, description="Position moyenne d'arrivée dans le segment"
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote directe moyenne observée"
+    )
+    profit: Optional[float] = Field(
+        default=None,
+        description="Gain théorique cumulé en misant 1 unité sur chaque course",
+    )
+    roi: Optional[float] = Field(
+        default=None,
+        description="Retour sur investissement moyen (profit / nombre de mises)",
+    )
+
+
+class AnalyticsOddsResponse(BaseModel):
+    """Réponse normalisée pour l'analyse de segments de cotes."""
+
+    entity_type: TrendEntityType = Field(..., description="Type d'entité analysée")
+    entity_id: str = Field(..., description="Identifiant Aspiturf analysé")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible de l'entité"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées issues des filtres appliqués",
+    )
+    total_races: int = Field(
+        ..., ge=0, description="Nombre total de courses correspondant au filtre"
+    )
+    races_with_odds: int = Field(
+        ..., ge=0, description="Nombre de courses disposant d'une cote exploitable"
+    )
+    races_without_odds: int = Field(
+        ..., ge=0, description="Nombre de courses ignorées faute de cote exploitable"
+    )
+    buckets: List[OddsBucketMetrics] = Field(
+        default_factory=list,
+        description="Statistiques calculées pour chaque segment de cotes",
+    )
+    overall: OddsBucketMetrics = Field(
+        ..., description="Synthèse globale des courses disposant d'une cote",
+    )
+
+
 class EfficiencySample(BaseModel):
     """Course annotée avec les probabilités implicites d'un engagement."""
 

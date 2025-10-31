@@ -19,6 +19,7 @@ from app.schemas.analytics import (
     AnalyticsFormResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
+    AnalyticsOddsResponse,
     AnalyticsInsightsResponse,
     AnalyticsStreakResponse,
     AnalyticsCalendarResponse,
@@ -44,6 +45,7 @@ from app.schemas.analytics import (
     PerformanceBreakdown,
     MomentumSlice,
     MomentumShift,
+    OddsBucketMetrics,
     PerformanceSummary,
     RecentRace,
     ValueOpportunitySample,
@@ -154,6 +156,15 @@ def _safe_mean(values: Iterable[Optional[float]]) -> Optional[float]:
     return round(mean(cleaned), 3)
 
 
+def _average_position(values: Iterable[int]) -> Optional[float]:
+    """Calcule prudemment la position moyenne d'arrivée."""
+
+    positions = [int(value) for value in values if isinstance(value, int)]
+    if not positions:
+        return None
+    return round(sum(positions) / len(positions), 2)
+
+
 def _parse_float(value: Any) -> Optional[float]:
     """Convertit un champ Aspiturf en float si possible."""
 
@@ -206,6 +217,18 @@ def _round_optional(value: Optional[float], digits: int = 3) -> Optional[float]:
     if value is None:
         return None
     return round(value, digits)
+
+
+def _odds_bucket_descriptor(odds: float) -> Tuple[str, str]:
+    """Retourne un identifiant stable et un libellé pour segmenter les cotes."""
+
+    if odds < 3.0:
+        return ("favorite", "Favori (<3.0)")
+    if odds < 6.0:
+        return ("contender", "Challenger (3.0-5.9)")
+    if odds < 10.0:
+        return ("outsider", "Outsider (6.0-9.9)")
+    return ("longshot", "Long shot (>=10.0)")
 
 
 def _implied_probability(odds: Optional[float]) -> Optional[float]:
@@ -1543,6 +1566,211 @@ async def get_efficiency_profile(
         metadata=metadata,
         metrics=metrics,
         samples=samples,
+    )
+
+
+@router.get(
+    "/odds",
+    response_model=AnalyticsOddsResponse,
+    summary="Segmenter les performances par tranches de cotes",
+    description=(
+        "Ventile les courses en quatre segments de cotes (favori, challenger, outsider, long shot) "
+        "et calcule pour chacun les taux de réussite et retours sur investissement."
+    ),
+)
+async def get_odds_profile(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Limiter l'analyse aux courses disputées sur un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date"
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date"
+    ),
+) -> AnalyticsOddsResponse:
+    """Analyse les performances d'une entité selon les segments de cotes."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    rows.sort(
+        key=lambda item: (
+            item.get("jour") if isinstance(item.get("jour"), date) else date.min,
+            item.get("prix") if isinstance(item.get("prix"), int) else -1,
+        ),
+        reverse=True,
+    )
+
+    if entity_type == TrendEntityType.HORSE:
+        label_fields = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(rows, label_fields)
+
+    bucket_definitions: List[Tuple[str, str]] = [
+        ("favorite", "Favori (<3.0)"),
+        ("contender", "Challenger (3.0-5.9)"),
+        ("outsider", "Outsider (6.0-9.9)"),
+        ("longshot", "Long shot (>=10.0)"),
+    ]
+
+    bucket_stats: Dict[str, Dict[str, Any]] = {
+        key: {
+            "label": label,
+            "sample_size": 0,
+            "wins": 0,
+            "podiums": 0,
+            "positions": [],
+            "odds": [],
+            "profit": 0.0,
+        }
+        for key, label in bucket_definitions
+    }
+
+    races_with_odds = 0
+    missing_odds = 0
+    overall_positions: List[int] = []
+    overall_odds: List[float] = []
+    overall_wins = 0
+    overall_podiums = 0
+    overall_profit = 0.0
+    race_dates: List[date] = []
+
+    for row in rows:
+        race_date = row.get("jour")
+        if isinstance(race_date, date):
+            race_dates.append(race_date)
+
+        odds = _parse_float(row.get("cotedirect") or row.get("cote_direct"))
+        if odds is None or odds <= 0:
+            missing_odds += 1
+            continue
+
+        bucket_key, bucket_label = _odds_bucket_descriptor(odds)
+        stats = bucket_stats.setdefault(
+            bucket_key,
+            {
+                "label": bucket_label,
+                "sample_size": 0,
+                "wins": 0,
+                "podiums": 0,
+                "positions": [],
+                "odds": [],
+                "profit": 0.0,
+            },
+        )
+
+        stats["label"] = bucket_label
+        stats["sample_size"] += 1
+        races_with_odds += 1
+
+        is_win = _is_win(row)
+        is_podium = _is_podium(row)
+
+        if is_win:
+            stats["wins"] += 1
+            overall_wins += 1
+        if is_podium:
+            stats["podiums"] += 1
+            overall_podiums += 1
+
+        position = row.get("cl")
+        if isinstance(position, int):
+            stats.setdefault("positions", []).append(position)
+            overall_positions.append(position)
+
+        stats.setdefault("odds", []).append(odds)
+        overall_odds.append(odds)
+
+        profit_delta = (odds - 1.0) if is_win else -1.0
+        stats["profit"] = stats.get("profit", 0.0) + profit_delta
+        overall_profit += profit_delta
+
+    bucket_metrics: List[OddsBucketMetrics] = []
+    for key, fallback_label in bucket_definitions:
+        stats = bucket_stats.get(key, {"label": fallback_label})
+        sample_size = int(stats.get("sample_size", 0))
+        wins = int(stats.get("wins", 0))
+        podiums = int(stats.get("podiums", 0))
+        positions = stats.get("positions", [])
+        odds_values = stats.get("odds", [])
+        profit_value = stats.get("profit", 0.0)
+
+        bucket_metrics.append(
+            OddsBucketMetrics(
+                label=str(stats.get("label", fallback_label)),
+                sample_size=sample_size,
+                wins=wins,
+                podiums=podiums,
+                win_rate=_safe_rate(wins, sample_size),
+                podium_rate=_safe_rate(podiums, sample_size),
+                average_finish=_average_position(positions),
+                average_odds=_safe_mean(odds_values),
+                profit=round(profit_value, 2) if sample_size else None,
+                roi=round(profit_value / sample_size, 3) if sample_size else None,
+            )
+        )
+
+    overall_metric = OddsBucketMetrics(
+        label="Global (toutes cotes)",
+        sample_size=races_with_odds,
+        wins=overall_wins,
+        podiums=overall_podiums,
+        win_rate=_safe_rate(overall_wins, races_with_odds),
+        podium_rate=_safe_rate(overall_podiums, races_with_odds),
+        average_finish=_average_position(overall_positions),
+        average_odds=_safe_mean(overall_odds),
+        profit=round(overall_profit, 2) if races_with_odds else None,
+        roi=round(overall_profit / races_with_odds, 3) if races_with_odds else None,
+    )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=min(race_dates) if race_dates else None,
+        date_end=max(race_dates) if race_dates else None,
+    )
+
+    return AnalyticsOddsResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        total_races=len(rows),
+        races_with_odds=races_with_odds,
+        races_without_odds=missing_odds,
+        buckets=bucket_metrics,
+        overall=overall_metric,
     )
 
 

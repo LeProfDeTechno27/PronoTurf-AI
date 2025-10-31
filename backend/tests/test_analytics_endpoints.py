@@ -1726,6 +1726,72 @@ async def test_efficiency_endpoint_returns_404_on_unknown_entity(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_odds_endpoint_segments_cotes(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/odds",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-3"
+    assert payload["total_races"] == 6
+    assert payload["races_with_odds"] == 6
+    assert payload["races_without_odds"] == 0
+
+    overall = payload["overall"]
+    assert overall["wins"] == 2
+    assert overall["podiums"] == 3
+    assert overall["win_rate"] == pytest.approx(0.3333, rel=1e-3)
+    assert overall["roi"] == pytest.approx(0.2, rel=1e-3)
+    assert overall["average_finish"] == pytest.approx(3.83, rel=1e-2)
+
+    buckets = {bucket["label"]: bucket for bucket in payload["buckets"]}
+    assert buckets["Favori (<3.0)"]["win_rate"] == 1.0
+    assert buckets["Challenger (3.0-5.9)"]["roi"] == pytest.approx(1.2, rel=1e-3)
+    assert buckets["Long shot (>=10.0)"]["sample_size"] == 2
+
+    metadata = payload["metadata"]
+    assert metadata["date_start"] == "2024-03-05"
+    assert metadata["date_end"] == "2024-07-20"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_odds_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/odds",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-07-10",
+            "end_date": "2024-06-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_odds_endpoint_returns_404_on_missing_data(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/odds",
+        params={
+            "entity_type": "horse",
+            "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
 async def test_workload_endpoint_returns_activity_metrics(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/workload",

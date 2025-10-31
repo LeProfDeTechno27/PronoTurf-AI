@@ -245,6 +245,31 @@ export interface AnalyticsVolatilityResponse {
   races: VolatilityRaceSample[]
 }
 
+export interface OddsBucketMetrics {
+  label: string
+  sample_size: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+  profit?: number | null
+  roi?: number | null
+}
+
+export interface AnalyticsOddsResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  total_races: number
+  races_with_odds: number
+  races_without_odds: number
+  buckets: OddsBucketMetrics[]
+  overall: OddsBucketMetrics
+}
+
 export interface EfficiencySample {
   date?: string | null
   hippodrome?: string | null
