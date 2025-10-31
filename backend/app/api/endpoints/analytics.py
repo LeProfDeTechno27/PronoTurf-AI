@@ -23,7 +23,14 @@ from app.schemas.analytics import (
     RecentRace,
     TrainerAnalyticsResponse,
 )
-from app.services.aspiturf_client import AspiturfClient, AspiturfConfig
+
+try:  # pragma: no cover - optional dependency for tests
+    from app.services.aspiturf_client import AspiturfClient, AspiturfConfig
+    _ASPITURF_IMPORT_ERROR: Optional[Exception] = None
+except ModuleNotFoundError as exc:  # pragma: no cover - handled via dependency
+    AspiturfClient = Any  # type: ignore[assignment]
+    AspiturfConfig = Any  # type: ignore[assignment]
+    _ASPITURF_IMPORT_ERROR = exc
 
 
 router = APIRouter()
@@ -31,6 +38,12 @@ router = APIRouter()
 
 async def get_aspiturf_client() -> AsyncIterator[AspiturfClient]:
     """Dépendance FastAPI pour charger le client Aspiturf configuré."""
+
+    if _ASPITURF_IMPORT_ERROR is not None:
+        raise HTTPException(
+            status_code=503,
+            detail="Le client Aspiturf n'est pas disponible: installez les dépendances backend.",
+        )
 
     csv_path = settings.ASPITURF_CSV_PATH
     csv_url = settings.ASPITURF_CSV_URL

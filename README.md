@@ -539,6 +539,12 @@ Documentation complète disponible via Swagger UI :
 
 ### Tests
 
+Avant d'exécuter les suites backend, assurez-vous d'installer les dépendances Python :
+
+```bash
+pip install -r backend/requirements.txt
+```
+
 ```bash
 # Backend - Tests unitaires
 cd backend

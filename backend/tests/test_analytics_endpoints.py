@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import os
+import unicodedata
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -12,7 +14,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("CORS_ORIGINS", "[\"http://localhost:3000\"]")
 
-from app.api.endpoints import analytics as analytics_module
+analytics_module = importlib.import_module("app.api.endpoints.analytics")
 
 
 test_app = FastAPI()
@@ -24,6 +26,11 @@ pytestmark = pytest.mark.anyio("asyncio")
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
 
 
 class StubAspiturfClient:
@@ -88,7 +95,7 @@ class StubAspiturfClient:
         query: str,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
-        normalized = query.strip().lower()
+        normalized = _normalize_text(query.strip())
         if len(normalized) < 2:
             return []
 
@@ -117,7 +124,7 @@ class StubAspiturfClient:
             identifier_str = str(identifier)
             label = row.get(label_field) or identifier_str
 
-            searchable = f"{identifier_str.lower()} {str(label).lower()}"
+            searchable = _normalize_text(f"{identifier_str} {label}")
             if normalized not in searchable:
                 continue
 
