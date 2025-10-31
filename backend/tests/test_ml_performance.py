@@ -332,6 +332,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert pr_curve[2]["f1"] == pytest.approx(0.571428, rel=1e-3)
     assert pr_curve[-1]["threshold"] == pytest.approx(0.0, abs=1e-6)
 
+    roc_curve_points = metrics["roc_curve"]
+    assert len(roc_curve_points) == 5
+    assert roc_curve_points[0]["threshold"] is None
+    assert roc_curve_points[0]["true_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert roc_curve_points[1]["threshold"] == pytest.approx(0.55, rel=1e-3)
+    assert roc_curve_points[1]["youden_j"] == pytest.approx(0.25, rel=1e-3)
+    assert roc_curve_points[3]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert roc_curve_points[3]["specificity"] == pytest.approx(0.5, rel=1e-3)
+
     ks_analysis = metrics["ks_analysis"]
     assert ks_analysis["ks_statistic"] == pytest.approx(0.5, rel=1e-3)
     assert ks_analysis["ks_threshold"] == pytest.approx(0.25, rel=1e-3)
@@ -370,6 +379,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]

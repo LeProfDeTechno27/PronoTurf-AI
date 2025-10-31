@@ -30,10 +30,12 @@ try:
         precision_score,
         recall_score,
         roc_auc_score,
+        roc_curve,
     )
 except Exception:  # pragma: no cover - defensive import guard
     accuracy_score = precision_score = recall_score = f1_score = roc_auc_score = log_loss = None
     average_precision_score = precision_recall_curve = None
+    roc_curve = None
     confusion_matrix = None
 
 logger = logging.getLogger(__name__)
@@ -375,6 +377,62 @@ def _build_precision_recall_curve(
         curve = reduced[:sample_points]
 
     return curve
+
+
+def _build_roc_curve(
+    scores: List[float],
+    truths: List[int],
+    *,
+    sample_points: int = 12,
+) -> List[Dict[str, Optional[float]]]:
+    """Échantillonne la courbe ROC pour suivre le compromis rappel/spécificité."""
+
+    if (
+        not scores
+        or not truths
+        or len(scores) != len(truths)
+        or len(set(truths)) < 2
+        or roc_curve is None
+    ):
+        return []
+
+    false_positive_rate, true_positive_rate, thresholds = roc_curve(truths, scores)
+
+    if len(thresholds) == 0:
+        return []
+
+    total_points = len(thresholds)
+    step = max(1, total_points // sample_points)
+    sampled_indices = list(range(0, total_points, step))
+    if sampled_indices[-1] != total_points - 1:
+        sampled_indices.append(total_points - 1)
+
+    roc_points: List[Dict[str, Optional[float]]] = []
+
+    for idx in sampled_indices:
+        threshold_value = thresholds[idx]
+        # Le premier seuil retourné par scikit-learn est ``inf`` : on le remplace
+        # par ``None`` pour indiquer qu'aucune coupure n'est appliquée.
+        if threshold_value == float("inf"):
+            threshold: Optional[float] = None
+        else:
+            threshold = float(threshold_value)
+
+        fpr_value = float(false_positive_rate[idx])
+        tpr_value = float(true_positive_rate[idx])
+
+        roc_points.append(
+            {
+                "threshold": threshold,
+                "false_positive_rate": fpr_value,
+                "true_positive_rate": tpr_value,
+                # Youden J pour identifier le meilleur seuil (TPR - FPR).
+                "youden_j": tpr_value - fpr_value,
+                "specificity": 1.0 - fpr_value,
+            }
+        )
+
+    return roc_points
 
 
 def _build_lift_table(
@@ -796,6 +854,15 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             else None
         )
 
+        # Échantillonne la courbe ROC pour exposer la progression du rappel au
+        # fur et à mesure que l'on accepte davantage de faux positifs. Cette
+        # vue complète la précision-rappel en fournissant la spécificité.
+        roc_curve_points = _build_roc_curve(
+            y_scores,
+            y_true,
+            sample_points=12,
+        )
+
         # Mesure la séparation effective entre gagnants et perdants via une
         # statistique de Kolmogorov-Smirnov. Utile pour identifier un seuil
         # discriminant même si les métriques globales semblent correctes.
@@ -845,6 +912,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "average_precision": average_precision,
             "precision_recall_curve": precision_recall_table,
+            "roc_curve": roc_curve_points,
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
         }
@@ -867,6 +935,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_diagnostics": calibration_diagnostics,
             "lift_analysis": lift_analysis,
             "precision_recall_curve": precision_recall_table,
+            "roc_curve": roc_curve_points,
         }
 
         active_model = (
