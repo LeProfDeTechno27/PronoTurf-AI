@@ -590,6 +590,99 @@ def _evaluate_threshold_grid(
     return evaluation
 
 
+def _summarise_threshold_recommendations(
+    grid: Dict[str, Dict[str, Optional[float]]]
+) -> Dict[str, object]:
+    """Identifie les seuils opérationnels les plus intéressants."""
+
+    if not grid:
+        return {
+            "grid": [],
+            "best_f1": None,
+            "maximize_precision": None,
+            "maximize_recall": None,
+        }
+
+    # On convertit la grille en liste triée pour exposer les seuils de manière lisible.
+    ordered_grid: List[Dict[str, Optional[float]]] = []
+    for threshold_label, metrics in grid.items():
+        try:
+            threshold_value = float(threshold_label)
+        except (TypeError, ValueError):
+            # On ignore les libellés non numériques afin de ne pas casser la vue.
+            continue
+
+        ordered_grid.append(
+            {
+                "threshold": threshold_value,
+                "accuracy": metrics.get("accuracy"),
+                "precision": metrics.get("precision"),
+                "recall": metrics.get("recall"),
+                "f1": metrics.get("f1"),
+                "positive_rate": metrics.get("positive_rate"),
+            }
+        )
+
+    ordered_grid.sort(key=lambda row: row["threshold"])
+
+    def _select_best(metric: str) -> Optional[Dict[str, Optional[float]]]:
+        """Retourne la ligne optimisant ``metric`` (avec tie-break sur le seuil)."""
+
+        best_row: Optional[Dict[str, Optional[float]]] = None
+        best_value = float("-inf")
+
+        for row in ordered_grid:
+            value = row.get(metric)
+            if value is None:
+                continue
+
+            if (
+                value > best_value + 1e-12
+                or (
+                    best_row is not None
+                    and abs(value - best_value) <= 1e-12
+                    and row["threshold"] < best_row["threshold"]
+                )
+            ):
+                best_value = float(value)
+                best_row = row
+
+        return best_row
+
+    best_f1_row = _select_best("f1")
+    best_precision_row = _select_best("precision")
+    best_recall_row = _select_best("recall")
+
+    # Pour le meilleur F1, on expose l'ensemble des métriques associées afin
+    # d'aider l'opérateur à comprendre le compromis proposé.
+    best_f1_payload: Optional[Dict[str, Optional[float]]] = None
+    if best_f1_row is not None:
+        best_f1_payload = {
+            "threshold": best_f1_row["threshold"],
+            "f1": best_f1_row.get("f1"),
+            "precision": best_f1_row.get("precision"),
+            "recall": best_f1_row.get("recall"),
+            "positive_rate": best_f1_row.get("positive_rate"),
+        }
+
+    def _row_to_summary(row: Optional[Dict[str, Optional[float]]], metric: str) -> Optional[Dict[str, Optional[float]]]:
+        if row is None:
+            return None
+
+        return {
+            "threshold": row["threshold"],
+            metric: row.get(metric),
+            "positive_rate": row.get("positive_rate"),
+        }
+
+    return {
+        "grid": ordered_grid,
+        "best_f1": best_f1_payload,
+        "maximize_precision": _row_to_summary(best_precision_row, "precision"),
+        "maximize_recall": _row_to_summary(best_recall_row, "recall"),
+    }
+
+
 def _summarise_group_performance(
     truths: List[int],
     predicted: List[int],
@@ -973,6 +1066,12 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             y_true,
             thresholds=[0.2, probability_threshold, 0.4, 0.5],
         )
+        # La grille multi-seuils étant calculée, on extrait directement les
+        # recommandations (meilleur F1, précision ou rappel maximal) pour
+        # éviter aux opérateurs de parcourir manuellement toutes les lignes.
+        threshold_recommendations = _summarise_threshold_recommendations(
+            threshold_grid
+        )
 
         # Fournit une vision cumulative du gain : en ne conservant que les
         # meilleures probabilités, quelle part des arrivées dans les 3 est
@@ -1067,6 +1166,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_table": calibration_table,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_sensitivity": threshold_grid,
+            "threshold_recommendations": threshold_recommendations,
             "gain_curve": gain_curve,
             "lift_analysis": lift_analysis,
             "average_precision": average_precision,
@@ -1096,6 +1196,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_breakdown": dict(model_versions),
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
+            "threshold_recommendations": threshold_recommendations,
             "lift_analysis": lift_analysis,
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
@@ -1143,6 +1244,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
+            "threshold_recommendations": threshold_recommendations,
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),

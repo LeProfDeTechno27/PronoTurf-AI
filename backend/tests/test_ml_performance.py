@@ -308,6 +308,45 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert threshold_grid["0.40"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
     assert threshold_grid["0.50"]["precision"] == pytest.approx(1.0, rel=1e-3)
 
+    threshold_recommendations = metrics["threshold_recommendations"]
+    sweep = [(float(threshold), values) for threshold, values in threshold_grid.items()]
+    assert len(threshold_recommendations["grid"]) == len(sweep)
+
+    best_f1_threshold, best_f1_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("f1") is not None
+        ),
+        key=lambda item: (item[1]["f1"], -item[0]),
+    )
+    assert threshold_recommendations["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
+    assert threshold_recommendations["best_f1"]["f1"] == pytest.approx(best_f1_metrics["f1"], rel=1e-3)
+    assert threshold_recommendations["best_f1"]["precision"] == pytest.approx(best_f1_metrics["precision"], rel=1e-3)
+    assert threshold_recommendations["best_f1"]["recall"] == pytest.approx(best_f1_metrics["recall"], rel=1e-3)
+
+    best_precision_threshold, best_precision_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("precision") is not None
+        ),
+        key=lambda item: (item[1]["precision"], -item[0]),
+    )
+    assert threshold_recommendations["maximize_precision"]["threshold"] == pytest.approx(best_precision_threshold, rel=1e-3)
+    assert threshold_recommendations["maximize_precision"]["precision"] == pytest.approx(best_precision_metrics["precision"], rel=1e-3)
+
+    best_recall_threshold, best_recall_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("recall") is not None
+        ),
+        key=lambda item: (item[1]["recall"], -item[0]),
+    )
+    assert threshold_recommendations["maximize_recall"]["threshold"] == pytest.approx(best_recall_threshold, rel=1e-3)
+    assert threshold_recommendations["maximize_recall"]["recall"] == pytest.approx(best_recall_metrics["recall"], rel=1e-3)
+
     gain_curve = metrics["gain_curve"]
     assert len(gain_curve) == 5
     assert gain_curve[0]["observations"] == 2
@@ -432,6 +471,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
+        assert "threshold_recommendations" in stored_metrics["last_evaluation"]
+        assert "threshold_recommendations" in stored_metrics["last_evaluation"]["metrics"]
+        assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
