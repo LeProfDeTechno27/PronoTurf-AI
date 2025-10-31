@@ -16,7 +16,7 @@ import logging
 import csv
 import io
 from datetime import date, datetime
-from typing import Dict, List, Optional, Any, Union
+from typing import Any, Dict, List, Optional, Set, Union
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -566,6 +566,359 @@ class AspiturfClient:
                 return partants
 
         return None
+
+    async def get_races(
+        self,
+        *,
+        horse_id: Optional[str] = None,
+        jockey_id: Optional[str] = None,
+        trainer_id: Optional[str] = None,
+        hippodrome: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retourne les lignes Aspiturf filtrées selon plusieurs critères."""
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        races = self._data
+
+        if horse_id:
+            races = [row for row in races if row.get('idChe') == horse_id]
+
+        if jockey_id:
+            races = [row for row in races if row.get('idJockey') == jockey_id]
+
+        if trainer_id:
+            races = [row for row in races if row.get('idEntraineur') == trainer_id]
+
+        if hippodrome:
+            hippo_upper = hippodrome.upper()
+            races = [
+                row for row in races
+                if row.get('hippo') and row.get('hippo').upper() == hippo_upper
+            ]
+
+        return races
+
+    async def leaderboard(
+        self,
+        entity_type: str,
+        *,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Construit un classement agrégé par type d'entité."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        aggregations: Dict[str, Dict[str, Any]] = {}
+
+        for row in self._data:
+            race_date = row.get("jour")
+
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                # Sans information de date fiable on ignore la ligne si un filtre est demandé.
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_type == "horse":
+                entity_id = row.get("idChe")
+                label = row.get("nom_cheval") or row.get("cheval")
+            elif entity_type == "jockey":
+                entity_id = row.get("idJockey")
+                label = row.get("jockey")
+            else:
+                entity_id = row.get("idEntraineur")
+                label = row.get("entraineur")
+
+            if not entity_id:
+                continue
+
+            entry = aggregations.setdefault(
+                str(entity_id),
+                {
+                    "entity_id": str(entity_id),
+                    "label": label or str(entity_id),
+                    "sample_size": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "last_seen": None,
+                },
+            )
+
+            if label:
+                entry["label"] = label
+
+            entry["sample_size"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                entry["positions"].append(position)
+                if position == 1:
+                    entry["wins"] += 1
+                if 1 <= position <= 3:
+                    entry["podiums"] += 1
+
+            if isinstance(race_date, date):
+                current_last_seen = entry.get("last_seen")
+                if current_last_seen is None or race_date > current_last_seen:
+                    entry["last_seen"] = race_date
+
+        leaderboard: List[Dict[str, Any]] = []
+
+        for value in aggregations.values():
+            sample_size = value["sample_size"] or 0
+            if not sample_size:
+                continue
+
+            win_rate = value["wins"] / sample_size if sample_size else None
+            podium_rate = value["podiums"] / sample_size if sample_size else None
+
+            positions = [pos for pos in value.get("positions", []) if isinstance(pos, int)]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            leaderboard.append(
+                {
+                    "entity_id": value["entity_id"],
+                    "label": value["label"],
+                    "sample_size": sample_size,
+                    "wins": value["wins"],
+                    "podiums": value["podiums"],
+                    "win_rate": round(win_rate, 4) if win_rate is not None else None,
+                    "podium_rate": round(podium_rate, 4) if podium_rate is not None else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "last_seen": value.get("last_seen"),
+                }
+            )
+
+        leaderboard.sort(
+            key=lambda item: (
+                -(item["win_rate"] or 0),
+                -(item["podium_rate"] or 0),
+                -item["sample_size"],
+                item["label"],
+            )
+        )
+
+        return leaderboard[: max(1, limit)]
+
+    async def search_entities(
+        self,
+        entity_type: str,
+        query: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Recherche souple d'entités (cheval, jockey, entraineur, hippodrome)."""
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        normalized_query = query.strip().lower()
+        if len(normalized_query) < 2:
+            return []
+
+        def matches(*values: Optional[str]) -> bool:
+            for value in values:
+                if value and normalized_query in value.lower():
+                    return True
+            return False
+
+        results: Dict[str, Dict[str, Any]] = {}
+
+        if entity_type == "horse":
+            for row in self._data:
+                horse_id = row.get("idChe")
+                if not horse_id:
+                    continue
+
+                name = row.get("nom_cheval") or row.get("cheval")
+                if not matches(horse_id, name):
+                    continue
+
+                entry = results.setdefault(
+                    horse_id,
+                    {
+                        "id": horse_id,
+                        "label": name or str(horse_id),
+                        "metadata": {
+                            "total_races": 0,
+                            "hippodromes": set(),
+                            "last_seen": None,
+                        },
+                    },
+                )
+
+                entry["label"] = name or entry["label"]
+                entry["metadata"]["total_races"] += 1
+
+                hippo = row.get("hippo")
+                if hippo:
+                    entry["metadata"]["hippodromes"].add(str(hippo))
+
+                race_date = row.get("jour")
+                if isinstance(race_date, date):
+                    last_seen = entry["metadata"].get("last_seen")
+                    if last_seen is None or race_date > last_seen:
+                        entry["metadata"]["last_seen"] = race_date
+
+        elif entity_type == "jockey":
+            for row in self._data:
+                jockey_id = row.get("idJockey")
+                if not jockey_id:
+                    continue
+
+                name = row.get("jockey")
+                if not matches(jockey_id, name):
+                    continue
+
+                entry = results.setdefault(
+                    jockey_id,
+                    {
+                        "id": jockey_id,
+                        "label": name or str(jockey_id),
+                        "metadata": {
+                            "total_races": 0,
+                            "hippodromes": set(),
+                            "last_seen": None,
+                        },
+                    },
+                )
+
+                entry["label"] = name or entry["label"]
+                entry["metadata"]["total_races"] += 1
+
+                hippo = row.get("hippo")
+                if hippo:
+                    entry["metadata"]["hippodromes"].add(str(hippo))
+
+                race_date = row.get("jour")
+                if isinstance(race_date, date):
+                    last_seen = entry["metadata"].get("last_seen")
+                    if last_seen is None or race_date > last_seen:
+                        entry["metadata"]["last_seen"] = race_date
+
+        elif entity_type == "trainer":
+            for row in self._data:
+                trainer_id = row.get("idEntraineur")
+                if not trainer_id:
+                    continue
+
+                name = row.get("entraineur")
+                if not matches(trainer_id, name):
+                    continue
+
+                entry = results.setdefault(
+                    trainer_id,
+                    {
+                        "id": trainer_id,
+                        "label": name or str(trainer_id),
+                        "metadata": {
+                            "total_races": 0,
+                            "hippodromes": set(),
+                            "last_seen": None,
+                        },
+                    },
+                )
+
+                entry["label"] = name or entry["label"]
+                entry["metadata"]["total_races"] += 1
+
+                hippo = row.get("hippo")
+                if hippo:
+                    entry["metadata"]["hippodromes"].add(str(hippo))
+
+                race_date = row.get("jour")
+                if isinstance(race_date, date):
+                    last_seen = entry["metadata"].get("last_seen")
+                    if last_seen is None or race_date > last_seen:
+                        entry["metadata"]["last_seen"] = race_date
+
+        elif entity_type == "hippodrome":
+            for row in self._data:
+                hippo = row.get("hippo")
+                if not hippo:
+                    continue
+
+                hippo_str = str(hippo)
+                hippo_id = hippo_str.upper()
+                if not matches(hippo_id, hippo_str):
+                    continue
+
+                entry = results.setdefault(
+                    hippo_id,
+                    {
+                        "id": hippo_id,
+                        "label": hippo_str,
+                        "metadata": {
+                            "course_count": 0,
+                            "disciplines": set(),
+                            "last_meeting": None,
+                        },
+                    },
+                )
+
+                entry["metadata"]["course_count"] += 1
+
+                discipline = row.get("typec")
+                if discipline:
+                    entry["metadata"]["disciplines"].add(str(discipline))
+
+                race_date = row.get("jour")
+                if isinstance(race_date, date):
+                    last_meeting = entry["metadata"].get("last_meeting")
+                    if last_meeting is None or race_date > last_meeting:
+                        entry["metadata"]["last_meeting"] = race_date
+
+        else:
+            return []
+
+        formatted_results: List[Dict[str, Any]] = []
+
+        for entry in results.values():
+            metadata = entry["metadata"]
+
+            hippodromes: Optional[Set[str]] = metadata.get("hippodromes")
+            if isinstance(hippodromes, set):
+                metadata["hippodromes"] = sorted(hippodromes)[:3]
+
+            disciplines: Optional[Set[str]] = metadata.get("disciplines")
+            if isinstance(disciplines, set):
+                metadata["disciplines"] = sorted(disciplines)
+
+            formatted_results.append(
+                {
+                    "id": entry["id"],
+                    "label": entry["label"],
+                    "metadata": metadata,
+                }
+            )
+
+        def sort_key(item: Dict[str, Any]):
+            meta = item.get("metadata", {})
+            primary = meta.get("total_races") or meta.get("course_count") or 0
+            return (-int(primary), item.get("label") or "")
+
+        formatted_results.sort(key=sort_key)
+
+        return formatted_results[:limit]
 
     async def get_horse_statistics(
         self,

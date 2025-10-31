@@ -13,6 +13,13 @@ PronoTurf est une plateforme moderne qui combine :
 - **Mode Entraînement** : Simulation sur courses passées pour améliorer ses compétences
 - **Notifications** : Alertes Telegram pour ne manquer aucune opportunité
 
+## Nouveautés Analytics Aspiturf
+
+- **Recherche instantanée** des chevaux, jockeys, entraîneurs et hippodromes via l'endpoint `/api/v1/analytics/search`.
+- **Explorateur frontend enrichi** avec autocomplétion : sélectionnez un identifiant en quelques clics et pré-remplissez les filtres.
+- **Mise à jour du tableau de bord** : filtres hippodrome synchronisés sur toutes les cartes analytics pour accélérer l'analyse pré-course.
+- **Classements express multi-entités** : l'endpoint `/api/v1/analytics/insights` calcule en temps réel les meilleurs chevaux, jockeys et entraîneurs selon vos filtres (dates, hippodrome, limite), directement consommé depuis la page Analytics.
+
 ## Technologies
 
 ### Backend
@@ -533,6 +540,12 @@ Documentation complète disponible via Swagger UI :
 
 ### Tests
 
+Avant d'exécuter les suites backend, assurez-vous d'installer les dépendances Python :
+
+```bash
+pip install -r backend/requirements.txt
+```
+
 ```bash
 # Backend - Tests unitaires
 cd backend
@@ -822,13 +835,14 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 
 ## Éléments à Venir
 
-### Sprint 5.1 (En cours - 20% complété)
+### Sprint 5.1 (Terminé)
 - [x] Client Aspiturf avec parsing CSV
 - [x] PMUService refactorisé avec fallback
 - [x] Script de test complet
 - [x] Intégration avec pipeline ML (features Aspiturf)
-- [ ] Endpoints API pour statistiques enrichies
-- [ ] Dashboard avec métriques Aspiturf
+- [x] Endpoints API pour statistiques enrichies
+- [x] Dashboard avec métriques Aspiturf
+- [x] Recherche interactive pour chevaux, jockeys, entraîneurs et hippodromes
 
 ### Sprint 6 (Planifié)
 - [ ] Service Telegram pour notifications
