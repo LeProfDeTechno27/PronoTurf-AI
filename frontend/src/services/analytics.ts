@@ -8,6 +8,7 @@ import type {
   AnalyticsSearchResult,
   AnalyticsSearchType,
   AnalyticsInsightsResponse,
+  AnalyticsStreakResponse,
   PerformanceTrendResponse,
   TrendEntityType,
   TrendGranularity,
@@ -111,6 +112,26 @@ export const analyticsService = {
         entity_type: params.entityType,
         entity_id: params.entityId,
         ...(params.granularity ? { granularity: params.granularity } : {}),
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getPerformanceStreaks(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const response = await apiClient.get<AnalyticsStreakResponse>('/analytics/streaks', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
         ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),

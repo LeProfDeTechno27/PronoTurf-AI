@@ -70,6 +70,29 @@ export interface PerformanceTrendResponse {
   points: PerformanceTrendPoint[]
 }
 
+export interface PerformanceStreak {
+  type: 'win' | 'podium'
+  length: number
+  start_date?: string | null
+  end_date?: string | null
+  is_active: boolean
+}
+
+export interface AnalyticsStreakResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  total_races: number
+  wins: number
+  podiums: number
+  best_win_streak?: PerformanceStreak | null
+  best_podium_streak?: PerformanceStreak | null
+  current_win_streak?: PerformanceStreak | null
+  current_podium_streak?: PerformanceStreak | null
+  streak_history: PerformanceStreak[]
+}
+
 export interface HorseAnalyticsResponse {
   horse_id: string
   horse_name?: string | null

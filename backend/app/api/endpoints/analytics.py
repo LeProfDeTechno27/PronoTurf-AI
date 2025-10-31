@@ -14,11 +14,13 @@ from app.schemas.analytics import (
     AnalyticsSearchResult,
     AnalyticsSearchType,
     AnalyticsInsightsResponse,
+    AnalyticsStreakResponse,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
     JockeyAnalyticsResponse,
     LeaderboardEntry,
+    PerformanceStreak,
     PerformanceTrendPoint,
     PerformanceTrendResponse,
     PartantInsight,
@@ -201,6 +203,29 @@ def _to_leaderboard_entries(rows: List[Dict[str, Any]]) -> List[LeaderboardEntry
     return entries
 
 
+def _to_streak(payload: Optional[Dict[str, Any]], fallback_type: str) -> Optional[PerformanceStreak]:
+    """Convertit un dictionnaire brut en objet de série typé."""
+
+    if not payload:
+        return None
+
+    length = payload.get("length")
+    if not length:
+        return None
+
+    streak_type = payload.get("type", fallback_type)
+    if streak_type not in {"win", "podium"}:
+        streak_type = fallback_type
+
+    return PerformanceStreak(
+        type=streak_type,  # type: ignore[arg-type]
+        length=int(length),
+        start_date=payload.get("start_date"),
+        end_date=payload.get("end_date"),
+        is_active=bool(payload.get("is_active", False)),
+    )
+
+
 def _to_trend_points(rows: List[Dict[str, Any]]) -> List[PerformanceTrendPoint]:
     """Cast des agrégats de tendance fournis par le client en schémas Pydantic."""
 
@@ -359,6 +384,92 @@ async def get_performance_trends(
         granularity=granularity,
         metadata=metadata,
         points=points,
+    )
+
+
+@router.get(
+    "/streaks",
+    response_model=AnalyticsStreakResponse,
+    summary="Analyser les séries de résultats d'une entité",
+    description=(
+        "Identifie les séries de victoires/podiums consécutifs pour un cheval, un jockey ou un entraîneur."
+    ),
+)
+async def get_performance_streaks(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+) -> AnalyticsStreakResponse:
+    """Retourne les principales séries de résultats observées pour une entité."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    payload = await client.performance_streaks(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+    )
+
+    total_races = int(payload.get("total_races") or 0)
+    if total_races == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=payload.get("date_start"),
+        date_end=payload.get("date_end"),
+    )
+
+    best_win = _to_streak(payload.get("best_win"), "win")
+    best_podium = _to_streak(payload.get("best_podium"), "podium")
+    current_win = _to_streak(payload.get("current_win"), "win")
+    current_podium = _to_streak(payload.get("current_podium"), "podium")
+
+    history_items: List[PerformanceStreak] = []
+    for item in payload.get("history", []):
+        streak = _to_streak(item, item.get("type", "win"))  # type: ignore[arg-type]
+        if streak is not None:
+            history_items.append(streak)
+
+    return AnalyticsStreakResponse(
+        entity_type=entity_type,
+        entity_id=payload.get("entity_id", entity_id),
+        entity_label=payload.get("entity_label"),
+        metadata=metadata,
+        total_races=total_races,
+        wins=int(payload.get("wins") or 0),
+        podiums=int(payload.get("podiums") or 0),
+        best_win_streak=best_win,
+        best_podium_streak=best_podium,
+        current_win_streak=current_win,
+        current_podium_streak=current_podium,
+        streak_history=history_items,
     )
 
 

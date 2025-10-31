@@ -8,12 +8,14 @@ import type {
   HorseAnalyticsResponse,
   JockeyAnalyticsResponse,
   AnalyticsInsightsResponse,
+  AnalyticsStreakResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
   TrainerAnalyticsResponse,
   PerformanceTrendResponse,
   PerformanceTrendPoint,
+  PerformanceStreak,
   TrendEntityType,
   TrendGranularity,
 } from '../types/analytics'
@@ -32,6 +34,21 @@ const formatDate = (value?: string | null) =>
 
 const formatList = (values?: string[] | null, max = 3) =>
   values?.length ? values.slice(0, max).join(', ') : '—'
+
+const formatStreakType = (type: PerformanceStreak['type']) =>
+  type === 'win' ? 'Victoires' : 'Podiums'
+
+const formatStreakSummary = (streak?: PerformanceStreak | null) => {
+  if (!streak) {
+    return '—'
+  }
+
+  const period = `${formatDate(streak.start_date)} → ${formatDate(streak.end_date)}`
+  const status = streak.is_active ? 'en cours' : 'terminée'
+  const unit = streak.length > 1 ? 'courses' : 'course'
+
+  return `${streak.length} ${unit} • ${period} (${status})`
+}
 
 const toError = (value: unknown): Error | null => {
   if (value instanceof Error) {
@@ -63,6 +80,14 @@ type TrendFilters = {
   startDate?: string
   endDate?: string
   granularity: TrendGranularity
+}
+
+type StreakFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
 }
 
 const isJockeyResponse = (
@@ -543,6 +568,103 @@ function TrendPanel({ data }: { data: PerformanceTrendResponse }) {
   )
 }
 
+function StreakHistoryTable({ items }: { items: PerformanceStreak[] }) {
+  // Table simplifiée listant les meilleures séries détectées.
+  if (!items.length) {
+    return <p className="text-gray-500">Aucune série détectée sur la période étudiée.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              Type
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Longueur
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              Période
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              Statut
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {items.map((item, index) => (
+            <tr key={`${item.type}-${item.start_date ?? 'unknown'}-${index}`}>
+              <td className="px-4 py-2 text-sm text-gray-900">{formatStreakType(item.type)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{item.length}</td>
+              <td className="px-4 py-2 text-sm text-gray-700">
+                {`${formatDate(item.start_date)} → ${formatDate(item.end_date)}`}
+              </td>
+              <td className="px-4 py-2 text-sm text-gray-700">
+                {item.is_active ? 'En cours' : 'Terminée'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function StreakPanel({ data }: { data: AnalyticsStreakResponse }) {
+  // Fournit une vue dédiée sur les séries consécutives (wins/podiums) d'une entité.
+  const entityDisplay = data.entity_label
+    ? `${data.entity_label} (${data.entity_id})`
+    : data.entity_id
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Courses analysées" value={formatNumber(data.total_races)} />
+        <SummaryStats label="Victoires" value={formatNumber(data.wins)} />
+        <SummaryStats label="Podiums" value={formatNumber(data.podiums)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Meilleure série de victoires"
+          value={formatStreakSummary(data.best_win_streak)}
+        />
+        <SummaryStats
+          label="Meilleure série de podiums"
+          value={formatStreakSummary(data.best_podium_streak)}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Série de victoires en cours"
+          value={formatStreakSummary(data.current_win_streak)}
+        />
+        <SummaryStats
+          label="Série de podiums en cours"
+          value={formatStreakSummary(data.current_podium_streak)}
+        />
+        <SummaryStats
+          label="Hippodrome filtré"
+          value={data.metadata.hippodrome_filter ?? 'Tous'}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-lg font-semibold text-gray-900">Historique des séries</h3>
+        <StreakHistoryTable items={data.streak_history} />
+      </div>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -560,6 +682,14 @@ export default function AnalyticsPage() {
   const [trendGranularityInput, setTrendGranularityInput] = useState<TrendGranularity>('month')
   const [trendError, setTrendError] = useState<string | null>(null)
   const [trendFilters, setTrendFilters] = useState<TrendFilters | null>(null)
+
+  const [streakTypeInput, setStreakTypeInput] = useState<TrendEntityType>('horse')
+  const [streakIdInput, setStreakIdInput] = useState('')
+  const [streakHippoInput, setStreakHippoInput] = useState('')
+  const [streakStartInput, setStreakStartInput] = useState('')
+  const [streakEndInput, setStreakEndInput] = useState('')
+  const [streakError, setStreakError] = useState<string | null>(null)
+  const [streakFilters, setStreakFilters] = useState<StreakFilters | null>(null)
 
   const [horseIdInput, setHorseIdInput] = useState('')
   const [horseHippoInput, setHorseHippoInput] = useState('')
@@ -644,6 +774,35 @@ export default function AnalyticsPage() {
         endDate: trendFilters?.endDate,
       }),
     enabled: Boolean(trendFilters?.entityId),
+  })
+
+  const streakQueryKey = useMemo(
+    () =>
+      streakFilters
+        ? [
+            'analytics',
+            'streaks',
+            streakFilters.entityType,
+            streakFilters.entityId,
+            streakFilters.hippodrome ?? '',
+            streakFilters.startDate ?? '',
+            streakFilters.endDate ?? '',
+          ]
+        : ['analytics', 'streaks', 'idle'],
+    [streakFilters],
+  )
+
+  const streakQuery = useQuery({
+    queryKey: streakQueryKey,
+    queryFn: () =>
+      analyticsService.getPerformanceStreaks({
+        entityType: streakFilters!.entityType,
+        entityId: streakFilters!.entityId,
+        hippodrome: streakFilters?.hippodrome,
+        startDate: streakFilters?.startDate,
+        endDate: streakFilters?.endDate,
+      }),
+    enabled: Boolean(streakFilters?.entityId),
   })
 
   const horseQueryKey = useMemo(() => (
@@ -785,6 +944,32 @@ export default function AnalyticsPage() {
       startDate: trendStartInput || undefined,
       endDate: trendEndInput || undefined,
       granularity: trendGranularityInput,
+    })
+  }
+
+  const handleStreakSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = streakIdInput.trim()
+
+    if (!id) {
+      setStreakError("Veuillez saisir un identifiant Aspiturf valide.")
+      setStreakFilters(null)
+      return
+    }
+
+    if (streakStartInput && streakEndInput && streakStartInput > streakEndInput) {
+      setStreakError('La date de début doit précéder la date de fin.')
+      setStreakFilters(null)
+      return
+    }
+
+    setStreakError(null)
+    setStreakFilters({
+      entityType: streakTypeInput,
+      entityId: id,
+      hippodrome: streakHippoInput.trim() || undefined,
+      startDate: streakStartInput || undefined,
+      endDate: streakEndInput || undefined,
     })
   }
 
@@ -1013,6 +1198,61 @@ export default function AnalyticsPage() {
           <p className="text-sm text-red-600">Erreur: {(trendQuery.error as Error).message}</p>
         )}
         {trendQuery.data && <TrendPanel data={trendQuery.data} />}
+      </SectionCard>
+
+      <SectionCard
+        title="Séries de résultats"
+        description="Identifiez les séries de victoires et de podiums consécutifs pour un cheval, un jockey ou un entraîneur."
+      >
+        <form
+          onSubmit={handleStreakSubmit}
+          className="grid gap-4 md:grid-cols-[repeat(5,minmax(0,1fr)),auto]"
+        >
+          <select
+            value={streakTypeInput}
+            onChange={(event) => setStreakTypeInput(event.target.value as TrendEntityType)}
+            className="input"
+          >
+            <option value="horse">Cheval</option>
+            <option value="jockey">Jockey</option>
+            <option value="trainer">Entraîneur</option>
+          </select>
+          <input
+            value={streakIdInput}
+            onChange={(event) => setStreakIdInput(event.target.value)}
+            placeholder="Identifiant Aspiturf (id)"
+            className="input"
+          />
+          <input
+            value={streakHippoInput}
+            onChange={(event) => setStreakHippoInput(event.target.value)}
+            placeholder="Filtrer par hippodrome (optionnel)"
+            className="input"
+          />
+          <input
+            type="date"
+            value={streakStartInput}
+            onChange={(event) => setStreakStartInput(event.target.value)}
+            className="input"
+          />
+          <input
+            type="date"
+            value={streakEndInput}
+            onChange={(event) => setStreakEndInput(event.target.value)}
+            className="input"
+          />
+          <button type="submit" className="btn btn-primary">
+            Analyser
+          </button>
+        </form>
+        {streakError && <p className="text-sm text-red-600">{streakError}</p>}
+        {streakQuery.isPending && (
+          <p className="text-sm text-gray-500">Calcul des séries en cours…</p>
+        )}
+        {streakQuery.isError && (
+          <p className="text-sm text-red-600">Erreur: {(streakQuery.error as Error).message}</p>
+        )}
+        {streakQuery.data && <StreakPanel data={streakQuery.data} />}
       </SectionCard>
 
       <SectionCard

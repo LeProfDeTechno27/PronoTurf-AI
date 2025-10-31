@@ -209,6 +209,231 @@ class StubAspiturfClient:
 
         return leaderboard[: max(1, limit)]
 
+    async def performance_streaks(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Calcule des séries consécutives minimalistes pour les tests API."""
+
+        key_field = {
+            "horse": "idChe",
+            "jockey": "idJockey",
+            "trainer": "idEntraineur",
+        }.get(entity_type)
+
+        label_fields = {
+            "horse": ("nom_cheval", "cheval"),
+            "jockey": ("jockey",),
+            "trainer": ("entraineur",),
+        }.get(entity_type, tuple())
+
+        if not key_field:
+            raise ValueError("Type d'entité non supporté")
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        filtered: List[Dict[str, Any]] = []
+        wins = 0
+        podiums = 0
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+
+        for row in self._rows:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                for field in label_fields:
+                    value = row.get(field)
+                    if isinstance(value, str) and value.strip():
+                        entity_label = value.strip()
+                        break
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                if position == 1:
+                    wins += 1
+                if 1 <= position <= 3:
+                    podiums += 1
+
+            if first_date is None or race_date < first_date:
+                first_date = race_date
+
+            if last_date is None or race_date > last_date:
+                last_date = race_date
+
+            filtered.append(dict(row))
+
+        filtered.sort(key=lambda item: item.get("jour") or date.min)
+
+        total_races = len(filtered)
+        if not total_races:
+            return {
+                "entity_id": entity_id,
+                "entity_label": entity_label,
+                "total_races": 0,
+                "wins": 0,
+                "podiums": 0,
+                "date_start": None,
+                "date_end": None,
+                "best_win": None,
+                "best_podium": None,
+                "current_win": None,
+                "current_podium": None,
+                "history": [],
+            }
+
+        current = {
+            "win": {"length": 0, "start": None, "end": None},
+            "podium": {"length": 0, "start": None, "end": None},
+        }
+        best = {
+            "win": {"length": 0, "start": None, "end": None},
+            "podium": {"length": 0, "start": None, "end": None},
+        }
+        history: List[Dict[str, Any]] = []
+
+        def update_best(kind: str) -> None:
+            tracker = current[kind]
+            if tracker["length"] > best[kind]["length"]:
+                best[kind] = {
+                    "length": tracker["length"],
+                    "start": tracker["start"],
+                    "end": tracker["end"],
+                }
+
+        def close_streak(kind: str) -> None:
+            tracker = current[kind]
+            if tracker["length"]:
+                history.append(
+                    {
+                        "type": kind,
+                        "length": tracker["length"],
+                        "start_date": tracker["start"],
+                        "end_date": tracker["end"],
+                        "is_active": False,
+                    }
+                )
+                tracker["length"] = 0
+                tracker["start"] = None
+                tracker["end"] = None
+
+        for row in filtered:
+            race_date = row.get("jour")
+            position = row.get("cl")
+
+            is_win = isinstance(position, int) and position == 1
+            is_podium = isinstance(position, int) and 1 <= position <= 3
+
+            if is_win:
+                tracker = current["win"]
+                if tracker["length"] == 0:
+                    tracker["start"] = race_date
+                tracker["length"] += 1
+                tracker["end"] = race_date
+                update_best("win")
+            else:
+                close_streak("win")
+
+            if is_podium:
+                tracker = current["podium"]
+                if tracker["length"] == 0:
+                    tracker["start"] = race_date
+                tracker["length"] += 1
+                tracker["end"] = race_date
+                update_best("podium")
+            else:
+                close_streak("podium")
+
+        for kind in ("win", "podium"):
+            tracker = current[kind]
+            if tracker["length"]:
+                history.append(
+                    {
+                        "type": kind,
+                        "length": tracker["length"],
+                        "start_date": tracker["start"],
+                        "end_date": tracker["end"],
+                        "is_active": True,
+                    }
+                )
+                update_best(kind)
+
+        def build_best(kind: str) -> Optional[Dict[str, Any]]:
+            data = best[kind]
+            if data["length"] <= 0:
+                return None
+            tracker = current[kind]
+            is_active = (
+                tracker["length"] == data["length"]
+                and tracker["start"] == data["start"]
+                and tracker["end"] == data["end"]
+            )
+            return {
+                "type": kind,
+                "length": data["length"],
+                "start_date": data["start"],
+                "end_date": data["end"],
+                "is_active": is_active,
+            }
+
+        def build_current(kind: str) -> Optional[Dict[str, Any]]:
+            tracker = current[kind]
+            if tracker["length"] <= 0:
+                return None
+            return {
+                "type": kind,
+                "length": tracker["length"],
+                "start_date": tracker["start"],
+                "end_date": tracker["end"],
+                "is_active": True,
+            }
+
+        history.sort(
+            key=lambda item: (
+                item.get("is_active", False),
+                item.get("length", 0),
+                item.get("end_date") or date.min,
+            ),
+            reverse=True,
+        )
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "total_races": total_races,
+            "wins": wins,
+            "podiums": podiums,
+            "date_start": first_date,
+            "date_end": last_date,
+            "best_win": build_best("win"),
+            "best_podium": build_best("podium"),
+            "current_win": build_current("win"),
+            "current_podium": build_current("podium"),
+            "history": history[:10],
+        }
+
     async def performance_trend(
         self,
         *,
@@ -777,6 +1002,68 @@ async def test_trends_endpoint_returns_404_on_missing_data(analytics_client: Asy
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_streaks_endpoint_returns_series(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/streaks",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["total_races"] == 2
+    assert payload["wins"] == 1
+    assert payload["podiums"] == 2
+
+    best_win = payload["best_win_streak"]
+    assert best_win["length"] == 1
+    assert best_win["type"] == "win"
+    assert best_win["is_active"] is False
+
+    current_podium = payload["current_podium_streak"]
+    assert current_podium["length"] == 2
+    assert current_podium["type"] == "podium"
+    assert current_podium["is_active"] is True
+
+    history = payload["streak_history"]
+    types = {item["type"] for item in history}
+    assert {"win", "podium"}.issubset(types)
+
+
+@pytest.mark.anyio("asyncio")
+async def test_streaks_endpoint_handles_empty_results(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/streaks",
+        params={
+            "entity_type": "horse",
+            "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_streaks_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/streaks",
+        params={
+            "entity_type": "jockey",
+            "entity_id": "J-77",
+            "start_date": "2024-06-30",
+            "end_date": "2024-05-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
 
 
 @pytest.mark.anyio("asyncio")

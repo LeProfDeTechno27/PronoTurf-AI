@@ -2,7 +2,7 @@
 
 from enum import Enum
 from datetime import date as date_type
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -335,5 +335,68 @@ class PerformanceTrendResponse(BaseModel):
     points: List[PerformanceTrendPoint] = Field(
         default_factory=list,
         description="Liste des mesures agrégées par période",
+    )
+
+
+class PerformanceStreak(BaseModel):
+    """Description d'une série de résultats consécutifs."""
+
+    type: Literal["win", "podium"] = Field(
+        ...,
+        description="Nature de la série (victoires ou podiums)",
+    )
+    length: int = Field(
+        ..., ge=1, description="Nombre d'occurrences consécutives dans la série"
+    )
+    start_date: Optional[date_type] = Field(
+        default=None,
+        description="Date de début de la série",
+    )
+    end_date: Optional[date_type] = Field(
+        default=None,
+        description="Date de fin de la série",
+    )
+    is_active: bool = Field(
+        default=False,
+        description="Indique si la série est toujours en cours",
+    )
+
+
+class AnalyticsStreakResponse(BaseModel):
+    """Réponse synthétique pour les séries de résultats d'une entité."""
+
+    entity_type: TrendEntityType = Field(..., description="Type d'entité analysée")
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None,
+        description="Nom lisible de l'entité (si disponible)",
+    )
+    metadata: AnalyticsMetadata = Field(default_factory=AnalyticsMetadata)
+    total_races: int = Field(
+        ..., ge=0, description="Nombre de courses retenues pour l'analyse"
+    )
+    wins: int = Field(..., ge=0, description="Total de victoires sur l'échantillon")
+    podiums: int = Field(
+        ..., ge=0, description="Total de podiums sur l'échantillon"
+    )
+    best_win_streak: Optional[PerformanceStreak] = Field(
+        default=None,
+        description="Meilleure série de victoires observée",
+    )
+    best_podium_streak: Optional[PerformanceStreak] = Field(
+        default=None,
+        description="Meilleure série de podiums observée",
+    )
+    current_win_streak: Optional[PerformanceStreak] = Field(
+        default=None,
+        description="Série de victoires en cours (si existante)",
+    )
+    current_podium_streak: Optional[PerformanceStreak] = Field(
+        default=None,
+        description="Série de podiums en cours (si existante)",
+    )
+    streak_history: List[PerformanceStreak] = Field(
+        default_factory=list,
+        description="Historique des principales séries détectées",
     )
 

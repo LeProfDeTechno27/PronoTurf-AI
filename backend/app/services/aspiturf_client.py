@@ -886,6 +886,239 @@ class AspiturfClient:
             "points": points,
         }
 
+    async def performance_streaks(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Analyse les séries de résultats consécutifs pour une entité Aspiturf."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not entity_id:
+            raise ValueError("entity_id est requis pour calculer des séries")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_fields = ("nom_cheval", "cheval")
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_fields = ("jockey",)
+        else:
+            key_field = "idEntraineur"
+            label_fields = ("entraineur",)
+
+        filtered: List[Dict[str, Any]] = []
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+        wins = 0
+        podiums = 0
+
+        for row in self._data:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                # Les séries reposent sur l'ordre chronologique => on ignore les dates manquantes.
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                for field in label_fields:
+                    label = row.get(field)
+                    if isinstance(label, str) and label.strip():
+                        entity_label = label.strip()
+                        break
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                if position == 1:
+                    wins += 1
+                if 1 <= position <= 3:
+                    podiums += 1
+
+            if first_date is None or race_date < first_date:
+                first_date = race_date
+
+            if last_date is None or race_date > last_date:
+                last_date = race_date
+
+            filtered.append(dict(row))
+
+        filtered.sort(key=lambda item: item.get("jour") or date.min)
+
+        total_races = len(filtered)
+
+        if total_races == 0:
+            return {
+                "entity_id": str(entity_id),
+                "entity_label": entity_label,
+                "total_races": 0,
+                "wins": 0,
+                "podiums": 0,
+                "date_start": None,
+                "date_end": None,
+                "best_win": None,
+                "best_podium": None,
+                "current_win": None,
+                "current_podium": None,
+                "history": [],
+            }
+
+        current = {
+            "win": {"length": 0, "start": None, "end": None},
+            "podium": {"length": 0, "start": None, "end": None},
+        }
+        best = {
+            "win": {"length": 0, "start": None, "end": None},
+            "podium": {"length": 0, "start": None, "end": None},
+        }
+        history: List[Dict[str, Any]] = []
+
+        def update_best(kind: str) -> None:
+            tracker = current[kind]
+            if tracker["length"] > best[kind]["length"]:
+                best[kind] = {
+                    "length": tracker["length"],
+                    "start": tracker["start"],
+                    "end": tracker["end"],
+                }
+
+        def close_streak(kind: str) -> None:
+            tracker = current[kind]
+            if tracker["length"]:
+                history.append(
+                    {
+                        "type": kind,
+                        "length": tracker["length"],
+                        "start_date": tracker["start"],
+                        "end_date": tracker["end"],
+                        "is_active": False,
+                    }
+                )
+                tracker["length"] = 0
+                tracker["start"] = None
+                tracker["end"] = None
+
+        for row in filtered:
+            race_date = row.get("jour")
+            position = row.get("cl")
+
+            is_win = isinstance(position, int) and position == 1
+            is_podium = isinstance(position, int) and 1 <= position <= 3
+
+            if is_win:
+                tracker = current["win"]
+                if tracker["length"] == 0:
+                    tracker["start"] = race_date
+                tracker["length"] += 1
+                tracker["end"] = race_date
+                update_best("win")
+            else:
+                close_streak("win")
+
+            if is_podium:
+                tracker = current["podium"]
+                if tracker["length"] == 0:
+                    tracker["start"] = race_date
+                tracker["length"] += 1
+                tracker["end"] = race_date
+                update_best("podium")
+            else:
+                close_streak("podium")
+
+        for kind in ("win", "podium"):
+            tracker = current[kind]
+            if tracker["length"]:
+                history.append(
+                    {
+                        "type": kind,
+                        "length": tracker["length"],
+                        "start_date": tracker["start"],
+                        "end_date": tracker["end"],
+                        "is_active": True,
+                    }
+                )
+                update_best(kind)
+
+        def build_summary(kind: str) -> Optional[Dict[str, Any]]:
+            tracker = current[kind]
+            if tracker["length"] <= 0:
+                return None
+            return {
+                "type": kind,
+                "length": tracker["length"],
+                "start_date": tracker["start"],
+                "end_date": tracker["end"],
+                "is_active": True,
+            }
+
+        def build_best(kind: str) -> Optional[Dict[str, Any]]:
+            data = best[kind]
+            if data["length"] <= 0:
+                return None
+            tracker = current[kind]
+            is_active = (
+                tracker["length"] == data["length"]
+                and tracker["start"] == data["start"]
+                and tracker["end"] == data["end"]
+            )
+            return {
+                "type": kind,
+                "length": data["length"],
+                "start_date": data["start"],
+                "end_date": data["end"],
+                "is_active": is_active,
+            }
+
+        history.sort(
+            key=lambda item: (
+                item.get("is_active", False),
+                item.get("length", 0),
+                item.get("end_date") or date.min,
+            ),
+            reverse=True,
+        )
+
+        history = history[:10]
+
+        return {
+            "entity_id": str(entity_id),
+            "entity_label": entity_label,
+            "total_races": total_races,
+            "wins": wins,
+            "podiums": podiums,
+            "date_start": first_date,
+            "date_end": last_date,
+            "best_win": build_best("win"),
+            "best_podium": build_best("podium"),
+            "current_win": build_summary("win"),
+            "current_podium": build_summary("podium"),
+            "history": history,
+        }
+
     async def search_entities(
         self,
         entity_type: str,
