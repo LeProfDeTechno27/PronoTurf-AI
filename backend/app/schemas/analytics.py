@@ -110,6 +110,17 @@ class RecentRace(BaseModel):
     is_podium: bool = Field(..., description="Indique si la course est un podium (top 3)")
 
 
+class FormRace(RecentRace):
+    """Course récente agrémentée d'un score de forme (0-5)."""
+
+    score: int = Field(
+        ...,
+        ge=0,
+        le=5,
+        description="Indice de forme pondéré en fonction de la position finale",
+    )
+
+
 class PerformanceSummary(BaseModel):
     """Résumé rapide de performances (cheval, jockey, entraineur, couple)."""
 
@@ -459,5 +470,71 @@ class PerformanceDistributionResponse(BaseModel):
     buckets: List[DistributionBucket] = Field(
         default_factory=list,
         description="Liste des agrégats calculés par catégorie",
+    )
+
+
+class AnalyticsFormResponse(BaseModel):
+    """Résumé synthétique de la forme récente d'une entité Aspiturf."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible associé à l'entité"
+    )
+    window: int = Field(
+        ..., ge=1, le=50, description="Nombre de courses prises en compte pour la forme"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées relatives aux filtres appliqués",
+    )
+    total_races: int = Field(
+        ..., ge=0, description="Nombre de courses réellement analysées dans la fenêtre"
+    )
+    wins: int = Field(..., ge=0, description="Victoires recensées dans la fenêtre")
+    podiums: int = Field(
+        ..., ge=0, description="Podiums recensés dans la fenêtre"
+    )
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire sur l'échantillon (0-1)",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium sur l'échantillon (0-1)",
+    )
+    average_finish: Optional[float] = Field(
+        default=None, description="Position moyenne à l'arrivée"
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote moyenne observée"
+    )
+    median_odds: Optional[float] = Field(
+        default=None,
+        description="Médiane des cotes relevées dans la fenêtre",
+    )
+    best_position: Optional[int] = Field(
+        default=None,
+        description="Meilleure position obtenue sur la période étudiée",
+    )
+    consistency_index: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Indice de constance compris entre 0 (irrégulier) et 1 (très stable)",
+    )
+    form_score: Optional[float] = Field(
+        default=None,
+        description="Score de forme moyen (0-5) calculé à partir des positions finales",
+    )
+    races: List[FormRace] = Field(
+        default_factory=list,
+        description="Historique des courses triées de la plus récente à la plus ancienne",
     )
 

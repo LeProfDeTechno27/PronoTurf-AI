@@ -14,6 +14,7 @@ import type {
   TrendGranularity,
   PerformanceDistributionResponse,
   DistributionDimension,
+  AnalyticsFormResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -161,6 +162,28 @@ export const analyticsService = {
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
         ...(params.distanceStep ? { distance_step: params.distanceStep } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getFormSnapshot(params: {
+    entityType: TrendEntityType
+    entityId: string
+    window?: number
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const response = await apiClient.get<AnalyticsFormResponse>('/analytics/form', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.window ? { window: params.window } : {}),
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
       },
     })
 

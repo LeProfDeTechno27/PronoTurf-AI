@@ -24,6 +24,10 @@ export interface RecentRace {
   is_podium: boolean
 }
 
+export interface FormRace extends RecentRace {
+  score: number
+}
+
 export interface PerformanceSummary {
   sample_size?: number | null
   wins?: number | null
@@ -90,6 +94,26 @@ export interface PerformanceDistributionResponse {
   dimension: DistributionDimension
   metadata: AnalyticsMetadata
   buckets: DistributionBucket[]
+}
+
+export interface AnalyticsFormResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  window: number
+  metadata: AnalyticsMetadata
+  total_races: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+  median_odds?: number | null
+  best_position?: number | null
+  consistency_index?: number | null
+  form_score?: number | null
+  races: FormRace[]
 }
 
 export interface PerformanceStreak {

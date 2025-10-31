@@ -9,9 +9,11 @@ import type {
   JockeyAnalyticsResponse,
   AnalyticsInsightsResponse,
   AnalyticsStreakResponse,
+  AnalyticsFormResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
+  FormRace,
   TrainerAnalyticsResponse,
   PerformanceTrendResponse,
   PerformanceTrendPoint,
@@ -30,6 +32,9 @@ const formatNumber = (value?: number | null) =>
   value == null ? '—' : value.toLocaleString('fr-FR')
 
 const formatAverage = (value?: number | null, digits = 2) =>
+  value == null ? '—' : value.toFixed(digits)
+
+const formatScore = (value?: number | null, digits = 1) =>
   value == null ? '—' : value.toFixed(digits)
 
 const formatDate = (value?: string | null) =>
@@ -83,6 +88,15 @@ type TrendFilters = {
   startDate?: string
   endDate?: string
   granularity: TrendGranularity
+}
+
+type FormFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  window: number
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
 }
 
 type StreakFilters = {
@@ -734,6 +748,86 @@ function DistributionTable({ buckets }: { buckets: DistributionBucket[] }) {
   )
 }
 
+function FormRaceTimeline({ races }: { races: FormRace[] }) {
+  // Restitue la séquence des courses utilisées pour le calcul de la forme.
+  if (!races.length) {
+    return <p className="text-gray-500">Aucune course récente disponible sur la période.</p>
+  }
+
+  return (
+    <ul className="space-y-2">
+      {races.map((race, index) => (
+        <li
+          key={`${race.date ?? 'inconnue'}-${race.course_number ?? index}`}
+          className="flex items-center justify-between rounded-lg border border-indigo-100 bg-white px-4 py-3 shadow-sm"
+        >
+          <div>
+            <p className="text-sm font-semibold text-gray-900">
+              {race.hippodrome ?? 'Hippodrome inconnu'} • Course {race.course_number ?? '—'}
+            </p>
+            <p className="text-xs text-gray-500">
+              {formatDate(race.date)} • {race.distance ? `${race.distance} m` : 'Distance inconnue'}
+            </p>
+            <p className="text-xs text-gray-500">
+              {race.is_win ? 'Victoire' : race.is_podium ? 'Podium' : 'Hors podium'} • Position {race.final_position ?? '—'}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-semibold text-indigo-600">Score: {race.score} / 5</p>
+            <p className="text-xs text-gray-500">Cote : {race.odds ?? '—'}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function FormPanel({ data }: { data: AnalyticsFormResponse }) {
+  // Vue synthétique sur la forme récente et les indicateurs associés.
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Fenêtre analysée" value={`${data.window} courses`} />
+        <SummaryStats label="Courses retenues" value={formatNumber(data.total_races)} />
+        <SummaryStats label="Score moyen" value={`${formatScore(data.form_score, 2)} / 5`} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Taux de victoire" value={formatPercent(data.win_rate)} />
+        <SummaryStats label="Taux de podium" value={formatPercent(data.podium_rate)} />
+        <SummaryStats label="Indice de constance" value={formatPercent(data.consistency_index)} />
+        <SummaryStats label="Position moyenne" value={formatAverage(data.average_finish)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats label="Cote moyenne" value={formatAverage(data.average_odds)} />
+        <SummaryStats label="Cote médiane" value={formatAverage(data.median_odds)} />
+        <SummaryStats label="Meilleure place" value={formatNumber(data.best_position)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter : 'Tous'}
+        />
+        <SummaryStats label="Victoires / Podiums" value={`${formatNumber(data.wins)} • ${formatNumber(data.podiums)}`} />
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-lg font-semibold text-gray-900">Courses prises en compte</h3>
+        <FormRaceTimeline races={data.races} />
+      </div>
+    </div>
+  )
+}
+
 function DistributionPanel({ data }: { data: PerformanceDistributionResponse }) {
   // Synthèse complète de la distribution calculée côté backend.
   const entityDisplay = data.entity_label
@@ -797,6 +891,15 @@ export default function AnalyticsPage() {
   const [trendGranularityInput, setTrendGranularityInput] = useState<TrendGranularity>('month')
   const [trendError, setTrendError] = useState<string | null>(null)
   const [trendFilters, setTrendFilters] = useState<TrendFilters | null>(null)
+
+  const [formTypeInput, setFormTypeInput] = useState<TrendEntityType>('horse')
+  const [formIdInput, setFormIdInput] = useState('')
+  const [formWindowInput, setFormWindowInput] = useState('5')
+  const [formHippoInput, setFormHippoInput] = useState('')
+  const [formStartInput, setFormStartInput] = useState('')
+  const [formEndInput, setFormEndInput] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
+  const [formFilters, setFormFilters] = useState<FormFilters | null>(null)
 
   const [streakTypeInput, setStreakTypeInput] = useState<TrendEntityType>('horse')
   const [streakIdInput, setStreakIdInput] = useState('')
@@ -900,6 +1003,37 @@ export default function AnalyticsPage() {
         endDate: trendFilters?.endDate,
       }),
     enabled: Boolean(trendFilters?.entityId),
+  })
+
+  const formQueryKey = useMemo(
+    () =>
+      formFilters
+        ? [
+            'analytics',
+            'form',
+            formFilters.entityType,
+            formFilters.entityId,
+            formFilters.window,
+            formFilters.hippodrome ?? '',
+            formFilters.startDate ?? '',
+            formFilters.endDate ?? '',
+          ]
+        : ['analytics', 'form', 'idle'],
+    [formFilters],
+  )
+
+  const formQuery = useQuery({
+    queryKey: formQueryKey,
+    queryFn: () =>
+      analyticsService.getFormSnapshot({
+        entityType: formFilters!.entityType,
+        entityId: formFilters!.entityId,
+        window: formFilters!.window,
+        hippodrome: formFilters?.hippodrome,
+        startDate: formFilters?.startDate,
+        endDate: formFilters?.endDate,
+      }),
+    enabled: Boolean(formFilters?.entityId),
   })
 
   const streakQueryKey = useMemo(
@@ -1103,6 +1237,40 @@ export default function AnalyticsPage() {
       startDate: trendStartInput || undefined,
       endDate: trendEndInput || undefined,
       granularity: trendGranularityInput,
+    })
+  }
+
+  const handleFormSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = formIdInput.trim()
+    const windowValue = Number(formWindowInput.trim() || '5')
+
+    if (!id) {
+      setFormError("Veuillez saisir un identifiant Aspiturf valide.")
+      setFormFilters(null)
+      return
+    }
+
+    if (Number.isNaN(windowValue) || windowValue < 1 || windowValue > 30) {
+      setFormError('La fenêtre doit être comprise entre 1 et 30 courses.')
+      setFormFilters(null)
+      return
+    }
+
+    if (formStartInput && formEndInput && formStartInput > formEndInput) {
+      setFormError('La date de début doit précéder la date de fin.')
+      setFormFilters(null)
+      return
+    }
+
+    setFormError(null)
+    setFormFilters({
+      entityType: formTypeInput,
+      entityId: id,
+      window: windowValue,
+      hippodrome: formHippoInput.trim() || undefined,
+      startDate: formStartInput || undefined,
+      endDate: formEndInput || undefined,
     })
   }
 
@@ -1395,6 +1563,70 @@ export default function AnalyticsPage() {
           <p className="text-sm text-red-600">Erreur: {(trendQuery.error as Error).message}</p>
         )}
         {trendQuery.data && <TrendPanel data={trendQuery.data} />}
+      </SectionCard>
+
+      <SectionCard
+        title="Indice de forme"
+        description="Analysez les N dernières courses d'un cheval, d'un jockey ou d'un entraîneur pour connaître sa dynamique actuelle."
+      >
+        <form
+          onSubmit={handleFormSubmit}
+          className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
+        >
+          <select
+            value={formTypeInput}
+            onChange={(event) => setFormTypeInput(event.target.value as TrendEntityType)}
+            className="input"
+          >
+            <option value="horse">Cheval</option>
+            <option value="jockey">Jockey</option>
+            <option value="trainer">Entraîneur</option>
+          </select>
+          <input
+            value={formIdInput}
+            onChange={(event) => setFormIdInput(event.target.value)}
+            placeholder="Identifiant Aspiturf (id)"
+            className="input"
+          />
+          <input
+            type="number"
+            min={1}
+            max={30}
+            value={formWindowInput}
+            onChange={(event) => setFormWindowInput(event.target.value)}
+            placeholder="Fenêtre (courses)"
+            className="input"
+          />
+          <input
+            value={formHippoInput}
+            onChange={(event) => setFormHippoInput(event.target.value)}
+            placeholder="Filtrer par hippodrome (optionnel)"
+            className="input"
+          />
+          <input
+            type="date"
+            value={formStartInput}
+            onChange={(event) => setFormStartInput(event.target.value)}
+            className="input"
+          />
+          <input
+            type="date"
+            value={formEndInput}
+            onChange={(event) => setFormEndInput(event.target.value)}
+            className="input"
+          />
+          <button type="submit" className="btn btn-primary">
+            Calculer
+          </button>
+        </form>
+        {formError && <p className="text-sm text-red-600">{formError}</p>}
+        {formQuery.isPending && (
+          <p className="text-sm text-gray-500">Calcul de l'indice de forme en cours…</p>
+        )}
+        {formQuery.isError && (
+          <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
+        )}
+        {formQuery.data && <FormPanel data={formQuery.data} />}
       </SectionCard>
 
       <SectionCard

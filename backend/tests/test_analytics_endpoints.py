@@ -1056,6 +1056,79 @@ async def test_course_analytics_exposes_partant_statistics(analytics_client: Asy
 
 
 @pytest.mark.anyio("asyncio")
+async def test_form_endpoint_returns_recent_form_metrics(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/form",
+        params={"entity_type": "horse", "entity_id": "H-1", "window": 5},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-1"
+    assert payload["total_races"] == 2
+    assert payload["wins"] == 1
+    assert payload["podiums"] == 2
+    assert payload["win_rate"] == 0.5
+    assert payload["podium_rate"] == 1.0
+    assert payload["average_finish"] == 2.0
+    assert payload["average_odds"] == 6.25
+    assert payload["median_odds"] == 6.25
+    assert payload["best_position"] == 1
+    assert payload["consistency_index"] == 0.5
+    assert payload["form_score"] == 3.5
+
+    races = payload["races"]
+    assert [race["score"] for race in races] == [2, 5]
+    assert payload["metadata"]["date_end"] == "2024-05-18"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_form_endpoint_applies_date_filters(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/form",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "window": 5,
+            "start_date": "2024-05-10",
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["total_races"] == 1
+    assert payload["wins"] == 0
+    assert payload["podiums"] == 1
+    assert payload["average_finish"] == 3.0
+    assert payload["consistency_index"] == 1.0
+    assert payload["form_score"] == 2.0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_form_endpoint_returns_404_when_no_history(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/form",
+        params={"entity_type": "horse", "entity_id": "H-999"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio("asyncio")
+async def test_form_endpoint_rejects_invalid_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/form",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-06-01",
+            "end_date": "2024-05-01",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio("asyncio")
 async def test_insights_endpoint_builds_leaderboards(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/insights",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from statistics import mean
+from statistics import mean, median, pstdev
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,12 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.config import settings
 from app.schemas.analytics import (
     AnalyticsMetadata,
+    AnalyticsFormResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
     AnalyticsInsightsResponse,
     AnalyticsStreakResponse,
     DistributionBucket,
     DistributionDimension,
+    FormRace,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
@@ -150,6 +152,22 @@ def _extract_name(rows: Iterable[Dict[str, Any]], keys: Iterable[str]) -> Option
     return None
 
 
+def _form_points(position: Optional[int]) -> int:
+    """Attribue un score simple de 0 à 5 selon la position finale."""
+
+    if not isinstance(position, int):
+        return 0
+    if position == 1:
+        return 5
+    if position == 2:
+        return 3
+    if position == 3:
+        return 2
+    if position == 4:
+        return 1
+    return 0
+
+
 def _sorted_races(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     def sort_key(item: Dict[str, Any]):
         race_date = item.get('jour')
@@ -181,6 +199,46 @@ def _recent_results(rows: List[Dict[str, Any]], limit: int = 5) -> List[RecentRa
         )
 
     return results
+
+
+def _form_races(rows: List[Dict[str, Any]]) -> List[FormRace]:
+    """Convertit les courses récentes en objets enrichis d'un score de forme."""
+
+    history: List[FormRace] = []
+
+    for row in rows:
+        position = row.get('cl') if isinstance(row.get('cl'), int) else None
+        odds_value = row.get('cotedirect') or row.get('coteprob')
+
+        history.append(
+            FormRace(
+                date=row.get('jour'),
+                hippodrome=row.get('hippo'),
+                course_number=row.get('prix'),
+                distance=row.get('dist'),
+                final_position=position,
+                odds=odds_value,
+                is_win=_is_win(row),
+                is_podium=_is_podium(row),
+                score=_form_points(position),
+            )
+        )
+
+    return history
+
+
+def _consistency_index(positions: List[int]) -> Optional[float]:
+    """Calcule un indice de constance basé sur l'écart-type des positions."""
+
+    cleaned = [pos for pos in positions if isinstance(pos, int)]
+    if not cleaned:
+        return None
+    if len(cleaned) == 1:
+        return 1.0
+
+    deviation = pstdev(cleaned)
+    # Plus l'écart-type est faible, plus l'indice tend vers 1.
+    return round(1 / (1 + deviation), 3)
 
 
 def _to_leaderboard_entries(rows: List[Dict[str, Any]]) -> List[LeaderboardEntry]:
@@ -333,6 +391,129 @@ async def get_analytics_insights(
         top_horses=_to_leaderboard_entries(horse_rows),
         top_jockeys=_to_leaderboard_entries(jockey_rows),
         top_trainers=_to_leaderboard_entries(trainer_rows),
+    )
+
+
+@router.get(
+    "/form",
+    response_model=AnalyticsFormResponse,
+    summary="Mesurer la forme récente d'une entité",
+    description=(
+        "Analyse les N dernières courses d'un cheval, d'un jockey ou d'un entraîneur "
+        "pour dériver un score de forme et des indicateurs de constance."
+    ),
+)
+async def get_form_snapshot(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité analysée"
+    ),
+    window: int = Query(
+        5,
+        ge=1,
+        le=30,
+        description="Nombre de courses à considérer pour calculer la forme",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer sur un hippodrome spécifique (optionnel)",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Ignorer les courses disputées avant cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Ignorer les courses disputées après cette date",
+    ),
+) -> AnalyticsFormResponse:
+    """Retourne les indicateurs de forme récente pour l'entité demandée."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date doit être antérieure ou égale à end_date"
+        )
+
+    filters: Dict[str, Any] = {}
+    if entity_type == TrendEntityType.HORSE:
+        filters["horse_id"] = entity_id
+    elif entity_type == TrendEntityType.JOCKEY:
+        filters["jockey_id"] = entity_id
+    elif entity_type == TrendEntityType.TRAINER:
+        filters["trainer_id"] = entity_id
+    else:  # pragma: no cover - enum exhaustivité
+        raise HTTPException(status_code=400, detail="Type d'entité non supporté")
+
+    if hippodrome:
+        filters["hippodrome"] = hippodrome
+
+    rows = await client.get_races(**filters)
+
+    filtered_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        race_date = row.get("jour")
+
+        if start_date and isinstance(race_date, date) and race_date < start_date:
+            continue
+        if end_date and isinstance(race_date, date) and race_date > end_date:
+            continue
+        if start_date and not isinstance(race_date, date):
+            # Si une borne temporelle est spécifiée mais que la date est inconnue,
+            # on exclut la course pour éviter des résultats biaisés.
+            continue
+        if end_date and not isinstance(race_date, date):
+            continue
+
+        filtered_rows.append(row)
+
+    if not filtered_rows:
+        raise HTTPException(status_code=404, detail="Aucune course trouvée pour cette entité")
+
+    sorted_rows = _sorted_races(filtered_rows)
+    window_rows = sorted_rows[:window]
+
+    positions = [row.get("cl") for row in window_rows if isinstance(row.get("cl"), int)]
+    odds_values = [
+        float(row.get("cotedirect") or row.get("coteprob"))
+        for row in window_rows
+        if isinstance(row.get("cotedirect") or row.get("coteprob"), (int, float))
+    ]
+
+    wins = sum(1 for row in window_rows if _is_win(row))
+    podiums = sum(1 for row in window_rows if _is_podium(row))
+    score_total = sum(_form_points(row.get("cl")) for row in window_rows)
+
+    entity_label = _extract_name(
+        window_rows,
+        {
+            TrendEntityType.HORSE: ("nom_cheval", "cheval"),
+            TrendEntityType.JOCKEY: ("jockey",),
+            TrendEntityType.TRAINER: ("entraineur",),
+        }[entity_type],
+    )
+
+    return AnalyticsFormResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        window=window,
+        metadata=_build_metadata(window_rows, hippodrome),
+        total_races=len(window_rows),
+        wins=wins,
+        podiums=podiums,
+        win_rate=_safe_rate(wins, len(window_rows)),
+        podium_rate=_safe_rate(podiums, len(window_rows)),
+        average_finish=_safe_mean(positions),
+        average_odds=_safe_mean(odds_values),
+        median_odds=round(median(odds_values), 3) if odds_values else None,
+        best_position=min(positions) if positions else None,
+        consistency_index=_consistency_index(positions),
+        form_score=round(score_total / len(window_rows), 2) if window_rows else None,
+        races=_form_races(window_rows),
     )
 
 
