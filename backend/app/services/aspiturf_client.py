@@ -17,7 +17,7 @@ import csv
 import io
 from calendar import monthrange
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -884,6 +884,200 @@ class AspiturfClient:
             "date_start": first_date,
             "date_end": last_date,
             "points": points,
+        }
+
+    async def performance_distribution(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        dimension: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        distance_step: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Construit une distribution des résultats d'une entité."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not entity_id:
+            raise ValueError("entity_id est requis pour analyser une distribution")
+
+        allowed_dimensions = {"distance", "draw", "hippodrome", "discipline"}
+        if dimension not in allowed_dimensions:
+            raise ValueError(f"Dimension inconnue: {dimension}")
+
+        if dimension != "distance":
+            distance_step = None
+        else:
+            step = distance_step or 200
+            if step <= 0:
+                raise ValueError("distance_step doit être strictement positif")
+            distance_step = step
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_fields = ("nom_cheval", "cheval")
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_fields = ("jockey",)
+        else:
+            key_field = "idEntraineur"
+            label_fields = ("entraineur",)
+
+        def resolve_bucket(row: Dict[str, Any]) -> Optional[Tuple[Any, str]]:
+            """Détermine le seau d'agrégation à partir de la dimension choisie."""
+
+            if dimension == "distance":
+                value = row.get("dist")
+                if not isinstance(value, int):
+                    return None
+                assert distance_step is not None  # pour mypy
+                bucket_start = (value // distance_step) * distance_step
+                bucket_end = bucket_start + distance_step - 1
+                label = f"{bucket_start}-{bucket_end} m"
+                return (bucket_start, label)
+
+            if dimension == "draw":
+                value = row.get("numero")
+                if value is None:
+                    return None
+                try:
+                    numeric = int(value)
+                except (TypeError, ValueError):
+                    return None
+                label = f"N° {numeric}"
+                return (numeric, label)
+
+            if dimension == "hippodrome":
+                value = row.get("hippo")
+                if not value:
+                    return None
+                label = str(value).upper()
+                return (label, label)
+
+            raw_discipline = (
+                row.get("typec")
+                or row.get("typecourse")
+                or row.get("discipline")
+                or "Inconnu"
+            )
+            label = str(raw_discipline).strip() or "Inconnu"
+            return (label.lower(), label.title())
+
+        buckets: Dict[Any, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+
+        for row in self._data:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                # Les lignes sans date fiable ne permettent pas de respecter le filtre temporel.
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            bucket_descriptor = resolve_bucket(row)
+            if bucket_descriptor is None:
+                continue
+
+            bucket_key, bucket_label = bucket_descriptor
+
+            if entity_label is None:
+                for field in label_fields:
+                    value = row.get(field)
+                    if isinstance(value, str) and value.strip():
+                        entity_label = value.strip()
+                        break
+
+            if isinstance(race_date, date):
+                if first_date is None or race_date < first_date:
+                    first_date = race_date
+                if last_date is None or race_date > last_date:
+                    last_date = race_date
+
+            bucket = buckets.setdefault(
+                bucket_key,
+                {
+                    "label": bucket_label,
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["label"] = bucket_label
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds_value = row.get("cotedirect") or row.get("coteprob")
+            if isinstance(odds_value, (int, float)):
+                bucket["odds"].append(float(odds_value))
+
+        formatted: List[Dict[str, Any]] = []
+        for key, bucket in buckets.items():
+            races = bucket["races"]
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+
+            positions = [pos for pos in bucket["positions"] if isinstance(pos, (int, float))]
+            odds_values = bucket["odds"]
+
+            average_finish = sum(positions) / len(positions) if positions else None
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            formatted.append(
+                {
+                    "key": key,
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+        # Tri décroissant sur le volume de courses puis sur le nombre de victoires.
+        formatted.sort(key=lambda item: (item["races"], item["wins"]), reverse=True)
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": first_date,
+            "date_end": last_date,
+            "dimension": dimension,
+            "buckets": formatted,
         }
 
     async def performance_streaks(

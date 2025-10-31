@@ -15,6 +15,8 @@ from app.schemas.analytics import (
     AnalyticsSearchType,
     AnalyticsInsightsResponse,
     AnalyticsStreakResponse,
+    DistributionBucket,
+    DistributionDimension,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
@@ -23,6 +25,7 @@ from app.schemas.analytics import (
     PerformanceStreak,
     PerformanceTrendPoint,
     PerformanceTrendResponse,
+    PerformanceDistributionResponse,
     PartantInsight,
     PerformanceBreakdown,
     PerformanceSummary,
@@ -250,6 +253,28 @@ def _to_trend_points(rows: List[Dict[str, Any]]) -> List[PerformanceTrendPoint]:
     return points
 
 
+def _to_distribution_buckets(rows: List[Dict[str, Any]]) -> List[DistributionBucket]:
+    """Convertit une liste de dictionnaires en seaux de distribution typés."""
+
+    buckets: List[DistributionBucket] = []
+
+    for row in rows:
+        buckets.append(
+            DistributionBucket(
+                label=str(row.get("label")),
+                races=int(row.get("races", 0)),
+                wins=int(row.get("wins", 0)),
+                podiums=int(row.get("podiums", 0)),
+                win_rate=row.get("win_rate"),
+                podium_rate=row.get("podium_rate"),
+                average_finish=row.get("average_finish"),
+                average_odds=row.get("average_odds"),
+            )
+        )
+
+    return buckets
+
+
 @router.get(
     "/insights",
     response_model=AnalyticsInsightsResponse,
@@ -384,6 +409,93 @@ async def get_performance_trends(
         granularity=granularity,
         metadata=metadata,
         points=points,
+    )
+
+
+@router.get(
+    "/distributions",
+    response_model=PerformanceDistributionResponse,
+    summary="Analyser la répartition des performances d'une entité",
+    description=(
+        "Agrège les résultats d'un cheval, jockey ou entraîneur selon une dimension donnée "
+        "(distance, numéro de corde, hippodrome ou discipline)."
+    ),
+)
+async def get_performance_distribution(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    dimension: DistributionDimension = Query(
+        ..., description="Dimension d'agrégation pour la distribution",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+    distance_step: int = Query(
+        200,
+        ge=50,
+        le=1000,
+        description="Largeur des intervalles en mètres pour l'analyse par distance",
+    ),
+) -> PerformanceDistributionResponse:
+    """Retourne la distribution des performances selon la dimension choisie."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    # On ne transmet le pas de distance que lorsque l'utilisateur analyse par distance.
+    distance_step_value: Optional[int] = None
+    if dimension is DistributionDimension.DISTANCE:
+        distance_step_value = distance_step
+
+    payload = await client.performance_distribution(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        dimension=dimension.value,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+        distance_step=distance_step_value,
+    )
+
+    buckets = _to_distribution_buckets(payload.get("buckets", []))
+
+    if not buckets:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=payload.get("date_start"),
+        date_end=payload.get("date_end"),
+    )
+
+    return PerformanceDistributionResponse(
+        entity_type=entity_type,
+        entity_id=payload.get("entity_id", entity_id),
+        entity_label=payload.get("entity_label"),
+        dimension=dimension,
+        metadata=metadata,
+        buckets=buckets,
     )
 
 

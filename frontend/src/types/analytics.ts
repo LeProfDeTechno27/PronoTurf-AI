@@ -70,6 +70,28 @@ export interface PerformanceTrendResponse {
   points: PerformanceTrendPoint[]
 }
 
+export type DistributionDimension = 'distance' | 'draw' | 'hippodrome' | 'discipline'
+
+export interface DistributionBucket {
+  label: string
+  races: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+}
+
+export interface PerformanceDistributionResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  dimension: DistributionDimension
+  metadata: AnalyticsMetadata
+  buckets: DistributionBucket[]
+}
+
 export interface PerformanceStreak {
   type: 'win' | 'podium'
   length: number

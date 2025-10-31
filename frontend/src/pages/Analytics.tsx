@@ -16,6 +16,9 @@ import type {
   PerformanceTrendResponse,
   PerformanceTrendPoint,
   PerformanceStreak,
+  PerformanceDistributionResponse,
+  DistributionBucket,
+  DistributionDimension,
   TrendEntityType,
   TrendGranularity,
 } from '../types/analytics'
@@ -88,6 +91,16 @@ type StreakFilters = {
   hippodrome?: string
   startDate?: string
   endDate?: string
+}
+
+type DistributionFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  dimension: DistributionDimension
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  distanceStep?: number
 }
 
 const isJockeyResponse = (
@@ -665,6 +678,108 @@ function StreakPanel({ data }: { data: AnalyticsStreakResponse }) {
   )
 }
 
+function DistributionTable({ buckets }: { buckets: DistributionBucket[] }) {
+  // Table dédiée pour visualiser la répartition des résultats par segment.
+  if (!buckets.length) {
+    return <p className="text-gray-500">Aucune distribution disponible pour ces filtres.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              Segment
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Courses
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Victoires
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Podiums
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Taux de victoire
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Taux de podium
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Moy. arrivée
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+              Cote moyenne
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 bg-white">
+          {buckets.map((bucket) => (
+            <tr key={bucket.label}>
+              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.races)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatAverage(bucket.average_odds)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function DistributionPanel({ data }: { data: PerformanceDistributionResponse }) {
+  // Synthèse complète de la distribution calculée côté backend.
+  const entityDisplay = data.entity_label
+    ? `${data.entity_label} (${data.entity_id})`
+    : data.entity_id
+
+  const dimensionLabels: Record<DistributionDimension, string> = {
+    distance: 'Distance (m)',
+    draw: 'Numéro de corde',
+    hippodrome: 'Hippodrome',
+    discipline: 'Discipline',
+  }
+
+  const totalRaces = data.buckets.reduce((sum, bucket) => sum + bucket.races, 0)
+  const dominant = data.buckets[0]
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Dimension étudiée" value={dimensionLabels[data.dimension]} />
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats label="Hippodrome filtré" value={data.metadata.hippodrome_filter ?? 'Tous'} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats label="Segments analysés" value={formatNumber(data.buckets.length)} />
+        <SummaryStats label="Total courses" value={formatNumber(totalRaces)} />
+        {dominant ? (
+          <SummaryStats
+            label="Segment dominant"
+            value={`${dominant.label} (${formatNumber(dominant.races)} courses)`}
+          />
+        ) : (
+          <SummaryStats label="Segment dominant" value="—" />
+        )}
+      </div>
+
+      <DistributionTable buckets={data.buckets} />
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -690,6 +805,17 @@ export default function AnalyticsPage() {
   const [streakEndInput, setStreakEndInput] = useState('')
   const [streakError, setStreakError] = useState<string | null>(null)
   const [streakFilters, setStreakFilters] = useState<StreakFilters | null>(null)
+
+  const [distributionTypeInput, setDistributionTypeInput] = useState<TrendEntityType>('horse')
+  const [distributionIdInput, setDistributionIdInput] = useState('')
+  const [distributionDimensionInput, setDistributionDimensionInput] =
+    useState<DistributionDimension>('distance')
+  const [distributionHippoInput, setDistributionHippoInput] = useState('')
+  const [distributionStartInput, setDistributionStartInput] = useState('')
+  const [distributionEndInput, setDistributionEndInput] = useState('')
+  const [distributionStepInput, setDistributionStepInput] = useState('200')
+  const [distributionError, setDistributionError] = useState<string | null>(null)
+  const [distributionFilters, setDistributionFilters] = useState<DistributionFilters | null>(null)
 
   const [horseIdInput, setHorseIdInput] = useState('')
   const [horseHippoInput, setHorseHippoInput] = useState('')
@@ -803,6 +929,39 @@ export default function AnalyticsPage() {
         endDate: streakFilters?.endDate,
       }),
     enabled: Boolean(streakFilters?.entityId),
+  })
+
+  const distributionQueryKey = useMemo(
+    () =>
+      distributionFilters
+        ? [
+            'analytics',
+            'distribution',
+            distributionFilters.entityType,
+            distributionFilters.entityId,
+            distributionFilters.dimension,
+            distributionFilters.hippodrome ?? '',
+            distributionFilters.startDate ?? '',
+            distributionFilters.endDate ?? '',
+            distributionFilters.distanceStep ?? '',
+          ]
+        : ['analytics', 'distribution', 'idle'],
+    [distributionFilters],
+  )
+
+  const distributionQuery = useQuery({
+    queryKey: distributionQueryKey,
+    queryFn: () =>
+      analyticsService.getPerformanceDistribution({
+        entityType: distributionFilters!.entityType,
+        entityId: distributionFilters!.entityId,
+        dimension: distributionFilters!.dimension,
+        hippodrome: distributionFilters?.hippodrome,
+        startDate: distributionFilters?.startDate,
+        endDate: distributionFilters?.endDate,
+        distanceStep: distributionFilters?.distanceStep,
+      }),
+    enabled: Boolean(distributionFilters?.entityId),
   })
 
   const horseQueryKey = useMemo(() => (
@@ -944,6 +1103,44 @@ export default function AnalyticsPage() {
       startDate: trendStartInput || undefined,
       endDate: trendEndInput || undefined,
       granularity: trendGranularityInput,
+    })
+  }
+
+  const handleDistributionSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = distributionIdInput.trim()
+
+    if (!id) {
+      setDistributionError("Veuillez saisir un identifiant Aspiturf valide.")
+      setDistributionFilters(null)
+      return
+    }
+
+    if (distributionStartInput && distributionEndInput && distributionStartInput > distributionEndInput) {
+      setDistributionError('La date de début doit précéder la date de fin.')
+      setDistributionFilters(null)
+      return
+    }
+
+    let parsedStep: number | undefined
+    if (distributionDimensionInput === 'distance') {
+      parsedStep = Number(distributionStepInput.trim() || '200')
+      if (Number.isNaN(parsedStep) || parsedStep < 50 || parsedStep > 1000) {
+        setDistributionError('Le pas de distance doit être compris entre 50 et 1000 mètres.')
+        setDistributionFilters(null)
+        return
+      }
+    }
+
+    setDistributionError(null)
+    setDistributionFilters({
+      entityType: distributionTypeInput,
+      entityId: id,
+      dimension: distributionDimensionInput,
+      hippodrome: distributionHippoInput.trim() || undefined,
+      startDate: distributionStartInput || undefined,
+      endDate: distributionEndInput || undefined,
+      distanceStep: parsedStep,
     })
   }
 
@@ -1198,6 +1395,82 @@ export default function AnalyticsPage() {
           <p className="text-sm text-red-600">Erreur: {(trendQuery.error as Error).message}</p>
         )}
         {trendQuery.data && <TrendPanel data={trendQuery.data} />}
+      </SectionCard>
+
+      <SectionCard
+        title="Répartition des performances"
+        description="Décomposez les résultats d'un cheval, d'un jockey ou d'un entraîneur par distance, corde, hippodrome ou discipline."
+      >
+        <form
+          onSubmit={handleDistributionSubmit}
+          className="grid gap-4 md:grid-cols-[repeat(7,minmax(0,1fr)),auto]"
+        >
+          <select
+            value={distributionTypeInput}
+            onChange={(event) => setDistributionTypeInput(event.target.value as TrendEntityType)}
+            className="input"
+          >
+            <option value="horse">Cheval</option>
+            <option value="jockey">Jockey</option>
+            <option value="trainer">Entraîneur</option>
+          </select>
+          <input
+            value={distributionIdInput}
+            onChange={(event) => setDistributionIdInput(event.target.value)}
+            placeholder="Identifiant Aspiturf"
+            className="input"
+          />
+          <select
+            value={distributionDimensionInput}
+            onChange={(event) => setDistributionDimensionInput(event.target.value as DistributionDimension)}
+            className="input"
+          >
+            <option value="distance">Distance</option>
+            <option value="draw">Numéro de corde</option>
+            <option value="hippodrome">Hippodrome</option>
+            <option value="discipline">Discipline</option>
+          </select>
+          <input
+            value={distributionHippoInput}
+            onChange={(event) => setDistributionHippoInput(event.target.value)}
+            placeholder="Filtrer par hippodrome (optionnel)"
+            className="input"
+          />
+          <input
+            type="date"
+            value={distributionStartInput}
+            onChange={(event) => setDistributionStartInput(event.target.value)}
+            className="input"
+          />
+          <input
+            type="date"
+            value={distributionEndInput}
+            onChange={(event) => setDistributionEndInput(event.target.value)}
+            className="input"
+          />
+          <input
+            type="number"
+            min={50}
+            max={1000}
+            step={50}
+            value={distributionStepInput}
+            onChange={(event) => setDistributionStepInput(event.target.value)}
+            placeholder="Pas distance (m)"
+            className="input"
+            disabled={distributionDimensionInput !== 'distance'}
+          />
+          <button type="submit" className="btn btn-primary">
+            Analyser
+          </button>
+        </form>
+        {distributionError && <p className="text-sm text-red-600">{distributionError}</p>}
+        {distributionQuery.isPending && (
+          <p className="text-sm text-gray-500">Calcul de la distribution en cours…</p>
+        )}
+        {distributionQuery.isError && (
+          <p className="text-sm text-red-600">Erreur: {(distributionQuery.error as Error).message}</p>
+        )}
+        {distributionQuery.data && <DistributionPanel data={distributionQuery.data} />}
       </SectionCard>
 
       <SectionCard

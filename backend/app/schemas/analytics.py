@@ -400,3 +400,64 @@ class AnalyticsStreakResponse(BaseModel):
         description="Historique des principales séries détectées",
     )
 
+
+class DistributionDimension(str, Enum):
+    """Dimensions disponibles pour l'analyse de distribution."""
+
+    DISTANCE = "distance"
+    DRAW = "draw"
+    HIPPODROME = "hippodrome"
+    DISCIPLINE = "discipline"
+
+
+class DistributionBucket(BaseModel):
+    """Agrégat statistique pour une catégorie de distribution."""
+
+    label: str = Field(..., description="Libellé de la catégorie agrégée")
+    races: int = Field(..., ge=0, description="Nombre de courses dans la catégorie")
+    wins: int = Field(..., ge=0, description="Nombre de victoires dans la catégorie")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums dans la catégorie")
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire (0-1) calculé sur la catégorie",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium (0-1) calculé sur la catégorie",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne à l'arrivée dans la catégorie",
+    )
+    average_odds: Optional[float] = Field(
+        default=None,
+        description="Cote moyenne observée dans la catégorie",
+    )
+
+
+class PerformanceDistributionResponse(BaseModel):
+    """Réponse pour l'analyse des distributions de performance."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraineur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité analysée")
+    entity_label: Optional[str] = Field(
+        default=None, description="Nom lisible de l'entité analysée"
+    )
+    dimension: DistributionDimension = Field(
+        ..., description="Dimension d'agrégation utilisée pour la distribution"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées décrivant les filtres appliqués",
+    )
+    buckets: List[DistributionBucket] = Field(
+        default_factory=list,
+        description="Liste des agrégats calculés par catégorie",
+    )
+

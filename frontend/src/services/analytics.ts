@@ -12,6 +12,8 @@ import type {
   PerformanceTrendResponse,
   TrendEntityType,
   TrendGranularity,
+  PerformanceDistributionResponse,
+  DistributionDimension,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -135,6 +137,30 @@ export const analyticsService = {
         ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getPerformanceDistribution(params: {
+    entityType: TrendEntityType
+    entityId: string
+    dimension: DistributionDimension
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+    distanceStep?: number
+  }) {
+    const response = await apiClient.get<PerformanceDistributionResponse>('/analytics/distributions', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        dimension: params.dimension,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+        ...(params.distanceStep ? { distance_step: params.distanceStep } : {}),
       },
     })
 

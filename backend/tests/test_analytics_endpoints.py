@@ -575,6 +575,181 @@ class StubAspiturfClient:
             "date_end": max_date,
             "points": points,
         }
+
+    async def performance_distribution(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        dimension: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        distance_step: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        key_field = {
+            "horse": "idChe",
+            "jockey": "idJockey",
+            "trainer": "idEntraineur",
+        }.get(entity_type)
+
+        label_field = {
+            "horse": "nom_cheval",
+            "jockey": "jockey",
+            "trainer": "entraineur",
+        }.get(entity_type)
+
+        if not key_field:
+            return {"entity_id": entity_id, "entity_label": None, "buckets": []}
+
+        allowed_dimensions = {"distance", "draw", "hippodrome", "discipline"}
+        if dimension not in allowed_dimensions:
+            return {"entity_id": entity_id, "entity_label": None, "buckets": []}
+
+        if dimension == "distance":
+            step = distance_step or 200
+            if step <= 0:
+                step = 200
+        else:
+            step = None
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        def resolve_bucket(row: Dict[str, Any]) -> Optional[Tuple[Any, str]]:
+            if dimension == "distance":
+                value = row.get("dist")
+                if not isinstance(value, int):
+                    return None
+                assert step is not None
+                bucket_start = (value // step) * step
+                bucket_end = bucket_start + step - 1
+                label = f"{bucket_start}-{bucket_end} m"
+                return (bucket_start, label)
+
+            if dimension == "draw":
+                value = row.get("numero")
+                if value is None:
+                    return None
+                try:
+                    numeric = int(value)
+                except (TypeError, ValueError):
+                    return None
+                return (numeric, f"N° {numeric}")
+
+            if dimension == "hippodrome":
+                value = row.get("hippo")
+                if not value:
+                    return None
+                label = str(value).upper()
+                return (label, label)
+
+            raw = row.get("typec") or row.get("typecourse") or row.get("discipline") or "Inconnu"
+            label = str(raw).strip() or "Inconnu"
+            return (label.lower(), label.title())
+
+        buckets: Dict[Any, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        min_date: Optional[date] = None
+        max_date: Optional[date] = None
+
+        for row in self._rows:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            bucket_descriptor = resolve_bucket(row)
+            if bucket_descriptor is None:
+                continue
+
+            bucket_key, bucket_label = bucket_descriptor
+
+            if entity_label is None:
+                label_value = row.get(label_field)
+                if isinstance(label_value, str) and label_value.strip():
+                    entity_label = label_value.strip()
+
+            if isinstance(race_date, date):
+                if min_date is None or race_date < min_date:
+                    min_date = race_date
+                if max_date is None or race_date > max_date:
+                    max_date = race_date
+
+            bucket = buckets.setdefault(
+                bucket_key,
+                {
+                    "label": bucket_label,
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["label"] = bucket_label
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds_value = row.get("cotedirect") or row.get("coteprob")
+            if isinstance(odds_value, (int, float)):
+                bucket["odds"].append(float(odds_value))
+
+        formatted: List[Dict[str, Any]] = []
+        for key, bucket in buckets.items():
+            races = bucket["races"]
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+
+            positions = [pos for pos in bucket["positions"] if isinstance(pos, (int, float))]
+            odds_values = bucket["odds"]
+
+            average_finish = sum(positions) / len(positions) if positions else None
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            formatted.append(
+                {
+                    "key": key,
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+        formatted.sort(key=lambda item: (item["races"], item["wins"]), reverse=True)
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": min_date,
+            "date_end": max_date,
+            "dimension": dimension,
+            "buckets": formatted,
+        }
     async def search_entities(
         self,
         entity_type: str,
@@ -997,6 +1172,68 @@ async def test_trends_endpoint_returns_404_on_missing_data(analytics_client: Asy
         params={
             "entity_type": "trainer",
             "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_distributions_endpoint_groups_by_distance(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/distributions",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "dimension": "distance",
+            "distance_step": 200,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-1"
+    assert payload["dimension"] == "distance"
+
+    buckets = {bucket["label"]: bucket for bucket in payload["buckets"]}
+    assert "2000-2199 m" in buckets
+    assert "2400-2599 m" in buckets
+    assert buckets["2000-2199 m"]["wins"] == 1
+    assert buckets["2000-2199 m"]["win_rate"] == 1.0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_distributions_endpoint_applies_hippodrome_filter(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/distributions",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "dimension": "draw",
+            "hippodrome": "lyon",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    buckets = payload["buckets"]
+    assert len(buckets) == 1
+    assert buckets[0]["label"] == "N° 8"
+    assert buckets[0]["podiums"] == 1
+
+
+@pytest.mark.anyio("asyncio")
+async def test_distributions_endpoint_returns_404_on_empty_result(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/distributions",
+        params={
+            "entity_type": "trainer",
+            "entity_id": "UNKNOWN",
+            "dimension": "hippodrome",
         },
     )
 
