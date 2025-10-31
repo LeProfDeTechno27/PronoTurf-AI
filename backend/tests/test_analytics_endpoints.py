@@ -1493,6 +1493,70 @@ async def test_value_endpoint_returns_404_when_no_sample(analytics_client: Async
 
 
 @pytest.mark.anyio("asyncio")
+async def test_volatility_endpoint_returns_dispersions(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/volatility",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    metrics = payload["metrics"]
+
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-1"
+    assert metrics["sample_size"] == 2
+    assert metrics["wins"] == 1
+    assert metrics["win_rate"] == 0.5
+    assert metrics["average_finish"] == 2.0
+    assert metrics["position_std_dev"] == 1.0
+    assert metrics["average_odds"] == 6.25
+    assert metrics["average_edge"] == 1.0
+    assert metrics["consistency_index"] == 0.5
+
+    races = payload["races"]
+    assert len(races) == 2
+    assert races[0]["date"] == "2024-05-18"
+    assert races[0]["odds_actual"] == 7.5
+    assert races[1]["edge"] == 1.2
+    assert payload["metadata"]["date_start"] == "2024-05-04"
+    assert payload["metadata"]["date_end"] == "2024-05-18"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_volatility_endpoint_validates_dates(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/volatility",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-06-30",
+            "end_date": "2024-05-01",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_volatility_endpoint_returns_404_on_missing_data(
+    analytics_client: AsyncClient,
+):
+    response = await analytics_client.get(
+        "/api/v1/analytics/volatility",
+        params={
+            "entity_type": "horse",
+            "entity_id": "UNKNOWN",
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
 async def test_form_endpoint_returns_recent_form_metrics(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/form",

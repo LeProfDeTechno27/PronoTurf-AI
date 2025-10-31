@@ -11,6 +11,7 @@ import type {
   AnalyticsStreakResponse,
   AnalyticsFormResponse,
   AnalyticsValueResponse,
+  AnalyticsVolatilityResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
@@ -31,6 +32,7 @@ import type {
   CalendarDaySummary,
   CalendarRaceDetail,
   ValueOpportunitySample,
+  VolatilityRaceSample,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -141,6 +143,14 @@ type ValueFilters = {
   endDate?: string
   minEdge?: number
   limit?: number
+}
+
+type VolatilityFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
 }
 
 type ComparisonFilters = {
@@ -1226,6 +1236,122 @@ function ValuePanel({ data }: { data: AnalyticsValueResponse }) {
   )
 }
 
+function VolatilityTable({ races }: { races: VolatilityRaceSample[] }) {
+  if (!races.length) {
+    return <p className="text-sm text-gray-500">Aucune course disponible pour calculer la volatilité.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Date
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Hippodrome
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Course
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Distance
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Arrivée
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote observée
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote probable
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Écart
+            </th>
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Victoire
+            </th>
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Podium
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {races.map((race, index) => (
+            <tr key={`${race.date}-${race.course_number}-${index}`}>
+              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">
+                {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
+              </td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds_actual)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds_implied)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.edge)}</td>
+              <td className="px-4 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function VolatilityPanel({ data }: { data: AnalyticsVolatilityResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const podiumRate = data.metrics.podium_rate ??
+    (data.metrics.sample_size ? data.metrics.podiums / data.metrics.sample_size : null)
+
+  return (
+    <div className="space-y-6">
+      {/* Résumé chiffré pour comprendre instantanément la régularité de l'entité. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Courses retenues" value={formatNumber(data.metrics.sample_size)} />
+        <SummaryStats
+          label="Taux de victoire"
+          value={`${formatNumber(data.metrics.wins)} (${formatPercent(data.metrics.win_rate)})`}
+        />
+        <SummaryStats
+          label="Taux de podium"
+          value={`${formatNumber(data.metrics.podiums)} (${formatPercent(podiumRate)})`}
+        />
+      </div>
+
+      {/* Mesures de dispersion pour détecter les profils irréguliers. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Position moyenne" value={formatAverage(data.metrics.average_finish)} />
+        <SummaryStats label="Écart-type position" value={formatAverage(data.metrics.position_std_dev, 3)} />
+        <SummaryStats label="Cote moyenne" value={formatAverage(data.metrics.average_odds)} />
+        <SummaryStats label="Dispersion cote" value={formatAverage(data.metrics.odds_std_dev, 3)} />
+      </div>
+
+      {/* Synthèse des écarts de cote et rappel des filtres appliqués. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Écart moyen" value={formatAverage(data.metrics.average_edge)} />
+        <SummaryStats
+          label="Indice de constance"
+          value={formatPercent(data.metrics.consistency_index, 1)}
+        />
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+      </div>
+
+      <VolatilityTable races={data.races} />
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -1289,6 +1415,14 @@ export default function AnalyticsPage() {
   const [valueLimitInput, setValueLimitInput] = useState('25')
   const [valueError, setValueError] = useState<string | null>(null)
   const [valueFilters, setValueFilters] = useState<ValueFilters | null>(null)
+
+  const [volatilityTypeInput, setVolatilityTypeInput] = useState<TrendEntityType>('horse')
+  const [volatilityIdInput, setVolatilityIdInput] = useState('')
+  const [volatilityHippoInput, setVolatilityHippoInput] = useState('')
+  const [volatilityStartInput, setVolatilityStartInput] = useState('')
+  const [volatilityEndInput, setVolatilityEndInput] = useState('')
+  const [volatilityError, setVolatilityError] = useState<string | null>(null)
+  const [volatilityFilters, setVolatilityFilters] = useState<VolatilityFilters | null>(null)
 
   const [comparisonTypeInput, setComparisonTypeInput] = useState<TrendEntityType>('horse')
   const [comparisonIdInput, setComparisonIdInput] = useState('')
@@ -1525,6 +1659,22 @@ export default function AnalyticsPage() {
     [valueFilters],
   )
 
+  const volatilityQueryKey = useMemo(
+    () =>
+      volatilityFilters
+        ? [
+            'analytics',
+            'volatility',
+            volatilityFilters.entityType,
+            volatilityFilters.entityId,
+            volatilityFilters.hippodrome ?? '',
+            volatilityFilters.startDate ?? '',
+            volatilityFilters.endDate ?? '',
+          ]
+        : ['analytics', 'volatility', 'idle'],
+    [volatilityFilters],
+  )
+
   const valueQuery = useQuery({
     queryKey: valueQueryKey,
     queryFn: () =>
@@ -1538,6 +1688,19 @@ export default function AnalyticsPage() {
         limit: valueFilters?.limit,
       }),
     enabled: Boolean(valueFilters?.entityId),
+  })
+
+  const volatilityQuery = useQuery({
+    queryKey: volatilityQueryKey,
+    queryFn: () =>
+      analyticsService.getVolatilityProfile({
+        entityType: volatilityFilters!.entityType,
+        entityId: volatilityFilters!.entityId,
+        hippodrome: volatilityFilters?.hippodrome,
+        startDate: volatilityFilters?.startDate,
+        endDate: volatilityFilters?.endDate,
+      }),
+    enabled: Boolean(volatilityFilters?.entityId),
   })
 
   const comparisonQueryKey = useMemo(
@@ -1791,6 +1954,32 @@ export default function AnalyticsPage() {
       endDate: valueEndInput || undefined,
       minEdge: minEdgeValue,
       limit: limitValue,
+    })
+  }
+
+  const handleVolatilitySubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = volatilityIdInput.trim()
+
+    if (!id) {
+      setVolatilityError("Veuillez saisir un identifiant Aspiturf valide.")
+      setVolatilityFilters(null)
+      return
+    }
+
+    if (volatilityStartInput && volatilityEndInput && volatilityStartInput > volatilityEndInput) {
+      setVolatilityError('La date de début doit précéder la date de fin.')
+      setVolatilityFilters(null)
+      return
+    }
+
+    setVolatilityError(null)
+    setVolatilityFilters({
+      entityType: volatilityTypeInput,
+      entityId: id,
+      hippodrome: volatilityHippoInput.trim() || undefined,
+      startDate: volatilityStartInput || undefined,
+      endDate: volatilityEndInput || undefined,
     })
   }
 
@@ -2251,6 +2440,61 @@ export default function AnalyticsPage() {
         <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
       )}
       {formQuery.data && <FormPanel data={formQuery.data} />}
+    </SectionCard>
+
+    <SectionCard
+      title="Profil de volatilité"
+      description="Évaluez la régularité d'un cheval, d'un jockey ou d'un entraîneur via l'écart-type des positions et des cotes."
+    >
+      <form
+        onSubmit={handleVolatilitySubmit}
+        className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
+      >
+        <select
+          value={volatilityTypeInput}
+          onChange={(event) => setVolatilityTypeInput(event.target.value as TrendEntityType)}
+          className="input"
+        >
+          <option value="horse">Cheval</option>
+          <option value="jockey">Jockey</option>
+          <option value="trainer">Entraîneur</option>
+        </select>
+        <input
+          value={volatilityIdInput}
+          onChange={(event) => setVolatilityIdInput(event.target.value)}
+          placeholder="Identifiant Aspiturf (id)"
+          className="input"
+        />
+        <input
+          value={volatilityHippoInput}
+          onChange={(event) => setVolatilityHippoInput(event.target.value)}
+          placeholder="Filtrer par hippodrome (optionnel)"
+          className="input"
+        />
+        <input
+          type="date"
+          value={volatilityStartInput}
+          onChange={(event) => setVolatilityStartInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="date"
+          value={volatilityEndInput}
+          onChange={(event) => setVolatilityEndInput(event.target.value)}
+          className="input"
+        />
+        <button type="submit" className="btn btn-primary">
+          Analyser
+        </button>
+      </form>
+      {volatilityError && <p className="text-sm text-red-600">{volatilityError}</p>}
+      {volatilityQuery.isPending && (
+        <p className="text-sm text-gray-500">Calcul de la volatilité en cours…</p>
+      )}
+      {volatilityQuery.isError && (
+        <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
+      )}
+      {volatilityQuery.data && <VolatilityPanel data={volatilityQuery.data} />}
     </SectionCard>
 
     <SectionCard

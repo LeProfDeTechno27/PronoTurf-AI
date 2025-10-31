@@ -805,3 +805,105 @@ class AnalyticsValueResponse(BaseModel):
         description="Liste des courses classées par écart de cote décroissant",
     )
 
+
+class VolatilityRaceSample(BaseModel):
+    """Historique d'une course utilisée pour le calcul de la volatilité."""
+
+    date: Optional[date_type] = Field(
+        default=None, description="Date de la course associée à l'entité"
+    )
+    hippodrome: Optional[str] = Field(
+        default=None, description="Hippodrome où la course s'est disputée"
+    )
+    course_number: Optional[int] = Field(
+        default=None, description="Numéro de course dans la réunion"
+    )
+    distance: Optional[int] = Field(
+        default=None, description="Distance officielle de l'épreuve en mètres"
+    )
+    final_position: Optional[int] = Field(
+        default=None, description="Classement final de l'entité"
+    )
+    odds_actual: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote observée (rapport PMU) si disponible",
+    )
+    odds_implied: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote probable Aspiturf convertie en décimal",
+    )
+    edge: Optional[float] = Field(
+        default=None, description="Différence cote probable - cote observée"
+    )
+    is_win: bool = Field(..., description="Indique si l'entité a gagné la course")
+    is_podium: bool = Field(
+        ..., description="Indique si l'entité a terminé dans les trois premiers"
+    )
+
+
+class VolatilityMetrics(BaseModel):
+    """Métriques statistiques décrivant la volatilité des performances."""
+
+    sample_size: int = Field(
+        ..., ge=0, description="Nombre de courses retenues pour l'analyse"
+    )
+    wins: int = Field(..., ge=0, description="Nombre de victoires sur l'échantillon")
+    podiums: int = Field(
+        ..., ge=0, description="Nombre de podiums enregistrés sur l'échantillon"
+    )
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire calculé sur l'échantillon",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium calculé sur l'échantillon",
+    )
+    average_finish: Optional[float] = Field(
+        default=None, description="Position moyenne à l'arrivée"
+    )
+    position_std_dev: Optional[float] = Field(
+        default=None, description="Écart-type des positions à l'arrivée"
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote observée moyenne"
+    )
+    odds_std_dev: Optional[float] = Field(
+        default=None, description="Écart-type des cotes observées"
+    )
+    average_edge: Optional[float] = Field(
+        default=None, description="Écart moyen entre cote probable et cote observée"
+    )
+    consistency_index: Optional[float] = Field(
+        default=None,
+        description="Indice synthétique de régularité basé sur la dispersion",
+    )
+
+
+class AnalyticsVolatilityResponse(BaseModel):
+    """Réponse de l'endpoint `/analytics/volatility`."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible correspondant à l'entité"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées décrivant les filtres appliqués",
+    )
+    metrics: VolatilityMetrics = Field(
+        ..., description="Métriques calculées à partir des courses filtrées"
+    )
+    races: List[VolatilityRaceSample] = Field(
+        default_factory=list,
+        description="Liste des courses retenues, triées par date décroissante",
+    )

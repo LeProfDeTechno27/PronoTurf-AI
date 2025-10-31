@@ -18,6 +18,7 @@ import type {
   AnalyticsComparisonResponse,
   AnalyticsCalendarResponse,
   AnalyticsValueResponse,
+  AnalyticsVolatilityResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -209,6 +210,26 @@ export const analyticsService = {
         ...(params.endDate ? { end_date: params.endDate } : {}),
         ...(params.minEdge !== undefined ? { min_edge: params.minEdge } : {}),
         ...(params.limit ? { limit: params.limit } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getVolatilityProfile(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const response = await apiClient.get<AnalyticsVolatilityResponse>('/analytics/volatility', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
       },
     })
 

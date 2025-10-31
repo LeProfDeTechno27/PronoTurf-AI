@@ -22,6 +22,7 @@ from app.schemas.analytics import (
     AnalyticsStreakResponse,
     AnalyticsCalendarResponse,
     AnalyticsValueResponse,
+    AnalyticsVolatilityResponse,
     DistributionBucket,
     DistributionDimension,
     FormRace,
@@ -41,6 +42,8 @@ from app.schemas.analytics import (
     PerformanceSummary,
     RecentRace,
     ValueOpportunitySample,
+    VolatilityMetrics,
+    VolatilityRaceSample,
     TrainerAnalyticsResponse,
     TrendEntityType,
     TrendGranularity,
@@ -140,6 +143,19 @@ def _safe_mean(values: Iterable[Optional[float]]) -> Optional[float]:
     if not cleaned:
         return None
     return round(mean(cleaned), 3)
+
+
+def _parse_float(value: Any) -> Optional[float]:
+    """Convertit un champ Aspiturf en float si possible."""
+
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.replace(",", "."))
+        except ValueError:
+            return None
+    return None
 
 
 def _is_win(row: Dict[str, Any]) -> bool:
@@ -1047,6 +1063,172 @@ async def get_value_opportunities(
         roi=summary.get("roi"),
         hippodromes=[str(item) for item in payload.get("hippodromes", []) if item is not None],
         samples=samples,
+    )
+
+
+@router.get(
+    "/volatility",
+    response_model=AnalyticsVolatilityResponse,
+    summary="Mesurer la volatilité des résultats d'une entité",
+    description=(
+        "Calcule des indicateurs de dispersion (écart-type, indice de constance) sur les positions et cotes "
+        "en s'appuyant sur l'historique des courses Aspiturf filtrées."
+    ),
+)
+async def get_volatility_profile(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date"
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date"
+    ),
+) -> AnalyticsVolatilityResponse:
+    """Retourne un profil de volatilité basé sur les positions finales et les cotes."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    # Tri décroissant pour mettre en avant les courses les plus récentes dans la réponse.
+    rows.sort(
+        key=lambda item: (
+            item.get("jour") if isinstance(item.get("jour"), date) else date.min,
+            item.get("prix") if isinstance(item.get("prix"), int) else -1,
+        ),
+        reverse=True,
+    )
+
+    label_fields: Tuple[str, ...]
+    if entity_type == TrendEntityType.HORSE:
+        label_fields = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(rows, label_fields)
+
+    wins = sum(1 for row in rows if _is_win(row))
+    podiums = sum(1 for row in rows if _is_podium(row))
+    sample_size = len(rows)
+
+    positions: List[int] = []
+    odds_actual_values: List[float] = []
+    edges: List[float] = []
+    race_samples: List[VolatilityRaceSample] = []
+    first_date: Optional[date] = None
+    last_date: Optional[date] = None
+
+    # Parcours des courses retenues afin d'accumuler les statistiques brutes.
+    for row in rows:
+        race_date = row.get("jour")
+        if isinstance(race_date, date):
+            first_date = race_date if first_date is None else min(first_date, race_date)
+            last_date = race_date if last_date is None else max(last_date, race_date)
+
+        position = row.get("cl")
+        if isinstance(position, int):
+            positions.append(position)
+
+        actual_odds = _parse_float(row.get("cotedirect") or row.get("cote_direct"))
+        implied_odds = _parse_float(row.get("coteprob") or row.get("cote_prob"))
+
+        if actual_odds is not None:
+            odds_actual_values.append(actual_odds)
+
+        edge: Optional[float] = None
+        if actual_odds is not None and implied_odds is not None:
+            edge = round(implied_odds - actual_odds, 4)
+            edges.append(edge)
+
+        race_samples.append(
+            VolatilityRaceSample(
+                date=race_date if isinstance(race_date, date) else None,
+                hippodrome=row.get("hippo"),
+                course_number=row.get("prix") if isinstance(row.get("prix"), int) else None,
+                distance=row.get("dist") if isinstance(row.get("dist"), int) else None,
+                final_position=position if isinstance(position, int) else None,
+                odds_actual=actual_odds,
+                odds_implied=implied_odds,
+                edge=edge,
+                is_win=_is_win(row),
+                is_podium=_is_podium(row),
+            )
+        )
+
+    average_finish = None
+    position_std = None
+    if positions:
+        average_finish = round(sum(positions) / len(positions), 2)
+        if len(positions) >= 2:
+            position_std = round(pstdev(positions), 3)
+
+    average_odds = _safe_mean(odds_actual_values)
+    odds_std = None
+    if len(odds_actual_values) >= 2:
+        odds_std = round(pstdev(odds_actual_values), 3)
+
+    average_edge = _safe_mean(edges)
+    consistency_index = None
+    if position_std is not None:
+        consistency_index = round(1 / (1 + position_std), 3)
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=first_date,
+        date_end=last_date,
+    )
+
+    metrics = VolatilityMetrics(
+        sample_size=sample_size,
+        wins=wins,
+        podiums=podiums,
+        win_rate=_safe_rate(wins, sample_size),
+        podium_rate=_safe_rate(podiums, sample_size),
+        average_finish=average_finish,
+        position_std_dev=position_std,
+        average_odds=average_odds,
+        odds_std_dev=odds_std,
+        average_edge=average_edge,
+        consistency_index=consistency_index,
+    )
+
+    return AnalyticsVolatilityResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        metrics=metrics,
+        races=race_samples,
     )
 
 

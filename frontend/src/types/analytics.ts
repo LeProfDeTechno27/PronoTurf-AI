@@ -209,6 +209,42 @@ export interface AnalyticsValueResponse {
   samples: ValueOpportunitySample[]
 }
 
+export interface VolatilityRaceSample {
+  date?: string | null
+  hippodrome?: string | null
+  course_number?: number | null
+  distance?: number | null
+  final_position?: number | null
+  odds_actual?: number | null
+  odds_implied?: number | null
+  edge?: number | null
+  is_win: boolean
+  is_podium: boolean
+}
+
+export interface VolatilityMetrics {
+  sample_size: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  position_std_dev?: number | null
+  average_odds?: number | null
+  odds_std_dev?: number | null
+  average_edge?: number | null
+  consistency_index?: number | null
+}
+
+export interface AnalyticsVolatilityResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  metrics: VolatilityMetrics
+  races: VolatilityRaceSample[]
+}
+
 export interface PerformanceStreak {
   type: 'win' | 'podium'
   length: number
