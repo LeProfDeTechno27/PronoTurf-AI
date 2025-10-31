@@ -5,7 +5,8 @@ import os
 import unicodedata
 from calendar import monthrange
 from datetime import date, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from statistics import median
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import pytest
 from fastapi import FastAPI
@@ -223,6 +224,133 @@ class StubAspiturfClient:
         )
 
         return leaderboard[: max(1, limit)]
+
+    async def value_opportunities(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        min_edge: Optional[float] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        filtered = await self.get_races(
+            horse_id=entity_id if entity_type == "horse" else None,
+            jockey_id=entity_id if entity_type == "jockey" else None,
+            trainer_id=entity_id if entity_type == "trainer" else None,
+            hippodrome=hippodrome,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        def parse(value: Any) -> Optional[float]:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.replace(",", "."))
+                except ValueError:
+                    return None
+            return None
+
+        samples: List[Dict[str, Any]] = []
+        hippodromes: Set[str] = set()
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+        entity_label: Optional[str] = None
+
+        for row in filtered:
+            actual = parse(row.get("cotedirect") or row.get("cote_direct"))
+            implied = parse(row.get("coteprob") or row.get("cote_prob"))
+
+            edge: Optional[float] = None
+            if actual is not None and implied is not None:
+                edge = round(implied - actual, 4)
+
+            if min_edge is not None and (edge is None or edge < min_edge):
+                continue
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                first_date = race_date if first_date is None else min(first_date, race_date)
+                last_date = race_date if last_date is None else max(last_date, race_date)
+
+            hippo_value = row.get("hippo")
+            if isinstance(hippo_value, str):
+                hippodromes.add(hippo_value.upper())
+
+            label_field = {
+                "horse": "nom_cheval",
+                "jockey": "jockey",
+                "trainer": "entraineur",
+            }.get(entity_type)
+            if label_field:
+                raw_label = row.get(label_field)
+                if isinstance(raw_label, str) and raw_label.strip():
+                    entity_label = raw_label.strip()
+
+            position = row.get("cl")
+            is_win = position == 1 if isinstance(position, int) else None
+
+            profit: Optional[float] = None
+            if actual is not None:
+                profit = (actual - 1) if is_win else -1.0
+
+            samples.append(
+                {
+                    "date": race_date,
+                    "hippodrome": hippo_value,
+                    "course_number": row.get("prix"),
+                    "distance": row.get("dist"),
+                    "final_position": position,
+                    "odds_actual": actual,
+                    "odds_implied": implied,
+                    "edge": edge,
+                    "is_win": is_win,
+                    "profit": profit,
+                }
+            )
+
+        samples.sort(key=lambda item: item.get("edge") or float("-inf"), reverse=True)
+
+        if limit is not None and limit > 0:
+            samples = samples[:limit]
+
+        edges = [item["edge"] for item in samples if item.get("edge") is not None]
+        odds_values = [item["odds_actual"] for item in samples if item.get("odds_actual") is not None]
+        profits = [item["profit"] for item in samples if item.get("profit") is not None]
+        wins = sum(1 for item in samples if item.get("is_win"))
+        stake_count = len(profits)
+
+        total_profit = sum(profits) if profits else None
+        roi = (total_profit / stake_count) if total_profit is not None and stake_count else None
+
+        summary = {
+            "sample_size": len(samples),
+            "wins": wins,
+            "win_rate": round(wins / len(samples), 4) if samples else None,
+            "positive_edges": sum(1 for value in edges if value is not None and value >= 0),
+            "negative_edges": sum(1 for value in edges if value is not None and value < 0),
+            "average_edge": round(sum(edges) / len(edges), 4) if edges else None,
+            "median_edge": round(median(edges), 4) if edges else None,
+            "average_odds": round(sum(odds_values) / len(odds_values), 4) if odds_values else None,
+            "median_odds": round(median(odds_values), 4) if odds_values else None,
+            "stake_count": stake_count,
+            "profit": round(total_profit, 4) if total_profit is not None else None,
+            "roi": round(roi, 4) if roi is not None else None,
+        }
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": first_date,
+            "date_end": last_date,
+            "hippodromes": sorted(hippodromes),
+            "samples": samples,
+            "summary": summary,
+        }
 
     async def performance_calendar(
         self,
@@ -1007,7 +1135,7 @@ def analytics_rows() -> List[Dict[str, Any]]:
             "idEntraineur": "T-42",
             "entraineur": "Marie Martin",
             "cotedirect": 5.0,
-            "coteprob": 4.8,
+            "coteprob": 6.2,
             "numero": 3,
         },
         {
@@ -1039,7 +1167,7 @@ def analytics_rows() -> List[Dict[str, Any]]:
             "idEntraineur": "T-42",
             "entraineur": "Marie Martin",
             "cotedirect": 7.5,
-            "coteprob": 6.9,
+            "coteprob": 8.3,
             "numero": 8,
         },
         {
@@ -1282,6 +1410,86 @@ async def test_calendar_endpoint_returns_404_when_no_history(analytics_client: A
         params={"entity_type": "horse", "entity_id": "UNKNOWN"},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.anyio("asyncio")
+async def test_value_endpoint_returns_ranked_samples(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/value",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "limit": 10,
+            "min_edge": 0.0,
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-1"
+    assert payload["sample_size"] == 2
+    assert payload["wins"] == 1
+    assert payload["positive_edges"] == 2
+    assert payload["negative_edges"] == 0
+    assert payload["hippodromes"] == ["LYON", "PARIS"]
+
+    samples = payload["samples"]
+    assert len(samples) == 2
+    assert samples[0]["edge"] >= samples[1]["edge"]
+    assert samples[0]["hippodrome"].upper() == "PARIS"
+    assert payload["profit"] == 3.0
+    assert payload["roi"] == 1.5
+
+
+@pytest.mark.anyio("asyncio")
+async def test_value_endpoint_applies_threshold_and_filters(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/value",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "min_edge": 1.1,
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["sample_size"] == 1
+    assert payload["wins"] == 1
+    assert payload["positive_edges"] == 1
+    assert payload["samples"][0]["edge"] >= 1.1
+
+
+@pytest.mark.anyio("asyncio")
+async def test_value_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/value",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-06-30",
+            "end_date": "2024-05-01",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_value_endpoint_returns_404_when_no_sample(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/value",
+        params={
+            "entity_type": "jockey",
+            "entity_id": "UNKNOWN",
+        },
+    )
+    assert response.status_code == 404
+    assert (
+        response.json()["detail"]
+        == "Aucune opportunité de value bet détectée pour cette configuration"
+    )
 
 
 @pytest.mark.anyio("asyncio")

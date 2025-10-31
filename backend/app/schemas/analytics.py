@@ -698,3 +698,110 @@ class AnalyticsFormResponse(BaseModel):
         description="Historique des courses triées de la plus récente à la plus ancienne",
     )
 
+
+class ValueOpportunitySample(BaseModel):
+    """Détail d'une course présentant un potentiel écart de cote."""
+
+    date: Optional[date_type] = Field(
+        default=None, description="Date de la course analysée pour l'entité"
+    )
+    hippodrome: Optional[str] = Field(
+        default=None, description="Nom de l'hippodrome ayant accueilli la course"
+    )
+    course_number: Optional[int] = Field(
+        default=None, description="Numéro de course dans la réunion"
+    )
+    distance: Optional[int] = Field(
+        default=None, description="Distance officielle de l'épreuve en mètres"
+    )
+    final_position: Optional[int] = Field(
+        default=None, description="Classement final enregistré dans la ligne Aspiturf"
+    )
+    odds_actual: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote directe observée (rapport PMU) si disponible",
+    )
+    odds_implied: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote probable estimée dans les données Aspiturf",
+    )
+    edge: Optional[float] = Field(
+        default=None,
+        description="Différence entre la cote probable et la cote observée",
+    )
+    is_win: Optional[bool] = Field(
+        default=None, description="Indique si l'entité a remporté la course"
+    )
+    profit: Optional[float] = Field(
+        default=None,
+        description="Gain/perte théorique pour une mise unitaire en cas de cote disponible",
+    )
+
+
+class AnalyticsValueResponse(BaseModel):
+    """Résumé des opportunités de value bet pour une entité Aspiturf."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible correspondant à l'entité"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées décrivant les filtres appliqués",
+    )
+    sample_size: int = Field(
+        ..., ge=0, description="Nombre de courses retenues pour l'analyse"
+    )
+    wins: int = Field(
+        ..., ge=0, description="Nombre de victoires sur les courses retenues"
+    )
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire calculé sur l'échantillon (0-1)",
+    )
+    positive_edges: int = Field(
+        ..., ge=0, description="Nombre de courses où l'écart de cote est positif"
+    )
+    negative_edges: int = Field(
+        ..., ge=0, description="Nombre de courses où l'écart de cote est négatif"
+    )
+    average_edge: Optional[float] = Field(
+        default=None,
+        description="Écart moyen entre cote probable et cote observée",
+    )
+    median_edge: Optional[float] = Field(
+        default=None, description="Écart médian de cote sur l'échantillon"
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote directe moyenne observée"
+    )
+    median_odds: Optional[float] = Field(
+        default=None, description="Cote directe médiane observée"
+    )
+    stake_count: int = Field(
+        ..., ge=0, description="Nombre de courses disposant d'une cote directe"
+    )
+    profit: Optional[float] = Field(
+        default=None,
+        description="Profit cumulé théorique pour une mise unitaire",
+    )
+    roi: Optional[float] = Field(
+        default=None,
+        description="Retour sur investissement théorique (profit / mises)",
+    )
+    hippodromes: List[str] = Field(
+        default_factory=list,
+        description="Liste des hippodromes rencontrés dans l'échantillon",
+    )
+    samples: List[ValueOpportunitySample] = Field(
+        default_factory=list,
+        description="Liste des courses classées par écart de cote décroissant",
+    )
+

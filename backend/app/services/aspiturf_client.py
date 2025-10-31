@@ -17,6 +17,7 @@ import csv
 import io
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from statistics import median
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -1094,6 +1095,192 @@ class AspiturfClient:
             "date_end": last_date,
             "dimension": dimension,
             "buckets": formatted,
+        }
+
+    async def value_opportunities(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        min_edge: Optional[float] = None,
+        limit: Optional[int] = 50,
+    ) -> Dict[str, Any]:
+        """Identifie les courses présentant un écart de cote intéressant."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not entity_id:
+            raise ValueError("entity_id est requis pour analyser les value bets")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_fields = ("nom_cheval", "cheval")
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_fields = ("jockey",)
+        else:
+            key_field = "idEntraineur"
+            label_fields = ("entraineur",)
+
+        def resolve_label(row: Dict[str, Any]) -> Optional[str]:
+            """Sélectionne le premier libellé non vide pour l'entité analysée."""
+
+            for field in label_fields:
+                value = row.get(field)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return None
+
+        def parse_odds(value: Any) -> Optional[float]:
+            """Convertit une cote Aspiturf en float si possible."""
+
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.replace(",", "."))
+                except ValueError:
+                    return None
+            return None
+
+        samples: List[Dict[str, Any]] = []
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+        hippodromes: Set[str] = set()
+
+        for row in self._data:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                # Impossible d'appliquer un filtre temporel sans date fiable.
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            entity_label = entity_label or resolve_label(row)
+
+            actual_odds = parse_odds(
+                row.get("cotedirect")
+                or row.get("cote_direct")
+                or row.get("rapport_direct")
+            )
+            implied_odds = parse_odds(
+                row.get("coteprob")
+                or row.get("cote_prob")
+                or row.get("rapport_probable")
+            )
+
+            edge: Optional[float] = None
+            if actual_odds is not None and implied_odds is not None:
+                edge = round(implied_odds - actual_odds, 4)
+
+            if min_edge is not None and (edge is None or edge < min_edge):
+                continue
+
+            if isinstance(race_date, date):
+                if first_date is None or race_date < first_date:
+                    first_date = race_date
+                if last_date is None or race_date > last_date:
+                    last_date = race_date
+
+            hippo_value = row.get("hippo")
+            if isinstance(hippo_value, str) and hippo_value.strip():
+                hippodromes.add(hippo_value.strip().upper())
+
+            position = row.get("cl")
+            is_win = position == 1 if isinstance(position, int) else None
+
+            profit: Optional[float] = None
+            if actual_odds is not None:
+                if is_win:
+                    profit = round(actual_odds - 1, 4)
+                else:
+                    profit = -1.0
+
+            samples.append(
+                {
+                    "date": race_date,
+                    "hippodrome": hippo_value,
+                    "course_number": row.get("prix"),
+                    "distance": row.get("dist"),
+                    "final_position": position,
+                    "odds_actual": actual_odds,
+                    "odds_implied": implied_odds,
+                    "edge": edge,
+                    "is_win": is_win,
+                    "profit": profit,
+                }
+            )
+
+        if not samples:
+            return {
+                "entity_id": entity_id,
+                "entity_label": entity_label,
+                "date_start": first_date,
+                "date_end": last_date,
+                "hippodromes": sorted(hippodromes),
+                "samples": [],
+            }
+
+        # Tri décroissant sur l'écart de cote pour mettre en avant les meilleures opportunités.
+        samples.sort(key=lambda item: item.get("edge") or float("-inf"), reverse=True)
+
+        if limit is not None and limit > 0:
+            samples = samples[:limit]
+
+        edges = [item["edge"] for item in samples if item.get("edge") is not None]
+        odds_values = [item["odds_actual"] for item in samples if item.get("odds_actual") is not None]
+        profits = [item["profit"] for item in samples if item.get("profit") is not None]
+        wins = sum(1 for item in samples if item.get("is_win"))
+        positive_edges = sum(1 for item in edges if item is not None and item >= 0)
+        negative_edges = sum(1 for item in edges if item is not None and item < 0)
+
+        sample_size = len(samples)
+        stake_count = len(profits)
+        total_profit = sum(profits) if profits else None
+        roi = (total_profit / stake_count) if total_profit is not None and stake_count else None
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": first_date,
+            "date_end": last_date,
+            "hippodromes": sorted(hippodromes),
+            "samples": samples,
+            "summary": {
+                "sample_size": sample_size,
+                "wins": wins,
+                "win_rate": round(wins / sample_size, 4) if sample_size else None,
+                "positive_edges": positive_edges,
+                "negative_edges": negative_edges,
+                "average_edge": round(sum(edges) / len(edges), 4) if edges else None,
+                "median_edge": round(median(edges), 4) if edges else None,
+                "average_odds": round(sum(odds_values) / len(odds_values), 4) if odds_values else None,
+                "median_odds": round(median(odds_values), 4) if odds_values else None,
+                "stake_count": stake_count,
+                "profit": round(total_profit, 4) if total_profit is not None else None,
+                "roi": round(roi, 4) if roi is not None else None,
+            },
         }
 
     async def performance_calendar(

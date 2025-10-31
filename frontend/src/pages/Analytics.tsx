@@ -10,6 +10,7 @@ import type {
   AnalyticsInsightsResponse,
   AnalyticsStreakResponse,
   AnalyticsFormResponse,
+  AnalyticsValueResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
@@ -29,6 +30,7 @@ import type {
   AnalyticsCalendarResponse,
   CalendarDaySummary,
   CalendarRaceDetail,
+  ValueOpportunitySample,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -129,6 +131,16 @@ type CalendarFilters = {
   hippodrome?: string
   startDate?: string
   endDate?: string
+}
+
+type ValueFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  minEdge?: number
+  limit?: number
 }
 
 type ComparisonFilters = {
@@ -1113,6 +1125,107 @@ function CalendarPanel({ data }: { data: AnalyticsCalendarResponse }) {
   )
 }
 
+function ValueOpportunitiesTable({ samples }: { samples: ValueOpportunitySample[] }) {
+  if (!samples.length) {
+    return <p className="text-sm text-gray-500">Aucune opportunité retenue.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200 rounded-lg border">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Hippodrome
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Course
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Distance
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Position
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote observée
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote probable
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Écart
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Gain unitaire
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {samples.map((sample, index) => (
+            <tr key={`${sample.date}-${sample.course_number}-${index}`}>
+              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(sample.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-gray-700">{sample.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.distance)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.final_position)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds_actual)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds_implied)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.edge)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.profit)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ValuePanel({ data }: { data: AnalyticsValueResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const winRate = data.win_rate ?? (data.sample_size ? data.wins / data.sample_size : null)
+  const positiveRatio = data.sample_size ? data.positive_edges / data.sample_size : null
+
+  return (
+    <div className="space-y-6">
+      {/* Bloc de synthèse pour visualiser d'un coup d'œil le potentiel value bet. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Courses étudiées" value={formatNumber(data.sample_size)} />
+        <SummaryStats label="Victoires" value={`${formatNumber(data.wins)} (${formatPercent(winRate)})`} />
+        <SummaryStats
+          label="Opportunités positives"
+          value={`${formatNumber(data.positive_edges)} (${formatPercent(positiveRatio)})`}
+        />
+      </div>
+
+      {/* Information financière et probabiliste pour piloter la prise de décision. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Écart moyen" value={formatAverage(data.average_edge)} />
+        <SummaryStats label="Cote moyenne" value={formatAverage(data.average_odds)} />
+        <SummaryStats label="ROI théorique" value={data.roi != null ? `${formatAverage(data.roi, 2)}x` : '—'} />
+        <SummaryStats label="Gain cumulé" value={formatAverage(data.profit)} />
+      </div>
+
+      {/* Rappels contextuels pour vérifier la cohérence des filtres appliqués. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+        <SummaryStats label="Hippodromes couverts" value={formatList(data.hippodromes, 5)} />
+      </div>
+
+      <ValueOpportunitiesTable samples={data.samples} />
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -1166,6 +1279,16 @@ export default function AnalyticsPage() {
   const [calendarEndInput, setCalendarEndInput] = useState('')
   const [calendarError, setCalendarError] = useState<string | null>(null)
   const [calendarFilters, setCalendarFilters] = useState<CalendarFilters | null>(null)
+
+  const [valueTypeInput, setValueTypeInput] = useState<TrendEntityType>('horse')
+  const [valueIdInput, setValueIdInput] = useState('')
+  const [valueHippoInput, setValueHippoInput] = useState('')
+  const [valueStartInput, setValueStartInput] = useState('')
+  const [valueEndInput, setValueEndInput] = useState('')
+  const [valueMinEdgeInput, setValueMinEdgeInput] = useState('0.0')
+  const [valueLimitInput, setValueLimitInput] = useState('25')
+  const [valueError, setValueError] = useState<string | null>(null)
+  const [valueFilters, setValueFilters] = useState<ValueFilters | null>(null)
 
   const [comparisonTypeInput, setComparisonTypeInput] = useState<TrendEntityType>('horse')
   const [comparisonIdInput, setComparisonIdInput] = useState('')
@@ -1384,6 +1507,39 @@ export default function AnalyticsPage() {
     enabled: Boolean(calendarFilters?.entityId),
   })
 
+  const valueQueryKey = useMemo(
+    () =>
+      valueFilters
+        ? [
+            'analytics',
+            'value',
+            valueFilters.entityType,
+            valueFilters.entityId,
+            valueFilters.hippodrome ?? '',
+            valueFilters.startDate ?? '',
+            valueFilters.endDate ?? '',
+            valueFilters.minEdge ?? '',
+            valueFilters.limit ?? '',
+          ]
+        : ['analytics', 'value', 'idle'],
+    [valueFilters],
+  )
+
+  const valueQuery = useQuery({
+    queryKey: valueQueryKey,
+    queryFn: () =>
+      analyticsService.getValueOpportunities({
+        entityType: valueFilters!.entityType,
+        entityId: valueFilters!.entityId,
+        hippodrome: valueFilters?.hippodrome,
+        startDate: valueFilters?.startDate,
+        endDate: valueFilters?.endDate,
+        minEdge: valueFilters?.minEdge,
+        limit: valueFilters?.limit,
+      }),
+    enabled: Boolean(valueFilters?.entityId),
+  })
+
   const comparisonQueryKey = useMemo(
     () =>
       comparisonFilters
@@ -1593,6 +1749,48 @@ export default function AnalyticsPage() {
       hippodrome: formHippoInput.trim() || undefined,
       startDate: formStartInput || undefined,
       endDate: formEndInput || undefined,
+    })
+  }
+
+  const handleValueSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = valueIdInput.trim()
+    const minEdgeValue = Number(valueMinEdgeInput.trim() || '0')
+    const limitValue = Number(valueLimitInput.trim() || '25')
+
+    if (!id) {
+      setValueError("Veuillez saisir un identifiant Aspiturf valide.")
+      setValueFilters(null)
+      return
+    }
+
+    if (Number.isNaN(minEdgeValue) || minEdgeValue < 0) {
+      setValueError("Le seuil d'écart doit être positif ou nul.")
+      setValueFilters(null)
+      return
+    }
+
+    if (Number.isNaN(limitValue) || limitValue < 5 || limitValue > 100) {
+      setValueError('Le nombre de courses doit être compris entre 5 et 100.')
+      setValueFilters(null)
+      return
+    }
+
+    if (valueStartInput && valueEndInput && valueStartInput > valueEndInput) {
+      setValueError('La date de début doit précéder la date de fin.')
+      setValueFilters(null)
+      return
+    }
+
+    setValueError(null)
+    setValueFilters({
+      entityType: valueTypeInput,
+      entityId: id,
+      hippodrome: valueHippoInput.trim() || undefined,
+      startDate: valueStartInput || undefined,
+      endDate: valueEndInput || undefined,
+      minEdge: minEdgeValue,
+      limit: limitValue,
     })
   }
 
@@ -2046,13 +2244,86 @@ export default function AnalyticsPage() {
           </button>
         </form>
         {formError && <p className="text-sm text-red-600">{formError}</p>}
-        {formQuery.isPending && (
-          <p className="text-sm text-gray-500">Calcul de l'indice de forme en cours…</p>
-        )}
-        {formQuery.isError && (
-          <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
-        )}
+      {formQuery.isPending && (
+        <p className="text-sm text-gray-500">Calcul de l'indice de forme en cours…</p>
+      )}
+      {formQuery.isError && (
+        <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
+      )}
       {formQuery.data && <FormPanel data={formQuery.data} />}
+    </SectionCard>
+
+    <SectionCard
+      title="Opportunités value bet"
+      description="Repérez les courses où la cote observée offre un edge positif par rapport aux estimations Aspiturf."
+    >
+      <form
+        onSubmit={handleValueSubmit}
+        className="grid gap-4 md:grid-cols-[repeat(7,minmax(0,1fr)),auto]"
+      >
+        <select
+          value={valueTypeInput}
+          onChange={(event) => setValueTypeInput(event.target.value as TrendEntityType)}
+          className="input"
+        >
+          <option value="horse">Cheval</option>
+          <option value="jockey">Jockey</option>
+          <option value="trainer">Entraîneur</option>
+        </select>
+        <input
+          value={valueIdInput}
+          onChange={(event) => setValueIdInput(event.target.value)}
+          placeholder="Identifiant Aspiturf (id)"
+          className="input"
+        />
+        <input
+          value={valueHippoInput}
+          onChange={(event) => setValueHippoInput(event.target.value)}
+          placeholder="Filtrer par hippodrome (optionnel)"
+          className="input"
+        />
+        <input
+          type="date"
+          value={valueStartInput}
+          onChange={(event) => setValueStartInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="date"
+          value={valueEndInput}
+          onChange={(event) => setValueEndInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="number"
+          min={0}
+          step={0.1}
+          value={valueMinEdgeInput}
+          onChange={(event) => setValueMinEdgeInput(event.target.value)}
+          placeholder="Seuil d'écart"
+          className="input"
+        />
+        <input
+          type="number"
+          min={5}
+          max={100}
+          value={valueLimitInput}
+          onChange={(event) => setValueLimitInput(event.target.value)}
+          placeholder="Courses max"
+          className="input"
+        />
+        <button type="submit" className="btn btn-primary">
+          Calculer
+        </button>
+      </form>
+      {valueError && <p className="text-sm text-red-600">{valueError}</p>}
+      {valueQuery.isPending && (
+        <p className="text-sm text-gray-500">Recherche des meilleures opportunités…</p>
+      )}
+      {valueQuery.isError && (
+        <p className="text-sm text-red-600">Erreur: {(valueQuery.error as Error).message}</p>
+      )}
+      {valueQuery.data && <ValuePanel data={valueQuery.data} />}
     </SectionCard>
 
     <SectionCard

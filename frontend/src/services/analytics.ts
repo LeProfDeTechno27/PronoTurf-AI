@@ -17,6 +17,7 @@ import type {
   AnalyticsFormResponse,
   AnalyticsComparisonResponse,
   AnalyticsCalendarResponse,
+  AnalyticsValueResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -184,6 +185,30 @@ export const analyticsService = {
         ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getValueOpportunities(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+    minEdge?: number
+    limit?: number
+  }) {
+    const response = await apiClient.get<AnalyticsValueResponse>('/analytics/value', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+        ...(params.minEdge !== undefined ? { min_edge: params.minEdge } : {}),
+        ...(params.limit ? { limit: params.limit } : {}),
       },
     })
 

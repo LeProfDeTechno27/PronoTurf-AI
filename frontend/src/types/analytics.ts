@@ -175,6 +175,40 @@ export interface AnalyticsFormResponse {
   races: FormRace[]
 }
 
+export interface ValueOpportunitySample {
+  date?: string | null
+  hippodrome?: string | null
+  course_number?: number | null
+  distance?: number | null
+  final_position?: number | null
+  odds_actual?: number | null
+  odds_implied?: number | null
+  edge?: number | null
+  is_win?: boolean | null
+  profit?: number | null
+}
+
+export interface AnalyticsValueResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  sample_size: number
+  wins: number
+  win_rate?: number | null
+  positive_edges: number
+  negative_edges: number
+  average_edge?: number | null
+  median_edge?: number | null
+  average_odds?: number | null
+  median_odds?: number | null
+  stake_count: number
+  profit?: number | null
+  roi?: number | null
+  hippodromes: string[]
+  samples: ValueOpportunitySample[]
+}
+
 export interface PerformanceStreak {
   type: 'win' | 'podium'
   length: number

@@ -21,6 +21,7 @@ from app.schemas.analytics import (
     AnalyticsInsightsResponse,
     AnalyticsStreakResponse,
     AnalyticsCalendarResponse,
+    AnalyticsValueResponse,
     DistributionBucket,
     DistributionDimension,
     FormRace,
@@ -39,6 +40,7 @@ from app.schemas.analytics import (
     PerformanceBreakdown,
     PerformanceSummary,
     RecentRace,
+    ValueOpportunitySample,
     TrainerAnalyticsResponse,
     TrendEntityType,
     TrendGranularity,
@@ -384,6 +386,33 @@ def _to_calendar_days(rows: List[Dict[str, Any]]) -> List[CalendarDaySummary]:
         )
 
     return days
+
+
+def _to_value_samples(rows: List[Dict[str, Any]]) -> List[ValueOpportunitySample]:
+    """Cast des opportunités de value bet en objets typés pour la réponse API."""
+
+    samples: List[ValueOpportunitySample] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        samples.append(
+            ValueOpportunitySample(
+                date=row.get("date"),
+                hippodrome=row.get("hippodrome"),
+                course_number=row.get("course_number"),
+                distance=row.get("distance"),
+                final_position=row.get("final_position"),
+                odds_actual=row.get("odds_actual"),
+                odds_implied=row.get("odds_implied"),
+                edge=row.get("edge"),
+                is_win=row.get("is_win"),
+                profit=row.get("profit"),
+            )
+        )
+
+    return samples
 
 
 @router.get(
@@ -919,6 +948,105 @@ async def get_performance_calendar(
         total_wins=int(payload.get("total_wins") or 0),
         total_podiums=int(payload.get("total_podiums") or 0),
         days=days,
+    )
+
+
+@router.get(
+    "/value",
+    response_model=AnalyticsValueResponse,
+    summary="Identifier les opportunités de value bet",
+    description=(
+        "Compare la cote probable Aspiturf et la cote observée pour repérer les courses offrant un écart "
+        "potentiellement intéressant pour un cheval, un jockey ou un entraîneur."
+    ),
+)
+async def get_value_opportunities(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+    min_edge: Optional[float] = Query(
+        default=0.0,
+        ge=0.0,
+        description="Écarter les courses dont la différence de cote est inférieure à ce seuil",
+    ),
+    limit: int = Query(
+        default=25,
+        ge=5,
+        le=100,
+        description="Nombre maximal de courses retournées, classées par edge décroissant",
+    ),
+) -> AnalyticsValueResponse:
+    """Retourne les courses où la cote observée diffère sensiblement de l'estimation Aspiturf."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    payload = await client.value_opportunities(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+        min_edge=min_edge,
+        limit=limit,
+    )
+
+    samples = _to_value_samples(payload.get("samples", []))
+
+    if not samples:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune opportunité de value bet détectée pour cette configuration",
+        )
+
+    summary = payload.get("summary") or {}
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=payload.get("date_start"),
+        date_end=payload.get("date_end"),
+    )
+
+    # Les agrégats sont calculés côté client pour garantir la cohérence entre les différents supports.
+    return AnalyticsValueResponse(
+        entity_type=entity_type,
+        entity_id=payload.get("entity_id", entity_id),
+        entity_label=payload.get("entity_label"),
+        metadata=metadata,
+        sample_size=int(summary.get("sample_size") or len(samples)),
+        wins=int(summary.get("wins") or 0),
+        win_rate=summary.get("win_rate"),
+        positive_edges=int(summary.get("positive_edges") or 0),
+        negative_edges=int(summary.get("negative_edges") or 0),
+        average_edge=summary.get("average_edge"),
+        median_edge=summary.get("median_edge"),
+        average_odds=summary.get("average_odds"),
+        median_odds=summary.get("median_odds"),
+        stake_count=int(summary.get("stake_count") or 0),
+        profit=summary.get("profit"),
+        roi=summary.get("roi"),
+        hippodromes=[str(item) for item in payload.get("hippodromes", []) if item is not None],
+        samples=samples,
     )
 
 

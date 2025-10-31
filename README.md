@@ -25,6 +25,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Comparateur multi-entités** : l'endpoint `/api/v1/analytics/comparisons` consolide les statistiques de plusieurs chevaux/jockeys/entraîneurs et mesure leurs confrontations directes, accessible depuis un nouveau module de la page Analytics.
 - **Indice de forme récent** : l'endpoint `/api/v1/analytics/form` calcule un score (0-5) et un indice de constance sur les N dernières courses d'une entité avec un tableau détaillé directement exploitable dans l'explorateur React.
 - **Calendrier de performances** : l'endpoint `/api/v1/analytics/calendar` agrège les résultats jour par jour et l'explorateur React affiche un tableau détaillé des réunions et partants associés.
+- **Chasse aux value bets** : l'endpoint `/api/v1/analytics/value` compare la cote observée et la cote probable Aspiturf pour identifier les opportunités les plus rentables et restitue un ROI théorique directement dans l'interface.
 
 ## Technologies
 
