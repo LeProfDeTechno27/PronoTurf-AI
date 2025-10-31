@@ -8,6 +8,7 @@ pydantic-settings==2.1.0
 sqlalchemy==2.0.23
 aiomysql==0.2.0
 pymysql==1.1.0
+aiosqlite==0.20.0
 alembic==1.12.1
 
 # Authentification et sécurité
@@ -39,6 +40,7 @@ seaborn==0.13.0
 # HTTP clients et APIs
 httpx==0.25.2
 aiohttp==3.9.1
+aiofiles==23.2.1
 requests==2.31.0
 tenacity==8.2.3
 
@@ -57,9 +59,6 @@ python-json-logger==2.0.7
 
 # Rate limiting
 slowapi==0.1.9
-
-# CORS
-python-cors==1.0.0
 
 # Utils
 python-dotenv==1.0.0
