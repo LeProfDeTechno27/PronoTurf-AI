@@ -314,6 +314,60 @@ def _build_gain_curve(
     return gain_curve
 
 
+def _build_lift_table(
+    scores: List[float],
+    truths: List[int],
+    *,
+    buckets: int = 5,
+) -> Dict[str, object]:
+    """Construit un tableau de *lift* pour comparer chaque tranche au taux global."""
+
+    if not scores or not truths or len(scores) != len(truths):
+        return {"baseline_rate": None, "buckets": []}
+
+    combined = sorted(zip(scores, truths), key=lambda item: item[0], reverse=True)
+    total = len(combined)
+    total_positive = sum(truths)
+    baseline_rate = total_positive / total if total else 0.0
+
+    bucket_size = max(1, total // buckets)
+    buckets_rows: List[Dict[str, Optional[float]]] = []
+    cumulative_positive = 0
+
+    for idx in range(buckets):
+        start = idx * bucket_size
+        end = (idx + 1) * bucket_size if idx < buckets - 1 else total
+
+        if start >= total:
+            break
+
+        bucket = combined[start:end]
+        bucket_total = len(bucket)
+        bucket_positive = sum(truth for _, truth in bucket)
+        hit_rate: Optional[float] = None
+        if bucket_total:
+            hit_rate = bucket_positive / bucket_total
+
+        cumulative_positive += bucket_positive
+
+        buckets_rows.append(
+            {
+                "bucket": idx + 1,
+                "from_fraction": start / total,
+                "to_fraction": end / total,
+                "observations": bucket_total,
+                "hit_rate": hit_rate,
+                "lift": (hit_rate / baseline_rate) if hit_rate is not None and baseline_rate > 0 else None,
+                "cumulative_capture": (
+                    cumulative_positive / total_positive if total_positive else None
+                ),
+                "cumulative_coverage": end / total,
+            }
+        )
+
+    return {"baseline_rate": baseline_rate if total else None, "buckets": buckets_rows}
+
+
 def _compute_ks_analysis(
     scores: List[float],
     truths: List[int],
@@ -655,6 +709,15 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             steps=5,
         )
 
+        # Construit un tableau de lift : chaque tranche de probabilité est
+        # comparée au taux de réussite moyen pour visualiser rapidement la
+        # surperformance (ou sous-performance) des segments prioritaires.
+        lift_analysis = _build_lift_table(
+            y_scores,
+            y_true,
+            buckets=5,
+        )
+
         # Mesure la séparation effective entre gagnants et perdants via une
         # statistique de Kolmogorov-Smirnov. Utile pour identifier un seuil
         # discriminant même si les métriques globales semblent correctes.
@@ -701,6 +764,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_sensitivity": threshold_grid,
             "gain_curve": gain_curve,
+            "lift_analysis": lift_analysis,
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
         }
@@ -721,6 +785,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_breakdown": dict(model_versions),
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
+            "lift_analysis": lift_analysis,
         }
 
         active_model = (
@@ -761,6 +826,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
+            "lift_analysis": lift_analysis,
             "model_version_breakdown": dict(model_versions),
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,

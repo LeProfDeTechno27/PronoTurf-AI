@@ -314,6 +314,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert gain_curve[-1]["cumulative_hit_rate"] == pytest.approx(4 / 6, rel=1e-3)
     assert gain_curve[-1]["capture_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    lift_analysis = metrics["lift_analysis"]
+    assert lift_analysis["baseline_rate"] == pytest.approx(4 / 6, rel=1e-3)
+    assert len(lift_analysis["buckets"]) == 5
+    assert lift_analysis["buckets"][0]["lift"] == pytest.approx(1.5, rel=1e-3)
+    assert lift_analysis["buckets"][1]["lift"] == pytest.approx(0.0, abs=1e-6)
+    assert lift_analysis["buckets"][0]["cumulative_capture"] == pytest.approx(0.25, rel=1e-3)
+    assert lift_analysis["buckets"][-1]["cumulative_coverage"] == pytest.approx(1.0, rel=1e-6)
+
     ks_analysis = metrics["ks_analysis"]
     assert ks_analysis["ks_statistic"] == pytest.approx(0.5, rel=1e-3)
     assert ks_analysis["ks_threshold"] == pytest.approx(0.25, rel=1e-3)
@@ -350,6 +358,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
