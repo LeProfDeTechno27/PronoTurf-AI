@@ -567,6 +567,39 @@ class AspiturfClient:
 
         return None
 
+    async def get_races(
+        self,
+        *,
+        horse_id: Optional[str] = None,
+        jockey_id: Optional[str] = None,
+        trainer_id: Optional[str] = None,
+        hippodrome: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retourne les lignes Aspiturf filtrées selon plusieurs critères."""
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        races = self._data
+
+        if horse_id:
+            races = [row for row in races if row.get('idChe') == horse_id]
+
+        if jockey_id:
+            races = [row for row in races if row.get('idJockey') == jockey_id]
+
+        if trainer_id:
+            races = [row for row in races if row.get('idEntraineur') == trainer_id]
+
+        if hippodrome:
+            hippo_upper = hippodrome.upper()
+            races = [
+                row for row in races
+                if row.get('hippo') and row.get('hippo').upper() == hippo_upper
+            ]
+
+        return races
+
     async def get_horse_statistics(
         self,
         horse_id: str,
