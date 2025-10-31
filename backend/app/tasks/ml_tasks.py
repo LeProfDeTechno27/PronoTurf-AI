@@ -22,15 +22,18 @@ from app.models.partant_prediction import PartantPrediction
 try:
     from sklearn.metrics import (
         accuracy_score,
+        average_precision_score,
         confusion_matrix,
         f1_score,
         log_loss,
+        precision_recall_curve,
         precision_score,
         recall_score,
         roc_auc_score,
     )
 except Exception:  # pragma: no cover - defensive import guard
     accuracy_score = precision_score = recall_score = f1_score = roc_auc_score = log_loss = None
+    average_precision_score = precision_recall_curve = None
     confusion_matrix = None
 
 logger = logging.getLogger(__name__)
@@ -312,6 +315,66 @@ def _build_gain_curve(
         )
 
     return gain_curve
+
+
+def _build_precision_recall_curve(
+    scores: List[float],
+    truths: List[int],
+    *,
+    sample_points: int = 8,
+) -> List[Dict[str, Optional[float]]]:
+    """Construit une table compacte de la courbe précision-rappel."""
+
+    if (
+        not scores
+        or not truths
+        or len(scores) != len(truths)
+        or precision_recall_curve is None
+    ):
+        return []
+
+    precision, recall, thresholds = precision_recall_curve(truths, scores)
+
+    if len(thresholds) == 0:
+        return []
+
+    curve: List[Dict[str, Optional[float]]] = []
+
+    for idx, threshold in enumerate(list(thresholds)):
+        current_precision = float(precision[idx + 1])
+        current_recall = float(recall[idx + 1])
+        denom = current_precision + current_recall
+        f1_score_value = (2 * current_precision * current_recall / denom) if denom else 0.0
+        curve.append(
+            {
+                "threshold": float(threshold),
+                "precision": current_precision,
+                "recall": current_recall,
+                "f1": f1_score_value,
+            }
+        )
+
+    # Ajoute le point terminal (tous positifs) pour compléter la courbe.
+    end_precision = float(precision[-1])
+    end_recall = float(recall[-1])
+    denom = end_precision + end_recall
+    curve.append(
+        {
+            "threshold": 0.0,
+            "precision": end_precision,
+            "recall": end_recall,
+            "f1": (2 * end_precision * end_recall / denom) if denom else 0.0,
+        }
+    )
+
+    if len(curve) > sample_points:
+        step = max(1, len(curve) // sample_points)
+        reduced = [curve[idx] for idx in range(0, len(curve), step)]
+        if reduced[-1] != curve[-1]:
+            reduced.append(curve[-1])
+        curve = reduced[:sample_points]
+
+    return curve
 
 
 def _build_lift_table(
@@ -718,6 +781,21 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             buckets=5,
         )
 
+        # Trace la courbe précision-rappel pour suivre la capacité du modèle à
+        # maintenir une précision élevée lorsque l'on pousse le rappel. Utile
+        # pour les opérateurs qui doivent choisir un compromis précision/rappel
+        # selon leur tolérance au risque.
+        precision_recall_table = _build_precision_recall_curve(
+            y_scores,
+            y_true,
+            sample_points=8,
+        )
+        average_precision = (
+            float(average_precision_score(y_true, y_scores))
+            if average_precision_score is not None
+            else None
+        )
+
         # Mesure la séparation effective entre gagnants et perdants via une
         # statistique de Kolmogorov-Smirnov. Utile pour identifier un seuil
         # discriminant même si les métriques globales semblent correctes.
@@ -765,6 +843,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "threshold_sensitivity": threshold_grid,
             "gain_curve": gain_curve,
             "lift_analysis": lift_analysis,
+            "average_precision": average_precision,
+            "precision_recall_curve": precision_recall_table,
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
         }
@@ -786,6 +866,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
             "lift_analysis": lift_analysis,
+            "precision_recall_curve": precision_recall_table,
         }
 
         active_model = (

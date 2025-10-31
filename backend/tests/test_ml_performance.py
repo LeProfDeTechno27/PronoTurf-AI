@@ -322,6 +322,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert lift_analysis["buckets"][0]["cumulative_capture"] == pytest.approx(0.25, rel=1e-3)
     assert lift_analysis["buckets"][-1]["cumulative_coverage"] == pytest.approx(1.0, rel=1e-6)
 
+    assert metrics["average_precision"] == pytest.approx(0.8041666, rel=1e-3)
+
+    pr_curve = metrics["precision_recall_curve"]
+    assert len(pr_curve) == 7
+    assert pr_curve[0]["threshold"] == pytest.approx(0.15, rel=1e-3)
+    assert pr_curve[0]["precision"] == pytest.approx(0.8, rel=1e-3)
+    assert pr_curve[0]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert pr_curve[2]["f1"] == pytest.approx(0.571428, rel=1e-3)
+    assert pr_curve[-1]["threshold"] == pytest.approx(0.0, abs=1e-6)
+
     ks_analysis = metrics["ks_analysis"]
     assert ks_analysis["ks_statistic"] == pytest.approx(0.5, rel=1e-3)
     assert ks_analysis["ks_threshold"] == pytest.approx(0.25, rel=1e-3)
@@ -359,6 +369,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]

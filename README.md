@@ -42,6 +42,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Lecture par niveau de confiance** : en parallèle des quantiles, un tableau de bord consolide précision, rappel et taux de positifs pour chaque niveau de confiance (« high », « medium », « low »). Cette vue directe permet d'ajuster les règles métiers (notifications, exposition financière) selon la fiabilité réelle de chaque segment.
 - **Courbe de gain cumulative** : la même tâche produit désormais une "gain curve" qui mesure, palier par palier, la part des arrivées dans les trois premiers capturée lorsque l'on ne conserve que les meilleures probabilités. Idéal pour optimiser une stratégie de filtrage ou de paris progressifs.
 - **Tableau de lift par quantile** : en complément de la courbe de gain, chaque tranche de probabilité est comparée au taux de réussite moyen du lot afin de repérer les segments qui surperforment (ou sous-performent) réellement et d'ajuster la sélection des paris.
+- **Courbe précision-rappel synthétique** : une table compacte présente, seuil par seuil, le compromis précision/rappel et le score F1 associé pour piloter finement la stratégie de sélection selon l'appétence au risque.
 - **Diagnostic Kolmogorov-Smirnov** : la séparation entre gagnants et perdants est suivie via la statistique KS et une courbe cumulative compacte, idéale pour identifier un seuil discriminant même lorsque les métriques globales paraissent stables.
 
 ## Technologies
