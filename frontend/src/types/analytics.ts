@@ -123,3 +123,21 @@ export interface CourseAnalyticsResponse {
   partants: PartantInsight[]
   metadata: AnalyticsMetadata
 }
+
+export type AnalyticsSearchType = 'horse' | 'jockey' | 'trainer' | 'hippodrome'
+
+export interface AnalyticsSearchMetadata {
+  total_races?: number | null
+  hippodromes?: string[]
+  last_seen?: string | null
+  course_count?: number | null
+  last_meeting?: string | null
+  disciplines?: string[]
+}
+
+export interface AnalyticsSearchResult {
+  type: AnalyticsSearchType
+  id: string
+  label: string
+  metadata: AnalyticsSearchMetadata
+}

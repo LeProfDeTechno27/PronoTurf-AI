@@ -82,6 +82,93 @@ class StubAspiturfClient:
         key = (course_date, hippodrome.upper(), course_number)
         return [dict(item) for item in self._partants.get(key, [])]
 
+    async def search_entities(
+        self,
+        entity_type: str,
+        query: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        normalized = query.strip().lower()
+        if len(normalized) < 2:
+            return []
+
+        results: Dict[str, Dict[str, Any]] = {}
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_field = "nom_cheval"
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_field = "jockey"
+        elif entity_type == "trainer":
+            key_field = "idEntraineur"
+            label_field = "entraineur"
+        elif entity_type == "hippodrome":
+            key_field = "hippo"
+            label_field = "hippo"
+        else:
+            return []
+
+        for row in self._rows:
+            identifier = row.get(key_field)
+            if not identifier:
+                continue
+
+            identifier_str = str(identifier)
+            label = row.get(label_field) or identifier_str
+
+            searchable = f"{identifier_str.lower()} {str(label).lower()}"
+            if normalized not in searchable:
+                continue
+
+            entry = results.setdefault(
+                identifier_str.upper() if entity_type == "hippodrome" else identifier_str,
+                {
+                    "id": identifier_str,
+                    "label": label,
+                    "metadata": {
+                        "total_races": 0,
+                        "hippodromes": set(),
+                        "course_count": 0,
+                    },
+                },
+            )
+
+            if entity_type == "hippodrome":
+                entry["id"] = identifier_str.upper()
+                entry["label"] = label
+                entry["metadata"]["course_count"] += 1
+            else:
+                entry["metadata"]["total_races"] += 1
+                hippo = row.get("hippo")
+                if hippo:
+                    entry["metadata"]["hippodromes"].add(str(hippo))
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                key_name = "last_meeting" if entity_type == "hippodrome" else "last_seen"
+                current = entry["metadata"].get(key_name)
+                if current is None or race_date > current:
+                    entry["metadata"][key_name] = race_date
+
+        formatted = []
+        for entry in results.values():
+            metadata = entry["metadata"]
+            hippos = metadata.get("hippodromes")
+            if isinstance(hippos, set):
+                metadata["hippodromes"] = sorted(hippos)
+
+            formatted.append({"id": entry["id"], "label": entry["label"], "metadata": metadata})
+
+        formatted.sort(
+            key=lambda item: (
+                -(item["metadata"].get("total_races") or item["metadata"].get("course_count") or 0),
+                item["label"],
+            )
+        )
+
+        return formatted[:limit]
+
 
 @pytest.fixture()
 def analytics_rows() -> List[Dict[str, Any]]:
@@ -298,3 +385,29 @@ async def test_course_analytics_exposes_partant_statistics(analytics_client: Asy
     metadata = payload["metadata"]
     assert metadata["date_start"] == "2024-06-10"
     assert metadata["hippodrome_filter"] == "Paris"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_search_endpoint_returns_sorted_results(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/search",
+        params={"type": "horse", "query": "etoile"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload
+    first_result = payload[0]
+    assert first_result["id"] == "H-1"
+    assert first_result["label"] == "Étoile Filante"
+    assert first_result["metadata"]["total_races"] == 2
+    assert "PARIS" in first_result["metadata"]["hippodromes"]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_search_endpoint_enforces_min_length(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/search",
+        params={"type": "jockey", "query": "j"},
+    )
+    assert response.status_code == 422

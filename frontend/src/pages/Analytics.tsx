@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import analyticsService from '../services/analytics'
 import type {
+  AnalyticsSearchResult,
   CourseAnalyticsResponse,
   CoupleAnalyticsResponse,
   HorseAnalyticsResponse,
@@ -23,6 +24,21 @@ const formatAverage = (value?: number | null, digits = 2) =>
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString('fr-FR') : '—'
 
+const formatList = (values?: string[] | null, max = 3) =>
+  values?.length ? values.slice(0, max).join(', ') : '—'
+
+const toError = (value: unknown): Error | null => {
+  if (value instanceof Error) {
+    return value
+  }
+
+  if (value) {
+    return new Error('Impossible de charger les suggestions. Réessayez.')
+  }
+
+  return null
+}
+
 type HorseSearch = { id: string; hippodrome?: string }
 type PersonSearch = { id: string; hippodrome?: string }
 type CoupleSearch = { horseId: string; jockeyId: string; hippodrome?: string }
@@ -41,6 +57,82 @@ function SectionCard({ title, description, children }: { title: string; descript
       </div>
       {children}
     </section>
+  )
+}
+
+function SuggestionMetadata({ result }: { result: AnalyticsSearchResult }) {
+  const { metadata } = result
+  const segments: string[] = []
+
+  if (metadata.total_races != null) {
+    segments.push(`${metadata.total_races} courses`)
+  } else if (metadata.course_count != null) {
+    segments.push(`${metadata.course_count} courses`)
+  }
+
+  if (metadata.hippodromes?.length) {
+    segments.push(`Hippos: ${formatList(metadata.hippodromes)}`)
+  }
+
+  if (metadata.disciplines?.length) {
+    segments.push(`Disciplines: ${formatList(metadata.disciplines)}`)
+  }
+
+  const lastDate = metadata.last_seen ?? metadata.last_meeting
+  if (lastDate) {
+    segments.push(`Dernière : ${formatDate(lastDate)}`)
+  }
+
+  if (!segments.length) {
+    return null
+  }
+
+  return <p className="text-xs text-gray-500">{segments.join(' • ')}</p>
+}
+
+function SuggestionsList({
+  results,
+  isLoading,
+  error,
+  onSelect,
+  emptyLabel,
+}: {
+  results: AnalyticsSearchResult[] | undefined
+  isLoading: boolean
+  error: Error | null
+  onSelect: (result: AnalyticsSearchResult) => void
+  emptyLabel: string
+}) {
+  if (isLoading) {
+    return <p className="text-sm text-gray-500">Chargement des suggestions…</p>
+  }
+
+  if (error) {
+    return <p className="text-sm text-red-600">Erreur: {error.message}</p>
+  }
+
+  if (!results?.length) {
+    return <p className="text-sm text-gray-500">{emptyLabel}</p>
+  }
+
+  return (
+    <ul className="space-y-2">
+      {results.map((item) => (
+        <li key={`${item.type}-${item.id}`}>
+          <button
+            type="button"
+            onClick={() => onSelect(item)}
+            className="flex w-full flex-col rounded-lg border border-gray-200 bg-white px-4 py-3 text-left transition hover:border-indigo-300 hover:shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-gray-900">{item.label}</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-indigo-600">{item.id}</span>
+            </div>
+            <SuggestionMetadata result={item} />
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -269,16 +361,19 @@ export default function AnalyticsPage() {
   const [horseHippoInput, setHorseHippoInput] = useState('')
   const [horseSearch, setHorseSearch] = useState<HorseSearch | null>(null)
   const [horseError, setHorseError] = useState<string | null>(null)
+  const [horseNameQuery, setHorseNameQuery] = useState('')
 
   const [jockeyIdInput, setJockeyIdInput] = useState('')
   const [jockeyHippoInput, setJockeyHippoInput] = useState('')
   const [jockeySearch, setJockeySearch] = useState<PersonSearch | null>(null)
   const [jockeyError, setJockeyError] = useState<string | null>(null)
+  const [jockeyNameQuery, setJockeyNameQuery] = useState('')
 
   const [trainerIdInput, setTrainerIdInput] = useState('')
   const [trainerHippoInput, setTrainerHippoInput] = useState('')
   const [trainerSearch, setTrainerSearch] = useState<PersonSearch | null>(null)
   const [trainerError, setTrainerError] = useState<string | null>(null)
+  const [trainerNameQuery, setTrainerNameQuery] = useState('')
 
   const [coupleHorseInput, setCoupleHorseInput] = useState('')
   const [coupleJockeyInput, setCoupleJockeyInput] = useState('')
@@ -291,6 +386,7 @@ export default function AnalyticsPage() {
   const [courseNumberInput, setCourseNumberInput] = useState('')
   const [courseSearch, setCourseSearch] = useState<CourseSearch | null>(null)
   const [courseError, setCourseError] = useState<string | null>(null)
+  const [courseHippoQuery, setCourseHippoQuery] = useState('')
 
   const horseQueryKey = useMemo(() => (
     horseSearch ? ['analytics', 'horse', horseSearch.id, horseSearch.hippodrome ?? ''] : ['analytics', 'horse', 'idle']
@@ -300,6 +396,13 @@ export default function AnalyticsPage() {
     queryKey: horseQueryKey,
     queryFn: () => analyticsService.getHorseAnalytics(horseSearch!.id, horseSearch?.hippodrome),
     enabled: Boolean(horseSearch?.id),
+  })
+
+  const horseSuggestionsQuery = useQuery<AnalyticsSearchResult[]>({
+    queryKey: ['analytics', 'suggestions', 'horse', horseNameQuery],
+    queryFn: () => analyticsService.searchEntities('horse', horseNameQuery),
+    enabled: horseNameQuery.trim().length >= 2,
+    staleTime: 60_000,
   })
 
   const jockeyQueryKey = useMemo(() => (
@@ -312,6 +415,13 @@ export default function AnalyticsPage() {
     enabled: Boolean(jockeySearch?.id),
   })
 
+  const jockeySuggestionsQuery = useQuery<AnalyticsSearchResult[]>({
+    queryKey: ['analytics', 'suggestions', 'jockey', jockeyNameQuery],
+    queryFn: () => analyticsService.searchEntities('jockey', jockeyNameQuery),
+    enabled: jockeyNameQuery.trim().length >= 2,
+    staleTime: 60_000,
+  })
+
   const trainerQueryKey = useMemo(() => (
     trainerSearch ? ['analytics', 'trainer', trainerSearch.id, trainerSearch.hippodrome ?? ''] : ['analytics', 'trainer', 'idle']
   ), [trainerSearch])
@@ -320,6 +430,13 @@ export default function AnalyticsPage() {
     queryKey: trainerQueryKey,
     queryFn: () => analyticsService.getTrainerAnalytics(trainerSearch!.id, trainerSearch?.hippodrome),
     enabled: Boolean(trainerSearch?.id),
+  })
+
+  const trainerSuggestionsQuery = useQuery<AnalyticsSearchResult[]>({
+    queryKey: ['analytics', 'suggestions', 'trainer', trainerNameQuery],
+    queryFn: () => analyticsService.searchEntities('trainer', trainerNameQuery),
+    enabled: trainerNameQuery.trim().length >= 2,
+    staleTime: 60_000,
   })
 
   const coupleQueryKey = useMemo(() => (
@@ -352,6 +469,13 @@ export default function AnalyticsPage() {
       courseSearch!.courseNumber,
     ),
     enabled: Boolean(courseSearch?.date && courseSearch?.hippodrome && courseSearch?.courseNumber),
+  })
+
+  const hippodromeSuggestionsQuery = useQuery<AnalyticsSearchResult[]>({
+    queryKey: ['analytics', 'suggestions', 'hippodrome', courseHippoQuery],
+    queryFn: () => analyticsService.searchEntities('hippodrome', courseHippoQuery),
+    enabled: courseHippoQuery.trim().length >= 2,
+    staleTime: 60_000,
   })
 
   const handleHorseSubmit = (event: FormEvent) => {
@@ -424,6 +548,39 @@ export default function AnalyticsPage() {
     setCourseSearch({ date, hippodrome, courseNumber })
   }
 
+  const handleHorseSuggestionSelect = (suggestion: AnalyticsSearchResult) => {
+    setHorseIdInput(suggestion.id)
+    if (!horseHippoInput && suggestion.metadata.hippodromes?.length) {
+      setHorseHippoInput(suggestion.metadata.hippodromes[0])
+    }
+    setHorseNameQuery('')
+  }
+
+  const handleJockeySuggestionSelect = (suggestion: AnalyticsSearchResult) => {
+    setJockeyIdInput(suggestion.id)
+    if (!jockeyHippoInput && suggestion.metadata.hippodromes?.length) {
+      setJockeyHippoInput(suggestion.metadata.hippodromes[0])
+    }
+    setJockeyNameQuery('')
+  }
+
+  const handleTrainerSuggestionSelect = (suggestion: AnalyticsSearchResult) => {
+    setTrainerIdInput(suggestion.id)
+    if (!trainerHippoInput && suggestion.metadata.hippodromes?.length) {
+      setTrainerHippoInput(suggestion.metadata.hippodromes[0])
+    }
+    setTrainerNameQuery('')
+  }
+
+  const handleHippodromeSuggestionSelect = (suggestion: AnalyticsSearchResult) => {
+    setCourseHippoInput(suggestion.label)
+    if (!horseHippoInput) setHorseHippoInput(suggestion.label)
+    if (!jockeyHippoInput) setJockeyHippoInput(suggestion.label)
+    if (!trainerHippoInput) setTrainerHippoInput(suggestion.label)
+    if (!coupleHippoInput) setCoupleHippoInput(suggestion.label)
+    setCourseHippoQuery('')
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 py-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
@@ -460,6 +617,31 @@ export default function AnalyticsPage() {
           {horseQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(horseQuery.error as Error).message}</p>
           )}
+          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
+              <span className="text-xs text-gray-500">2 lettres minimum</span>
+            </div>
+            <input
+              value={horseNameQuery}
+              onChange={(event) => setHorseNameQuery(event.target.value)}
+              placeholder="Rechercher un cheval par nom ou identifiant"
+              className="input"
+            />
+            {horseNameQuery.trim().length >= 2 ? (
+              <SuggestionsList
+                results={horseSuggestionsQuery.data}
+                isLoading={horseSuggestionsQuery.isFetching}
+                error={toError(horseSuggestionsQuery.error)}
+                onSelect={handleHorseSuggestionSelect}
+                emptyLabel="Aucune correspondance trouvée pour cette recherche."
+              />
+            ) : (
+              <p className="text-xs text-gray-500">
+                Tapez au moins deux lettres pour lister les chevaux correspondants dans le CSV Aspiturf.
+              </p>
+            )}
+          </div>
           {horseQuery.data && <HorseAnalyticsPanel data={horseQuery.data} />}
         </SectionCard>
 
@@ -489,6 +671,31 @@ export default function AnalyticsPage() {
           {jockeyQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(jockeyQuery.error as Error).message}</p>
           )}
+          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
+              <span className="text-xs text-gray-500">2 lettres minimum</span>
+            </div>
+            <input
+              value={jockeyNameQuery}
+              onChange={(event) => setJockeyNameQuery(event.target.value)}
+              placeholder="Rechercher un jockey par nom ou identifiant"
+              className="input"
+            />
+            {jockeyNameQuery.trim().length >= 2 ? (
+              <SuggestionsList
+                results={jockeySuggestionsQuery.data}
+                isLoading={jockeySuggestionsQuery.isFetching}
+                error={toError(jockeySuggestionsQuery.error)}
+                onSelect={handleJockeySuggestionSelect}
+                emptyLabel="Aucun jockey ne correspond à cette recherche."
+              />
+            ) : (
+              <p className="text-xs text-gray-500">
+                Utilisez la recherche pour récupérer rapidement l'identifiant Aspiturf d'un jockey.
+              </p>
+            )}
+          </div>
           {jockeyQuery.data && <PersonAnalyticsPanel data={jockeyQuery.data} label="Nom du jockey" />}
         </SectionCard>
 
@@ -518,6 +725,31 @@ export default function AnalyticsPage() {
           {trainerQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(trainerQuery.error as Error).message}</p>
           )}
+          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
+              <span className="text-xs text-gray-500">2 lettres minimum</span>
+            </div>
+            <input
+              value={trainerNameQuery}
+              onChange={(event) => setTrainerNameQuery(event.target.value)}
+              placeholder="Rechercher un entraîneur par nom ou identifiant"
+              className="input"
+            />
+            {trainerNameQuery.trim().length >= 2 ? (
+              <SuggestionsList
+                results={trainerSuggestionsQuery.data}
+                isLoading={trainerSuggestionsQuery.isFetching}
+                error={toError(trainerSuggestionsQuery.error)}
+                onSelect={handleTrainerSuggestionSelect}
+                emptyLabel="Aucun entraîneur ne correspond à cette recherche."
+              />
+            ) : (
+              <p className="text-xs text-gray-500">
+                Trouvez instantanément l'identifiant Aspiturf d'un entraîneur pour l'analyse détaillée.
+              </p>
+            )}
+          </div>
           {trainerQuery.data && <PersonAnalyticsPanel data={trainerQuery.data} label="Nom de l'entraîneur" />}
         </SectionCard>
 
@@ -588,6 +820,31 @@ export default function AnalyticsPage() {
           {courseQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(courseQuery.error as Error).message}</p>
           )}
+          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Rechercher un hippodrome</span>
+              <span className="text-xs text-gray-500">2 lettres minimum</span>
+            </div>
+            <input
+              value={courseHippoQuery}
+              onChange={(event) => setCourseHippoQuery(event.target.value)}
+              placeholder="Saisir le nom d'un hippodrome Aspiturf"
+              className="input"
+            />
+            {courseHippoQuery.trim().length >= 2 ? (
+              <SuggestionsList
+                results={hippodromeSuggestionsQuery.data}
+                isLoading={hippodromeSuggestionsQuery.isFetching}
+                error={toError(hippodromeSuggestionsQuery.error)}
+                onSelect={handleHippodromeSuggestionSelect}
+                emptyLabel="Aucun hippodrome trouvé avec ce terme."
+              />
+            ) : (
+              <p className="text-xs text-gray-500">
+                Sélectionnez un hippodrome pour pré-remplir les filtres des différents formulaires.
+              </p>
+            )}
+          </div>
           {courseQuery.data && <CourseAnalyticsPanel data={courseQuery.data} />}
         </SectionCard>
       </div>

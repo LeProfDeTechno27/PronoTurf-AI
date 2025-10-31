@@ -1,9 +1,62 @@
 """Schémas Pydantic pour les endpoints d'analytics Aspiturf."""
 
+from enum import Enum
 from datetime import date as date_type
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class AnalyticsSearchType(str, Enum):
+    """Types d'entités disponibles pour la recherche analytics."""
+
+    HORSE = "horse"
+    JOCKEY = "jockey"
+    TRAINER = "trainer"
+    HIPPODROME = "hippodrome"
+
+
+class AnalyticsSearchMetadata(BaseModel):
+    """Métadonnées accompagnant un résultat de recherche analytics."""
+
+    total_races: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Nombre total de courses trouvées pour l'entité",
+    )
+    hippodromes: List[str] = Field(
+        default_factory=list,
+        description="Liste des hippodromes les plus fréquents",
+    )
+    last_seen: Optional[date_type] = Field(
+        default=None,
+        description="Dernière apparition de l'entité dans les données",
+    )
+    course_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Nombre de courses correspondant à l'hippodrome",
+    )
+    last_meeting: Optional[date_type] = Field(
+        default=None,
+        description="Dernière réunion disponible pour l'hippodrome",
+    )
+    disciplines: List[str] = Field(
+        default_factory=list,
+        description="Disciplines ou types de courses associés",
+    )
+
+
+class AnalyticsSearchResult(BaseModel):
+    """Résultat retourné par l'endpoint de recherche analytics."""
+
+    type: AnalyticsSearchType = Field(..., description="Type d'entité trouvée")
+    id: str = Field(..., description="Identifiant principal de l'entité")
+    label: str = Field(..., description="Libellé lisible par un humain")
+    metadata: AnalyticsSearchMetadata = Field(
+        default_factory=AnalyticsSearchMetadata,
+        description="Métadonnées complémentaires sur l'entité",
+    )
 
 
 class AnalyticsMetadata(BaseModel):

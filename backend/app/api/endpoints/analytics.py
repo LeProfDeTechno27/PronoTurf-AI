@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.config import settings
 from app.schemas.analytics import (
     AnalyticsMetadata,
+    AnalyticsSearchResult,
+    AnalyticsSearchType,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
@@ -58,6 +60,38 @@ async def get_aspiturf_client() -> AsyncIterator[AspiturfClient]:
         ) from exc
     finally:
         await client.__aexit__(None, None, None)
+
+
+@router.get(
+    "/search",
+    response_model=List[AnalyticsSearchResult],
+    summary="Rechercher des entités Aspiturf",
+    description="Permet de retrouver rapidement les identifiants cheval, jockey, entraineur ou un hippodrome.",
+)
+async def search_entities(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    search_type: AnalyticsSearchType = Query(
+        ..., alias="type", description="Type d'entité à rechercher"
+    ),
+    query: str = Query(
+        ..., min_length=2, description="Terme de recherche (nom ou identifiant)"
+    ),
+    limit: int = Query(10, ge=1, le=50, description="Nombre maximum de résultats"),
+) -> List[AnalyticsSearchResult]:
+    """Expose un moteur de recherche simplifié sur les données Aspiturf."""
+
+    raw_results = await client.search_entities(search_type.value, query, limit)
+
+    return [
+        AnalyticsSearchResult(
+            type=search_type,
+            id=item["id"],
+            label=item["label"],
+            metadata=item.get("metadata", {}),
+        )
+        for item in raw_results
+    ]
 
 
 def _safe_rate(value: int, total: int) -> Optional[float]:

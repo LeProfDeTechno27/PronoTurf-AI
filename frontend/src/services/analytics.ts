@@ -5,6 +5,8 @@ import type {
   TrainerAnalyticsResponse,
   CoupleAnalyticsResponse,
   CourseAnalyticsResponse,
+  AnalyticsSearchResult,
+  AnalyticsSearchType,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -61,6 +63,14 @@ export const analyticsService = {
         hippodrome,
         course_number: courseNumber,
       },
+    })
+
+    return response.data
+  },
+
+  async searchEntities(type: AnalyticsSearchType, query: string, limit = 10) {
+    const response = await apiClient.get<AnalyticsSearchResult[]>('/analytics/search', {
+      params: { type, query, limit },
     })
 
     return response.data
