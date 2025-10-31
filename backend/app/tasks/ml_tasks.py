@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from math import ceil, sqrt
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -1113,6 +1113,58 @@ def _summarise_model_version_performance(
     return version_metrics
 
 
+def _summarise_actor_performance(
+    breakdown: Dict[str, Dict[str, Any]],
+    *,
+    top_n: int = 5,
+    min_samples: int = 3,
+) -> List[Dict[str, Any]]:
+    """Construit un classement pour les jockeys/entraîneurs suivis."""
+
+    if not breakdown:
+        return []
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    leaderboard: List[Dict[str, Any]] = []
+
+    for identifier, payload in breakdown.items():
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        label = payload.get("label") or identifier
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "identifier": identifier,
+                "label": label,
+                "samples": len(truths),
+                "courses": len(courses),
+                "horses": len(horses),
+                "observed_positive_rate": (sum(truths) / len(truths)) if truths else None,
+                "share": (len(truths) / total_samples) if total_samples else None,
+            }
+        )
+
+        leaderboard.append(summary)
+
+    leaderboard.sort(
+        key=lambda item: (
+            -item["samples"],
+            -((item.get("f1") or 0.0)),
+            -((item.get("precision") or 0.0)),
+            item.get("label"),
+        )
+    )
+
+    threshold = min_samples if total_samples >= min_samples else 1
+    filtered = [item for item in leaderboard if item["samples"] >= threshold]
+
+    return filtered[:top_n] if filtered else leaderboard[:top_n]
+
+
 def _categorise_field_size(field_size: Optional[int]) -> str:
     """Regroupe les tailles de champs en segments homogènes pour l'analyse."""
 
@@ -1293,6 +1345,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
+        jockey_breakdown: Dict[str, Dict[str, object]] = {}
+        trainer_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -1458,6 +1512,54 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             rest_days_value = getattr(partant, "days_since_last_race", None)
             if rest_days_value is not None:
                 rest_bucket.setdefault("rest_days", []).append(int(rest_days_value))
+
+            jockey_identifier = str(partant.jockey_id) if partant.jockey_id else "unknown"
+            jockey_label = (
+                partant.jockey.full_name
+                if getattr(partant, "jockey", None) and getattr(partant.jockey, "full_name", None)
+                else (f"Jockey #{partant.jockey_id}" if partant.jockey_id else "Jockey inconnu")
+            )
+            jockey_bucket = jockey_breakdown.setdefault(
+                jockey_identifier,
+                {
+                    "label": jockey_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                },
+            )
+            jockey_bucket["label"] = jockey_label
+            jockey_bucket["truths"].append(is_top3)
+            jockey_bucket["predictions"].append(predicted_label)
+            jockey_bucket["scores"].append(probability)
+            jockey_bucket.setdefault("courses", set()).add(course.course_id)
+            jockey_bucket.setdefault("horses", set()).add(partant.horse_id)
+
+            trainer_identifier = str(partant.trainer_id) if partant.trainer_id else "unknown"
+            trainer_label = (
+                partant.trainer.full_name
+                if getattr(partant, "trainer", None) and getattr(partant.trainer, "full_name", None)
+                else (f"Entraîneur #{partant.trainer_id}" if partant.trainer_id else "Entraîneur inconnu")
+            )
+            trainer_bucket = trainer_breakdown.setdefault(
+                trainer_identifier,
+                {
+                    "label": trainer_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                },
+            )
+            trainer_bucket["label"] = trainer_label
+            trainer_bucket["truths"].append(is_top3)
+            trainer_bucket["predictions"].append(predicted_label)
+            trainer_bucket["scores"].append(probability)
+            trainer_bucket.setdefault("courses", set()).add(course.course_id)
+            trainer_bucket.setdefault("horses", set()).add(partant.horse_id)
 
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
@@ -1650,6 +1752,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             model_version_breakdown,
             len(y_true),
         )
+        jockey_performance = _summarise_actor_performance(jockey_breakdown)
+        trainer_performance = _summarise_actor_performance(trainer_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -1692,6 +1796,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "field_size_performance": field_size_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
+            "jockey_performance": jockey_performance,
+            "trainer_performance": trainer_performance,
         }
 
         confidence_distribution = {
@@ -1723,6 +1829,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "field_size_performance": field_size_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
+            "jockey_performance": jockey_performance,
+            "trainer_performance": trainer_performance,
         }
 
         active_model = (
@@ -1771,6 +1879,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,
+            "jockey_performance": jockey_performance,
+            "trainer_performance": trainer_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,

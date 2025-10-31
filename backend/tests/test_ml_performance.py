@@ -542,6 +542,30 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         "medium": 2,
     }
 
+    jockey_leaderboard = metrics["jockey_performance"]
+    assert len(jockey_leaderboard) == 1
+    top_jockey = jockey_leaderboard[0]
+    assert top_jockey["label"] == "Leo Martin"
+    assert top_jockey["samples"] == 6
+    assert top_jockey["courses"] == 2
+    assert top_jockey["horses"] == 6
+    assert top_jockey["share"] == pytest.approx(1.0, rel=1e-3)
+    assert top_jockey["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+    assert top_jockey["observed_positive_rate"] == pytest.approx(4 / 6, rel=1e-3)
+
+    trainer_leaderboard = metrics["trainer_performance"]
+    assert len(trainer_leaderboard) == 1
+    top_trainer = trainer_leaderboard[0]
+    assert top_trainer["label"] == "Anne Durand"
+    assert top_trainer["samples"] == 6
+    assert top_trainer["courses"] == 2
+    assert top_trainer["horses"] == 6
+    assert top_trainer["share"] == pytest.approx(1.0, rel=1e-3)
+    assert top_trainer["precision"] == pytest.approx(0.75, rel=1e-3)
+
+    assert result["jockey_performance"][0]["label"] == "Leo Martin"
+    assert result["trainer_performance"][0]["label"] == "Anne Durand"
+
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -571,6 +595,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
