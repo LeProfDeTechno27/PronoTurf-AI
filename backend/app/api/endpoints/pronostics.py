@@ -6,20 +6,31 @@ pour les courses hippiques.
 """
 
 import logging
-from typing import List, Optional
+from typing import Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.ml.predictor import RacePredictionService
 from app.models.pronostic import Pronostic
 from app.models.course import Course
+from app.models.partant import Partant
+from app.models.partant_prediction import PartantPrediction
 from app.tasks.ml_tasks import generate_prediction_for_course, generate_daily_predictions
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_value_level(edge: float) -> str:
+    """Détermine le niveau de value bet basé sur l'edge calculé."""
+    if edge >= 0.3:
+        return "high"
+    if edge >= 0.2:
+        return "medium"
+    return "low"
 
 
 @router.get("/today")
@@ -256,25 +267,111 @@ async def get_today_value_bets(
 
     today = date.today()
 
-    # Récupérer les pronostics du jour avec value bets détectés
+    # Récupérer les pronostics du jour avec leurs prédictions de partants
     pronostics = (
         db.query(Pronostic)
         .join(Course)
         .join(Reunion)
-        .filter(
-            Reunion.reunion_date == today,
-            Pronostic.value_bet_detected == True
+        .filter(Reunion.reunion_date == today)
+        .options(
+            selectinload(Pronostic.course)
+            .selectinload(Course.reunion)
+            .selectinload(Reunion.hippodrome),
+            selectinload(Pronostic.partant_predictions)
+            .selectinload(PartantPrediction.partant)
+            .selectinload(Partant.horse),
+            selectinload(Pronostic.partant_predictions)
+            .selectinload(PartantPrediction.partant)
+            .selectinload(Partant.jockey),
+            selectinload(Pronostic.partant_predictions)
+            .selectinload(PartantPrediction.partant)
+            .selectinload(Partant.trainer),
         )
         .all()
     )
 
-    # TODO: Extraire et filtrer les value bets selon min_edge
-    # Pour l'instant, retourner les pronostics avec value bets
+    courses_with_value_bets = []
+    total_value_bets = 0
+
+    for pronostic in pronostics:
+        course = pronostic.course
+        if not course:
+            continue
+
+        course_value_bets = []
+        for partant_prediction in pronostic.partant_predictions or []:
+            if partant_prediction.win_probability is None:
+                continue
+
+            partant = partant_prediction.partant
+            if not partant or not partant.odds_pmu:
+                continue
+
+            odds = float(partant.odds_pmu)
+            if odds <= 1.0:
+                continue
+
+            model_probability = float(partant_prediction.win_probability)
+            implied_probability = 1.0 / odds
+            edge = model_probability - implied_probability
+
+            if edge < min_edge:
+                continue
+
+            edge_percentage = edge / implied_probability if implied_probability > 0 else None
+
+            course_value_bets.append({
+                "partant_id": partant.partant_id,
+                "numero_corde": partant.numero_corde,
+                "horse_name": partant.horse.name if partant.horse else None,
+                "jockey_name": partant.jockey_name,
+                "trainer_name": partant.trainer_name,
+                "odds_pmu": odds,
+                "model_probability": model_probability,
+                "implied_probability": implied_probability,
+                "edge": edge,
+                "edge_percentage": edge_percentage,
+                "value_level": _get_value_level(edge),
+                "confidence_level": partant_prediction.confidence_level,
+            })
+
+        if not course_value_bets:
+            continue
+
+        course_value_bets.sort(key=lambda x: x["edge"], reverse=True)
+        total_value_bets += len(course_value_bets)
+
+        reunion = course.reunion
+        hippodrome_name = None
+        reunion_number = None
+        if reunion:
+            reunion_number = reunion.reunion_number
+            if reunion.hippodrome:
+                hippodrome_name = reunion.hippodrome.name
+
+        courses_with_value_bets.append({
+            "course_id": course.course_id,
+            "course_name": course.full_name if hasattr(course, "full_name") else course.course_name,
+            "reunion_id": course.reunion_id,
+            "reunion_number": reunion_number,
+            "hippodrome": hippodrome_name,
+            "scheduled_time": course.scheduled_time.isoformat() if course.scheduled_time else None,
+            "value_bets": course_value_bets,
+        })
+
+    courses_with_value_bets.sort(
+        key=lambda item: (
+            item.get("reunion_number") or 0,
+            item.get("scheduled_time") or ""
+        )
+    )
 
     return {
         "date": today.isoformat(),
-        "count": len(pronostics),
-        "value_bets_detected": [_format_pronostic(p) for p in pronostics]
+        "min_edge": min_edge,
+        "total_courses": len(courses_with_value_bets),
+        "count": total_value_bets,
+        "courses": courses_with_value_bets
     }
 
 

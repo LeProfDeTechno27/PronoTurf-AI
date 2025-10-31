@@ -3,8 +3,8 @@ Configuration de l'application PronoTurf
 Utilise pydantic-settings pour la gestion des variables d'environnement
 """
 
-from typing import List, Optional
-from pydantic import field_validator
+from typing import Any, List, Optional
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,21 +37,35 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8501"
+    CORS_ORIGINS: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:8501",
+        ]
+    )
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: str) -> List[str]:
-        """Parse CORS origins from comma-separated string"""
+    def parse_cors_origins(cls, v: Any) -> List[str]:
+        """Normalise les origines CORS depuis une chaîne ou une liste."""
+
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+
+        if isinstance(v, (list, tuple)):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
+
+        return []
 
     # External APIs
     # AspiTurf - API PRINCIPALE (données complètes)
     ASPITURF_API_KEY: Optional[str] = None
     ASPITURF_API_URL: str = "https://api.aspiturf.com"
     ASPITURF_ENABLED: bool = True
+    ASPITURF_CSV_PATH: Optional[str] = None
+    ASPITURF_CSV_URL: Optional[str] = None
+    ASPITURF_CSV_DELIMITER: str = ","
+    ASPITURF_CSV_ENCODING: str = "utf-8"
 
     # TurfInfo - COMPLÉMENTAIRE (sans clé API)
     TURFINFO_OFFLINE_URL: str = "https://offline.turfinfo.api.pmu.fr/rest/client/7"
