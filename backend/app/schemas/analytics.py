@@ -562,6 +562,77 @@ class PerformanceDistributionResponse(BaseModel):
     )
 
 
+class CalendarRaceDetail(BaseModel):
+    """Détail d'une course utilisée dans le calendrier de performances."""
+
+    hippodrome: Optional[str] = Field(
+        default=None,
+        description="Libellé de l'hippodrome ayant accueilli la course",
+    )
+    course_number: Optional[int] = Field(
+        default=None,
+        description="Numéro officiel de la course dans la réunion",
+    )
+    distance: Optional[int] = Field(
+        default=None,
+        description="Distance officielle de la course en mètres",
+    )
+    final_position: Optional[int] = Field(
+        default=None,
+        description="Classement final de l'entité sur cette course",
+    )
+    odds: Optional[float] = Field(
+        default=None,
+        description="Cote observée (rapport PMU ou cote probable)",
+    )
+
+
+class CalendarDaySummary(BaseModel):
+    """Synthèse des performances sur une journée donnée."""
+
+    date: date_type = Field(..., description="Date de la réunion analysée")
+    hippodromes: List[str] = Field(
+        default_factory=list,
+        description="Liste des hippodromes concernés sur la journée",
+    )
+    races: int = Field(..., ge=0, description="Nombre de courses disputées")
+    wins: int = Field(..., ge=0, description="Nombre de victoires sur la journée")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums sur la journée")
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne enregistrée sur les courses disputées",
+    )
+    average_odds: Optional[float] = Field(
+        default=None,
+        description="Cote moyenne relevée sur la journée",
+    )
+    race_details: List[CalendarRaceDetail] = Field(
+        default_factory=list,
+        description="Détail des courses prises en compte",
+    )
+
+
+class AnalyticsCalendarResponse(BaseModel):
+    """Réponse structurée pour l'endpoint /analytics/calendar."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type de l'entité analysée (cheval, jockey ou entraîneur)"
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None,
+        description="Libellé humain de l'entité analysée",
+    )
+    metadata: AnalyticsMetadata = Field(default_factory=AnalyticsMetadata)
+    total_races: int = Field(..., ge=0, description="Nombre total de courses agrégées")
+    total_wins: int = Field(..., ge=0, description="Nombre total de victoires")
+    total_podiums: int = Field(..., ge=0, description="Nombre total de podiums")
+    days: List[CalendarDaySummary] = Field(
+        default_factory=list,
+        description="Liste des journées analysées avec leurs statistiques",
+    )
+
+
 class AnalyticsFormResponse(BaseModel):
     """Résumé synthétique de la forme récente d'une entité Aspiturf."""
 

@@ -16,6 +16,7 @@ import type {
   DistributionDimension,
   AnalyticsFormResponse,
   AnalyticsComparisonResponse,
+  AnalyticsCalendarResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -163,6 +164,26 @@ export const analyticsService = {
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
         ...(params.distanceStep ? { distance_step: params.distanceStep } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getPerformanceCalendar(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const response = await apiClient.get<AnalyticsCalendarResponse>('/analytics/calendar', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
       },
     })
 

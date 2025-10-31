@@ -20,9 +20,12 @@ from app.schemas.analytics import (
     AnalyticsSearchType,
     AnalyticsInsightsResponse,
     AnalyticsStreakResponse,
+    AnalyticsCalendarResponse,
     DistributionBucket,
     DistributionDimension,
     FormRace,
+    CalendarDaySummary,
+    CalendarRaceDetail,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
@@ -335,6 +338,52 @@ def _to_distribution_buckets(rows: List[Dict[str, Any]]) -> List[DistributionBuc
         )
 
     return buckets
+
+
+def _to_calendar_days(rows: List[Dict[str, Any]]) -> List[CalendarDaySummary]:
+    """Transforme les agrégats journaliers en objets Pydantic typés."""
+
+    days: List[CalendarDaySummary] = []
+
+    for row in rows:
+        raw_details = row.get("race_details", [])
+        race_details: List[CalendarRaceDetail] = []
+
+        for detail in raw_details:
+            if not isinstance(detail, dict):
+                continue
+
+            race_details.append(
+                CalendarRaceDetail(
+                    hippodrome=detail.get("hippodrome"),
+                    course_number=detail.get("course_number"),
+                    distance=detail.get("distance"),
+                    final_position=detail.get("final_position"),
+                    odds=detail.get("odds"),
+                )
+            )
+
+        hippodromes_raw = row.get("hippodromes") or []
+        hippodromes: List[str] = []
+        for value in hippodromes_raw:
+            if value is None:
+                continue
+            hippodromes.append(str(value))
+
+        days.append(
+            CalendarDaySummary(
+                date=row.get("date"),
+                hippodromes=hippodromes,
+                races=int(row.get("races", 0)),
+                wins=int(row.get("wins", 0)),
+                podiums=int(row.get("podiums", 0)),
+                average_finish=row.get("average_finish"),
+                average_odds=row.get("average_odds"),
+                race_details=race_details,
+            )
+        )
+
+    return days
 
 
 @router.get(
@@ -791,6 +840,85 @@ async def get_performance_distribution(
         dimension=dimension,
         metadata=metadata,
         buckets=buckets,
+    )
+
+
+@router.get(
+    "/calendar",
+    response_model=AnalyticsCalendarResponse,
+    summary="Visualiser le calendrier de performances quotidiennes",
+    description=(
+        "Regroupe les courses disputées par une entité Aspiturf par date pour analyser les enchaînements "
+        "de résultats, les périodes fastes ou les passages à vide."
+    ),
+)
+async def get_performance_calendar(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+) -> AnalyticsCalendarResponse:
+    """Retourne les performances quotidiennes d'une entité sous forme de calendrier."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    payload = await client.performance_calendar(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+    )
+
+    total_races = int(payload.get("total_races") or 0)
+    if total_races == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=payload.get("date_start"),
+        date_end=payload.get("date_end"),
+    )
+
+    days = _to_calendar_days(payload.get("days", []))
+    if not days:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune journée de course exploitable sur la période",
+        )
+
+    return AnalyticsCalendarResponse(
+        entity_type=entity_type,
+        entity_id=payload.get("entity_id", entity_id),
+        entity_label=payload.get("entity_label"),
+        metadata=metadata,
+        total_races=total_races,
+        total_wins=int(payload.get("total_wins") or 0),
+        total_podiums=int(payload.get("total_podiums") or 0),
+        days=days,
     )
 
 

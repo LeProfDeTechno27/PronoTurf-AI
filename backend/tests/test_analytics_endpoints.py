@@ -224,6 +224,144 @@ class StubAspiturfClient:
 
         return leaderboard[: max(1, limit)]
 
+    async def performance_calendar(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Construit un agrégat journalier minimal pour les tests."""
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_field = "nom_cheval"
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_field = "jockey"
+        else:
+            key_field = "idEntraineur"
+            label_field = "entraineur"
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+        days: Dict[date, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+
+        for row in self._rows:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                label_value = row.get(label_field)
+                if isinstance(label_value, str) and label_value.strip():
+                    entity_label = label_value.strip()
+
+            bucket = days.setdefault(
+                race_date,
+                {
+                    "hippodromes": set(),
+                    "rows": [],
+                },
+            )
+            bucket["rows"].append(row)
+
+            hippo_value = row.get("hippo")
+            if isinstance(hippo_value, str):
+                bucket["hippodromes"].add(hippo_value.upper())
+
+            if first_date is None or race_date < first_date:
+                first_date = race_date
+
+            if last_date is None or race_date > last_date:
+                last_date = race_date
+
+        total_races = 0
+        total_wins = 0
+        total_podiums = 0
+        formatted_days: List[Dict[str, Any]] = []
+
+        for race_date, bucket in sorted(days.items(), key=lambda item: item[0]):
+            rows = bucket["rows"]
+            wins = 0
+            podiums = 0
+            positions: List[int] = []
+            odds: List[float] = []
+            race_details: List[Dict[str, Any]] = []
+
+            for row in rows:
+                position = row.get("cl")
+                if isinstance(position, int):
+                    positions.append(position)
+                    if position == 1:
+                        wins += 1
+                    if 1 <= position <= 3:
+                        podiums += 1
+
+                raw_odds = row.get("cotedirect") or row.get("coteprob")
+                if isinstance(raw_odds, (int, float)):
+                    odds.append(float(raw_odds))
+
+                race_details.append(
+                    {
+                        "hippodrome": row.get("hippo"),
+                        "course_number": row.get("prix"),
+                        "distance": row.get("dist") if isinstance(row.get("dist"), int) else None,
+                        "final_position": position if isinstance(position, int) else None,
+                        "odds": float(raw_odds) if isinstance(raw_odds, (int, float)) else None,
+                    }
+                )
+
+            races = len(rows)
+            total_races += races
+            total_wins += wins
+            total_podiums += podiums
+
+            average_finish = sum(positions) / len(positions) if positions else None
+            average_odds = sum(odds) / len(odds) if odds else None
+
+            formatted_days.append(
+                {
+                    "date": race_date,
+                    "hippodromes": sorted(bucket["hippodromes"]),
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                    "race_details": race_details,
+                }
+            )
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": first_date,
+            "date_end": last_date,
+            "total_races": total_races,
+            "total_wins": total_wins,
+            "total_podiums": total_podiums,
+            "days": formatted_days,
+        }
+
     async def performance_streaks(
         self,
         *,
@@ -1084,6 +1222,66 @@ async def test_course_analytics_exposes_partant_statistics(analytics_client: Asy
     metadata = payload["metadata"]
     assert metadata["date_start"] == "2024-06-10"
     assert metadata["hippodrome_filter"] == "Paris"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_calendar_endpoint_returns_daily_breakdown(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/calendar",
+        params={"entity_type": "horse", "entity_id": "H-1"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["total_races"] == 2
+    assert payload["total_wins"] == 1
+    assert payload["total_podiums"] == 2
+
+    days = payload["days"]
+    assert len(days) == 2
+    assert days[0]["date"] == "2024-05-04"
+    assert days[0]["wins"] == 1
+    assert days[0]["race_details"][0]["hippodrome"] == "PARIS"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_calendar_endpoint_supports_date_filters(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/calendar",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-05-10",
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["total_races"] == 1
+    assert payload["days"][0]["date"] == "2024-05-18"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_calendar_endpoint_rejects_invalid_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/calendar",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-06-01",
+            "end_date": "2024-05-01",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio("asyncio")
+async def test_calendar_endpoint_returns_404_when_no_history(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/calendar",
+        params={"entity_type": "horse", "entity_id": "UNKNOWN"},
+    )
+    assert response.status_code == 404
 
 
 @pytest.mark.anyio("asyncio")

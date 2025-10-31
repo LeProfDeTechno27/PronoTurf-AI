@@ -26,6 +26,9 @@ import type {
   AnalyticsComparisonResponse,
   ComparisonEntitySummary,
   HeadToHeadBreakdown,
+  AnalyticsCalendarResponse,
+  CalendarDaySummary,
+  CalendarRaceDetail,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -118,6 +121,14 @@ type DistributionFilters = {
   startDate?: string
   endDate?: string
   distanceStep?: number
+}
+
+type CalendarFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
 }
 
 type ComparisonFilters = {
@@ -986,6 +997,122 @@ function DistributionPanel({ data }: { data: PerformanceDistributionResponse }) 
   )
 }
 
+
+function CalendarRaceTable({ details }: { details: CalendarRaceDetail[] }) {
+  if (!details.length) {
+    return null
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Hippodrome
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Course
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Distance
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Position
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {details.map((detail, index) => {
+            const key = `${detail.hippodrome ?? 'hippo'}-${detail.course_number ?? index}`
+            return (
+              <tr key={key}>
+                <td className="px-4 py-2 text-sm text-gray-900">{detail.hippodrome ?? '—'}</td>
+                <td className="px-4 py-2 text-sm text-gray-900">
+                  {detail.course_number != null ? `N° ${detail.course_number}` : '—'}
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-900">
+                  {detail.distance != null ? `${formatNumber(detail.distance)} m` : '—'}
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-900">
+                  {detail.final_position != null ? detail.final_position : '—'}
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-900">
+                  {detail.odds != null ? detail.odds.toFixed(2) : '—'}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+function CalendarDayCard({ day }: { day: CalendarDaySummary }) {
+  const hippoLabel = day.hippodromes.length ? day.hippodromes.join(', ') : 'Tous hippodromes'
+
+  return (
+    <div className="space-y-4 rounded-lg border border-gray-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-lg font-semibold text-gray-900">{formatDate(day.date)}</h4>
+        <span className="text-sm text-gray-500">{hippoLabel}</span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <SummaryStats label="Courses" value={formatNumber(day.races)} />
+        <SummaryStats label="Victoires" value={formatNumber(day.wins)} />
+        <SummaryStats label="Podiums" value={formatNumber(day.podiums)} />
+        <SummaryStats label="Position moyenne" value={formatAverage(day.average_finish)} />
+        <SummaryStats label="Cote moyenne" value={formatAverage(day.average_odds)} />
+        <SummaryStats label="Lignes détaillées" value={`${day.race_details.length} courses`} />
+      </div>
+
+      <CalendarRaceTable details={day.race_details} />
+    </div>
+  )
+}
+
+
+function CalendarPanel({ data }: { data: AnalyticsCalendarResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const winRate = data.total_races ? data.total_wins / data.total_races : null
+  const podiumRate = data.total_races ? data.total_podiums / data.total_races : null
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Total courses" value={formatNumber(data.total_races)} />
+        <SummaryStats label="Victoires" value={`${formatNumber(data.total_wins)} (${formatPercent(winRate)})`} />
+        <SummaryStats label="Podiums" value={`${formatNumber(data.total_podiums)} (${formatPercent(podiumRate)})`} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+        <SummaryStats label="Journées analysées" value={formatNumber(data.days.length)} />
+      </div>
+
+      <div className="space-y-4">
+        {data.days.map((day) => (
+          <CalendarDayCard key={day.date} day={day} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -1031,6 +1158,14 @@ export default function AnalyticsPage() {
   const [distributionStepInput, setDistributionStepInput] = useState('200')
   const [distributionError, setDistributionError] = useState<string | null>(null)
   const [distributionFilters, setDistributionFilters] = useState<DistributionFilters | null>(null)
+
+  const [calendarTypeInput, setCalendarTypeInput] = useState<TrendEntityType>('horse')
+  const [calendarIdInput, setCalendarIdInput] = useState('')
+  const [calendarHippoInput, setCalendarHippoInput] = useState('')
+  const [calendarStartInput, setCalendarStartInput] = useState('')
+  const [calendarEndInput, setCalendarEndInput] = useState('')
+  const [calendarError, setCalendarError] = useState<string | null>(null)
+  const [calendarFilters, setCalendarFilters] = useState<CalendarFilters | null>(null)
 
   const [comparisonTypeInput, setComparisonTypeInput] = useState<TrendEntityType>('horse')
   const [comparisonIdInput, setComparisonIdInput] = useState('')
@@ -1218,6 +1353,35 @@ export default function AnalyticsPage() {
         distanceStep: distributionFilters?.distanceStep,
       }),
     enabled: Boolean(distributionFilters?.entityId),
+  })
+
+  const calendarQueryKey = useMemo(
+    () =>
+      calendarFilters
+        ? [
+            'analytics',
+            'calendar',
+            calendarFilters.entityType,
+            calendarFilters.entityId,
+            calendarFilters.hippodrome ?? '',
+            calendarFilters.startDate ?? '',
+            calendarFilters.endDate ?? '',
+          ]
+        : ['analytics', 'calendar', 'idle'],
+    [calendarFilters],
+  )
+
+  const calendarQuery = useQuery({
+    queryKey: calendarQueryKey,
+    queryFn: () =>
+      analyticsService.getPerformanceCalendar({
+        entityType: calendarFilters!.entityType,
+        entityId: calendarFilters!.entityId,
+        hippodrome: calendarFilters?.hippodrome,
+        startDate: calendarFilters?.startDate,
+        endDate: calendarFilters?.endDate,
+      }),
+    enabled: Boolean(calendarFilters?.entityId),
   })
 
   const comparisonQueryKey = useMemo(
@@ -1467,6 +1631,32 @@ export default function AnalyticsPage() {
       startDate: distributionStartInput || undefined,
       endDate: distributionEndInput || undefined,
       distanceStep: parsedStep,
+    })
+  }
+
+  const handleCalendarSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = calendarIdInput.trim()
+
+    if (!id) {
+      setCalendarError("Veuillez saisir un identifiant Aspiturf valide.")
+      setCalendarFilters(null)
+      return
+    }
+
+    if (calendarStartInput && calendarEndInput && calendarStartInput > calendarEndInput) {
+      setCalendarError('La date de début doit précéder la date de fin.')
+      setCalendarFilters(null)
+      return
+    }
+
+    setCalendarError(null)
+    setCalendarFilters({
+      entityType: calendarTypeInput,
+      entityId: id,
+      hippodrome: calendarHippoInput.trim() || undefined,
+      startDate: calendarStartInput || undefined,
+      endDate: calendarEndInput || undefined,
     })
   }
 
@@ -2053,14 +2243,73 @@ export default function AnalyticsPage() {
         {distributionQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(distributionQuery.error as Error).message}</p>
         )}
-        {distributionQuery.data && <DistributionPanel data={distributionQuery.data} />}
-      </SectionCard>
+      {distributionQuery.data && <DistributionPanel data={distributionQuery.data} />}
+    </SectionCard>
 
-      <SectionCard
-        title="Séries de résultats"
-        description="Identifiez les séries de victoires et de podiums consécutifs pour un cheval, un jockey ou un entraîneur."
+    <SectionCard
+      title="Calendrier des performances"
+      description="Visualisez l'enchaînement des résultats jour par jour pour un cheval, un jockey ou un entraîneur."
+    >
+      <form
+        onSubmit={handleCalendarSubmit}
+        className="grid gap-4 md:grid-cols-[repeat(5,minmax(0,1fr)),auto]"
       >
-        <form
+        <select
+          value={calendarTypeInput}
+          onChange={(event) => setCalendarTypeInput(event.target.value as TrendEntityType)}
+          className="input"
+        >
+          <option value="horse">Cheval</option>
+          <option value="jockey">Jockey</option>
+          <option value="trainer">Entraîneur</option>
+        </select>
+        <input
+          value={calendarIdInput}
+          onChange={(event) => setCalendarIdInput(event.target.value)}
+          placeholder="Identifiant Aspiturf (id)"
+          className="input"
+        />
+        <input
+          value={calendarHippoInput}
+          onChange={(event) => setCalendarHippoInput(event.target.value)}
+          placeholder="Filtrer par hippodrome (optionnel)"
+          className="input"
+        />
+        <input
+          type="date"
+          value={calendarStartInput}
+          onChange={(event) => setCalendarStartInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="date"
+          value={calendarEndInput}
+          onChange={(event) => setCalendarEndInput(event.target.value)}
+          className="input"
+        />
+        <button type="submit" className="btn btn-primary">
+          Générer
+        </button>
+      </form>
+
+      {calendarError && <p className="text-sm text-red-600">{calendarError}</p>}
+
+      {calendarQuery.isPending && (
+        <p className="text-sm text-gray-500">Agrégation des résultats par journée…</p>
+      )}
+
+      {calendarQuery.isError && (
+        <p className="text-sm text-red-600">Erreur: {(calendarQuery.error as Error).message}</p>
+      )}
+
+      {calendarQuery.data && <CalendarPanel data={calendarQuery.data} />}
+    </SectionCard>
+
+    <SectionCard
+      title="Séries de résultats"
+      description="Identifiez les séries de victoires et de podiums consécutifs pour un cheval, un jockey ou un entraîneur."
+    >
+      <form
           onSubmit={handleStreakSubmit}
           className="grid gap-4 md:grid-cols-[repeat(5,minmax(0,1fr)),auto]"
         >

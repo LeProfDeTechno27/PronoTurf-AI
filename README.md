@@ -24,6 +24,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Répartition des performances** : l'endpoint `/api/v1/analytics/distributions` regroupe les courses par distance, numéro de corde, hippodrome ou discipline et la page Analytics propose un tableau interactif pour comparer les segments dominants.
 - **Comparateur multi-entités** : l'endpoint `/api/v1/analytics/comparisons` consolide les statistiques de plusieurs chevaux/jockeys/entraîneurs et mesure leurs confrontations directes, accessible depuis un nouveau module de la page Analytics.
 - **Indice de forme récent** : l'endpoint `/api/v1/analytics/form` calcule un score (0-5) et un indice de constance sur les N dernières courses d'une entité avec un tableau détaillé directement exploitable dans l'explorateur React.
+- **Calendrier de performances** : l'endpoint `/api/v1/analytics/calendar` agrège les résultats jour par jour et l'explorateur React affiche un tableau détaillé des réunions et partants associés.
 
 ## Technologies
 
@@ -849,20 +850,26 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Dashboard avec métriques Aspiturf
 - [x] Recherche interactive pour chevaux, jockeys, entraîneurs et hippodromes
 
-### Sprint 6 (Planifié)
+### ✅ Sprint 6 - Workspace Analytics Aspiturf (v0.6.0)
+- [x] Endpoints `/api/v1/analytics/search`, `/insights`, `/trends`, `/streaks`, `/distributions`, `/form`, `/comparisons` et `/calendar`
+- [x] Client Aspiturf enrichi avec agrégateurs (classements, tendances, séries, distributions, forme, comparaisons, calendrier) et stubs de tests
+- [x] Suite de tests FastAPI couvrant recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier
+- [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
+
+### Sprint 7 (Planifié)
 - [ ] Service Telegram pour notifications
 - [ ] Service Email pour notifications
 - [ ] Tâches Celery de notifications
 - [ ] Dashboard Streamlit avancé
 
-### Sprint 7 (Planifié)
+### Sprint 8 (Planifié)
 - [ ] Frontend React complet
 - [ ] Pages authentification (Register, Login)
 - [ ] Page programme des courses
 - [ ] Page détails course avec pronostics
 - [ ] Page bankroll et paris simulés
 
-### Sprint 8 (Planifié)
+### Sprint 9 (Planifié)
 - [ ] Dashboard analytics Plotly
 - [ ] Graphiques évolution bankroll
 - [ ] Statistiques par terrain, jockey, entraîneur

@@ -125,6 +125,36 @@ export interface PerformanceDistributionResponse {
   buckets: DistributionBucket[]
 }
 
+export interface CalendarRaceDetail {
+  hippodrome?: string | null
+  course_number?: number | null
+  distance?: number | null
+  final_position?: number | null
+  odds?: number | null
+}
+
+export interface CalendarDaySummary {
+  date: string
+  hippodromes: string[]
+  races: number
+  wins: number
+  podiums: number
+  average_finish?: number | null
+  average_odds?: number | null
+  race_details: CalendarRaceDetail[]
+}
+
+export interface AnalyticsCalendarResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  total_races: number
+  total_wins: number
+  total_podiums: number
+  days: CalendarDaySummary[]
+}
+
 export interface AnalyticsFormResponse {
   entity_type: TrendEntityType
   entity_id: string
