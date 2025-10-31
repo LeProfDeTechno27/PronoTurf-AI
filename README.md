@@ -827,7 +827,7 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] PMUService refactorisé avec fallback
 - [x] Script de test complet
 - [x] Intégration avec pipeline ML (features Aspiturf)
-- [ ] Endpoints API pour statistiques enrichies
+- [x] Endpoints API pour statistiques enrichies
 - [ ] Dashboard avec métriques Aspiturf
 
 ### Sprint 6 (Planifié)

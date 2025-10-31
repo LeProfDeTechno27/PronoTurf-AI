@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     ASPITURF_API_KEY: Optional[str] = None
     ASPITURF_API_URL: str = "https://api.aspiturf.com"
     ASPITURF_ENABLED: bool = True
+    ASPITURF_CSV_PATH: Optional[str] = None
+    ASPITURF_CSV_URL: Optional[str] = None
+    ASPITURF_CSV_DELIMITER: str = ","
+    ASPITURF_CSV_ENCODING: str = "utf-8"
 
     # TurfInfo - COMPLÉMENTAIRE (sans clé API)
     TURFINFO_OFFLINE_URL: str = "https://offline.turfinfo.api.pmu.fr/rest/client/7"
