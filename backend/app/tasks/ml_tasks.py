@@ -239,6 +239,48 @@ def _evaluate_threshold_grid(
     return evaluation
 
 
+def _summarise_group_performance(
+    truths: List[int],
+    predicted: List[int],
+    scores: List[float],
+) -> Dict[str, Optional[float]]:
+    """Assemble un petit tableau de bord de métriques pour un sous-ensemble donné."""
+
+    summary: Dict[str, Optional[float]] = {
+        "samples": len(truths),
+        "positive_rate": sum(predicted) / len(predicted) if predicted else None,
+        "average_probability": _safe_average(scores),
+    }
+
+    if not truths or not predicted:
+        summary.update({
+            "accuracy": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+        })
+        return summary
+
+    if accuracy_score:
+        summary.update(
+            {
+                "accuracy": accuracy_score(truths, predicted),
+                "precision": precision_score(truths, predicted, zero_division=0),
+                "recall": recall_score(truths, predicted, zero_division=0),
+                "f1": f1_score(truths, predicted, zero_division=0),
+            }
+        )
+    else:  # pragma: no cover - dépend de l'environnement
+        summary.update({
+            "accuracy": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+        })
+
+    return summary
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -316,6 +358,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         y_scores: List[float] = []
         y_pred: List[int] = []
         confidence_counter: Counter[str] = Counter()
+        confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
         model_versions: Counter[str] = Counter()
         course_stats: Dict[int, Dict[str, object]] = {}
 
@@ -332,6 +375,13 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             y_pred.append(predicted_label)
 
             confidence_counter[prediction.confidence_level or "unknown"] += 1
+            level_bucket = confidence_breakdown.setdefault(
+                prediction.confidence_level or "unknown",
+                {"truths": [], "predictions": [], "scores": []},
+            )
+            level_bucket["truths"].append(is_top3)
+            level_bucket["predictions"].append(predicted_label)
+            level_bucket["scores"].append(probability)
             model_versions[pronostic.model_version or "unknown"] += 1
 
             course_entry = course_stats.setdefault(
@@ -416,6 +466,18 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             thresholds=[0.2, probability_threshold, 0.4, 0.5],
         )
 
+        # Consolide un tableau de bord par niveau de confiance afin d'inspecter
+        # rapidement la fiabilité réelle de chaque segment (utile pour piloter
+        # alertes ou limites d'enjeux par exemple).
+        confidence_level_metrics = {
+            level: _summarise_group_performance(
+                data["truths"],
+                data["predictions"],
+                data["scores"],
+            )
+            for level, data in sorted(confidence_breakdown.items())
+        }
+
         metrics = {
             "accuracy": accuracy,
             "precision": precision,
@@ -439,6 +501,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_top3_probability": _safe_average(top3_probabilities),
             "calibration_table": calibration_table,
             "threshold_sensitivity": threshold_grid,
+            "confidence_level_metrics": confidence_level_metrics,
         }
 
         confidence_distribution = {
@@ -455,6 +518,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "metrics": metrics,
             "confidence_distribution": confidence_distribution,
             "model_version_breakdown": dict(model_versions),
+            "confidence_level_metrics": confidence_level_metrics,
         }
 
         active_model = (
@@ -493,6 +557,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_threshold": probability_threshold,
             "metrics": metrics,
             "confidence_distribution": confidence_distribution,
+            "confidence_level_metrics": confidence_level_metrics,
             "model_version_breakdown": dict(model_versions),
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,

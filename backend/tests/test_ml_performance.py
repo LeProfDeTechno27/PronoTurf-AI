@@ -301,6 +301,21 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     confidence = result["confidence_distribution"]
     assert confidence == {"high": 1, "low": 2, "medium": 3}
 
+    level_metrics = metrics["confidence_level_metrics"]
+    assert set(level_metrics.keys()) == {"high", "low", "medium"}
+
+    assert level_metrics["high"]["samples"] == 1
+    assert level_metrics["high"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    assert level_metrics["medium"]["samples"] == 3
+    assert level_metrics["medium"]["precision"] == pytest.approx(2 / 3, rel=1e-3)
+    assert level_metrics["medium"]["recall"] == pytest.approx(1.0, rel=1e-3)
+
+    assert level_metrics["low"]["samples"] == 2
+    assert level_metrics["low"]["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert level_metrics["low"]["positive_rate"] == pytest.approx(0.0, abs=1e-6)
+
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -310,6 +325,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
             stored_metrics = json.loads(stored_metrics)
 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+        assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
