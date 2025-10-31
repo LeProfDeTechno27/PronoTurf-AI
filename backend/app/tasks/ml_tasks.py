@@ -1081,6 +1081,38 @@ def _summarise_segment_performance(
     return segment_metrics
 
 
+def _summarise_model_version_performance(
+    breakdown: Dict[str, Dict[str, object]],
+    total_samples: int,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Dresse un état des lieux détaillé des performances par version de modèle."""
+
+    if not breakdown:
+        return {}
+
+    version_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for version in sorted(breakdown.keys()):
+        payload = breakdown[version]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        confidence_levels: Counter[str] = Counter(payload.get("confidence_levels", {}))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["confidence_distribution"] = dict(confidence_levels)
+
+        version_metrics[version] = summary
+
+    return version_metrics
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -1162,7 +1194,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
+        # Prépare une vision par version du modèle afin d'identifier rapidement
+        # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
+        model_version_breakdown: Dict[str, Dict[str, object]] = {}
         course_stats: Dict[int, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
@@ -1187,7 +1222,23 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             level_bucket["truths"].append(is_top3)
             level_bucket["predictions"].append(predicted_label)
             level_bucket["scores"].append(probability)
-            model_versions[pronostic.model_version or "unknown"] += 1
+            version_label = pronostic.model_version or "unknown"
+            model_versions[version_label] += 1
+            version_bucket = model_version_breakdown.setdefault(
+                version_label,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "confidence_levels": Counter(),
+                },
+            )
+            version_bucket["truths"].append(is_top3)
+            version_bucket["predictions"].append(predicted_label)
+            version_bucket["scores"].append(probability)
+            version_bucket.setdefault("courses", set()).add(course.course_id)
+            version_bucket.setdefault("confidence_levels", Counter())[prediction.confidence_level or "unknown"] += 1
 
             course_entry = course_stats.setdefault(
                 course.course_id,
@@ -1441,6 +1492,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
+        model_version_performance = _summarise_model_version_performance(
+            model_version_breakdown,
+            len(y_true),
+        )
 
         metrics = {
             "accuracy": accuracy,
@@ -1480,6 +1535,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
+            "model_version_performance": model_version_performance,
         }
 
         confidence_distribution = {
@@ -1508,6 +1564,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
+            "model_version_performance": model_version_performance,
         }
 
         active_model = (
@@ -1554,6 +1611,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),
+            "model_version_performance": model_version_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,

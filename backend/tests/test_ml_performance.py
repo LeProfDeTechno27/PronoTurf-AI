@@ -489,6 +489,27 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert value_bet_performance["standard"]["samples"] == 3
     assert value_bet_performance["standard"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    version_performance = metrics["model_version_performance"]
+    assert set(version_performance.keys()) == {"v1.0", "v2.0"}
+
+    assert version_performance["v1.0"]["samples"] == 3
+    assert version_performance["v1.0"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert version_performance["v1.0"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v1.0"]["confidence_distribution"] == {
+        "high": 1,
+        "medium": 1,
+        "low": 1,
+    }
+
+    assert version_performance["v2.0"]["samples"] == 3
+    assert version_performance["v2.0"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["confidence_distribution"] == {
+        "low": 1,
+        "medium": 2,
+    }
+
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -515,6 +536,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
