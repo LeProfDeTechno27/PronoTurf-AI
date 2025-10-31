@@ -255,6 +255,74 @@ def _build_gain_curve(
     return gain_curve
 
 
+def _compute_ks_analysis(
+    scores: List[float],
+    truths: List[int],
+    *,
+    sample_points: int = 20,
+) -> Dict[str, object]:
+    """Mesure la séparation des distributions via le test KS discret.
+
+    Le calcul reporte à la fois la statistique (distance maximale entre les
+    distributions cumulées des positifs et négatifs) et une version compacte de
+    la courbe pour visualiser rapidement les écarts. Cette vue complète la
+    calibration : un modèle bien calibré mais incapable de séparer les classes
+    sera pénalisé par une statistique KS faible.
+    """
+
+    if not scores or not truths or len(scores) != len(truths):
+        return {"ks_statistic": None, "ks_threshold": None, "curve": []}
+
+    total_positive = sum(truths)
+    total_negative = len(truths) - total_positive
+
+    if total_positive == 0 or total_negative == 0:
+        # Dans ces cas extrêmes, la statistique KS est peu informative : on
+        # retourne des valeurs nulles tout en conservant la structure attendue.
+        return {"ks_statistic": None, "ks_threshold": None, "curve": []}
+
+    combined = sorted(zip(scores, truths), key=lambda item: item[0], reverse=True)
+
+    ks_statistic = 0.0
+    ks_threshold: Optional[float] = None
+    curve: List[Dict[str, float]] = []
+
+    positives_seen = 0
+    negatives_seen = 0
+    step = max(1, len(combined) // sample_points)
+
+    for index, (score, truth) in enumerate(combined, start=1):
+        if truth:
+            positives_seen += 1
+        else:
+            negatives_seen += 1
+
+        true_positive_rate = positives_seen / total_positive
+        false_positive_rate = negatives_seen / total_negative
+        distance = abs(true_positive_rate - false_positive_rate)
+
+        if distance >= ks_statistic:
+            ks_statistic = distance
+            ks_threshold = score
+
+        if index % step == 0 or index == len(combined):
+            curve.append(
+                {
+                    "fraction": index / len(combined),
+                    "threshold": score,
+                    "true_positive_rate": true_positive_rate,
+                    "false_positive_rate": false_positive_rate,
+                    "distance": distance,
+                }
+            )
+
+    return {
+        "ks_statistic": ks_statistic,
+        "ks_threshold": ks_threshold,
+        "curve": curve,
+    }
+
+
 def _evaluate_threshold_grid(
     scores: List[float],
     truths: List[int],
@@ -525,6 +593,15 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             steps=5,
         )
 
+        # Mesure la séparation effective entre gagnants et perdants via une
+        # statistique de Kolmogorov-Smirnov. Utile pour identifier un seuil
+        # discriminant même si les métriques globales semblent correctes.
+        ks_analysis = _compute_ks_analysis(
+            y_scores,
+            y_true,
+            sample_points=10,
+        )
+
         # Consolide un tableau de bord par niveau de confiance afin d'inspecter
         # rapidement la fiabilité réelle de chaque segment (utile pour piloter
         # alertes ou limites d'enjeux par exemple).
@@ -561,6 +638,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_table": calibration_table,
             "threshold_sensitivity": threshold_grid,
             "gain_curve": gain_curve,
+            "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
         }
 

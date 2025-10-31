@@ -306,6 +306,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert gain_curve[-1]["cumulative_hit_rate"] == pytest.approx(4 / 6, rel=1e-3)
     assert gain_curve[-1]["capture_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    ks_analysis = metrics["ks_analysis"]
+    assert ks_analysis["ks_statistic"] == pytest.approx(0.5, rel=1e-3)
+    assert ks_analysis["ks_threshold"] == pytest.approx(0.25, rel=1e-3)
+    assert len(ks_analysis["curve"]) == 6
+    assert ks_analysis["curve"][0]["threshold"] == pytest.approx(0.55, rel=1e-3)
+    assert ks_analysis["curve"][4]["distance"] == pytest.approx(0.5, rel=1e-3)
+
     confidence = result["confidence_distribution"]
     assert confidence == {"high": 1, "low": 2, "medium": 3}
 
@@ -335,6 +342,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
