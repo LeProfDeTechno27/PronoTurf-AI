@@ -119,12 +119,12 @@ def _seed_reference_data(db: Session) -> None:
         reunion_id=reunion.reunion_id,
         course_number=2,
         course_name="R1C2",
-        discipline=Discipline.PLAT,
+        discipline=Discipline.TROT_ATTELE,
         distance=1800,
         prize_money=Decimal("8000"),
         race_category="Classe",
         race_class="B",
-        surface_type=SurfaceType.PELOUSE,
+        surface_type=SurfaceType.SABLE,
         start_type=StartType.STALLE,
         scheduled_time=time(15, 0),
         status=CourseStatus.FINISHED,
@@ -392,6 +392,29 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert daily_performance[1]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
     assert daily_performance[1]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    discipline_performance = metrics["discipline_performance"]
+    assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
+    assert discipline_performance["plat"]["samples"] == 3
+    assert discipline_performance["plat"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert discipline_performance["plat"]["courses"] == 1
+    assert discipline_performance["trot_attele"]["samples"] == 3
+    assert discipline_performance["trot_attele"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert discipline_performance["trot_attele"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    surface_performance = metrics["surface_performance"]
+    assert set(surface_performance.keys()) == {"pelouse", "sable"}
+    assert surface_performance["pelouse"]["samples"] == 3
+    assert surface_performance["pelouse"]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert surface_performance["sable"]["samples"] == 3
+    assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    value_bet_performance = metrics["value_bet_performance"]
+    assert set(value_bet_performance.keys()) == {"standard", "value_bet"}
+    assert value_bet_performance["value_bet"]["samples"] == 3
+    assert value_bet_performance["value_bet"]["courses"] == 1
+    assert value_bet_performance["standard"]["samples"] == 3
+    assert value_bet_performance["standard"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -410,6 +433,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:

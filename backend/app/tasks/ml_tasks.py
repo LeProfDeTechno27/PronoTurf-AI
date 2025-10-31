@@ -684,6 +684,34 @@ def _summarise_daily_performance(
     return timeline
 
 
+def _summarise_segment_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Construit un panorama de métriques par segment métier (discipline, surface, etc.)."""
+
+    if not breakdown:
+        return {}
+
+    segment_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+
+        segment_metrics[segment] = summary
+
+    return segment_metrics
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -762,6 +790,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         y_pred: List[int] = []
         confidence_counter: Counter[str] = Counter()
         confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
+        discipline_breakdown: Dict[str, Dict[str, object]] = {}
+        surface_breakdown: Dict[str, Dict[str, object]] = {}
+        value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         model_versions: Counter[str] = Counter()
         course_stats: Dict[int, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
@@ -803,6 +834,47 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "is_top3": bool(is_top3),
                 }
             )
+
+            # Cartographie les performances par attribut métier pour identifier
+            # rapidement les segments qui décrochent (discipline, surface,
+            # appétit value bet).
+            discipline_label = (
+                course.discipline.value
+                if getattr(course, "discipline", None)
+                else "unknown"
+            )
+            discipline_bucket = discipline_breakdown.setdefault(
+                discipline_label,
+                {"truths": [], "predictions": [], "scores": [], "courses": set()},
+            )
+            discipline_bucket["truths"].append(is_top3)
+            discipline_bucket["predictions"].append(predicted_label)
+            discipline_bucket["scores"].append(probability)
+            discipline_bucket.setdefault("courses", set()).add(course.course_id)
+
+            surface_label = (
+                course.surface_type.value
+                if getattr(course, "surface_type", None)
+                else "unknown"
+            )
+            surface_bucket = surface_breakdown.setdefault(
+                surface_label,
+                {"truths": [], "predictions": [], "scores": [], "courses": set()},
+            )
+            surface_bucket["truths"].append(is_top3)
+            surface_bucket["predictions"].append(predicted_label)
+            surface_bucket["scores"].append(probability)
+            surface_bucket.setdefault("courses", set()).add(course.course_id)
+
+            value_bet_label = "value_bet" if pronostic.value_bet_detected else "standard"
+            value_bet_bucket = value_bet_breakdown.setdefault(
+                value_bet_label,
+                {"truths": [], "predictions": [], "scores": [], "courses": set()},
+            )
+            value_bet_bucket["truths"].append(is_top3)
+            value_bet_bucket["predictions"].append(predicted_label)
+            value_bet_bucket["scores"].append(probability)
+            value_bet_bucket.setdefault("courses", set()).add(course.course_id)
 
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
@@ -967,6 +1039,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         }
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
+        discipline_performance = _summarise_segment_performance(discipline_breakdown)
+        surface_performance = _summarise_segment_performance(surface_breakdown)
+        value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -1000,6 +1075,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
             "daily_performance": daily_performance,
+            "discipline_performance": discipline_performance,
+            "surface_performance": surface_performance,
+            "value_bet_performance": value_bet_performance,
         }
 
         confidence_distribution = {
@@ -1022,6 +1100,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
+            "discipline_performance": discipline_performance,
+            "surface_performance": surface_performance,
+            "value_bet_performance": value_bet_performance,
         }
 
         active_model = (
