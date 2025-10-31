@@ -10,8 +10,17 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db
 from app.api.endpoints import (
-    auth, health, hippodromes, reunions, courses,
-    pronostics, paris_simules, bankroll, favoris, notifications
+    analytics,
+    auth,
+    health,
+    hippodromes,
+    reunions,
+    courses,
+    pronostics,
+    paris_simules,
+    bankroll,
+    favoris,
+    notifications,
 )
 
 # Import des routers (à compléter au fur et à mesure)
@@ -139,6 +148,13 @@ app.include_router(
     pronostics.router,
     prefix=f"{settings.API_V1_PREFIX}/pronostics",
     tags=["Pronostics"]
+)
+
+# Analytics Aspiturf
+app.include_router(
+    analytics.router,
+    prefix=f"{settings.API_V1_PREFIX}/analytics",
+    tags=["Analytics"]
 )
 
 # Paris Simulés
