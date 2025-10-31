@@ -139,7 +139,8 @@ async def get_course(
         .where(Course.course_id == course_id)
         .options(
             selectinload(Course.reunion).selectinload(Reunion.hippodrome),
-            selectinload(Course.partants)
+            selectinload(Course.partants),
+            selectinload(Course.pronostics)
         )
     )
 
@@ -155,7 +156,7 @@ async def get_course(
     # Build detailed response
     course_dict = CourseWithReunion.model_validate(course).model_dump()
     course_dict["number_of_partants"] = len(course.partants)
-    course_dict["has_pronostic"] = False  # TODO: check if pronostic exists
+    course_dict["has_pronostic"] = bool(course.pronostics)
 
     return CourseDetailResponse(**course_dict)
 

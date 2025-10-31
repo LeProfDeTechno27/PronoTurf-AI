@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
@@ -57,6 +59,20 @@ export default function Dashboard() {
           <div className="card">
             <h3 className="text-xl font-bold mb-4">Pronostics récents</h3>
             <p className="text-gray-600">Aucun pronostic pour le moment.</p>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">Analytics Aspiturf</h3>
+              <p className="text-gray-600">
+                Accédez au laboratoire de statistiques pour explorer les performances cheval, jockey et entraîneur.
+              </p>
+            </div>
+            <Link to="/analytics" className="btn btn-primary w-full md:w-auto">
+              Explorer les analytics
+            </Link>
           </div>
         </div>
       </main>
