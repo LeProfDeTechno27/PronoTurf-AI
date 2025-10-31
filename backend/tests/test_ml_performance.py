@@ -105,7 +105,7 @@ def _seed_reference_data(db: Session) -> None:
         course_number=1,
         course_name="R1C1",
         discipline=Discipline.PLAT,
-        distance=2000,
+        distance=1400,
         prize_money=Decimal("10000"),
         race_category="Groupe",
         race_class="A",
@@ -120,7 +120,7 @@ def _seed_reference_data(db: Session) -> None:
         course_number=2,
         course_name="R1C2",
         discipline=Discipline.TROT_ATTELE,
-        distance=1800,
+        distance=3000,
         prize_money=Decimal("8000"),
         race_category="Classe",
         race_class="B",
@@ -480,6 +480,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert discipline_performance["trot_attele"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
     assert discipline_performance["trot_attele"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    distance_performance = metrics["distance_performance"]
+    assert set(distance_performance.keys()) == {"long_distance", "short_distance"}
+    assert distance_performance["short_distance"]["samples"] == 3
+    assert distance_performance["short_distance"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert distance_performance["short_distance"]["average_distance"] == pytest.approx(1400.0, abs=1e-6)
+    assert distance_performance["long_distance"]["samples"] == 3
+    assert distance_performance["long_distance"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert distance_performance["long_distance"]["average_distance"] == pytest.approx(3000.0, abs=1e-6)
+
     surface_performance = metrics["surface_performance"]
     assert set(surface_performance.keys()) == {"pelouse", "sable"}
     assert surface_performance["pelouse"]["samples"] == 3
@@ -590,6 +599,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]

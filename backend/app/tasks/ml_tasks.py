@@ -1165,6 +1165,21 @@ def _summarise_actor_performance(
     return filtered[:top_n] if filtered else leaderboard[:top_n]
 
 
+def _categorise_course_distance(distance: Optional[int]) -> str:
+    """Classe les distances officielles en familles d'effort comparables."""
+
+    if not distance:
+        return "unknown"
+
+    if distance < 1600:
+        return "short_distance"
+
+    if distance <= 2400:
+        return "middle_distance"
+
+    return "long_distance"
+
+
 def _categorise_field_size(field_size: Optional[int]) -> str:
     """Regroupe les tailles de champs en segments homogènes pour l'analyse."""
 
@@ -1196,6 +1211,38 @@ def _categorise_rest_period(rest_days: Optional[int]) -> str:
         return "normal_cycle"
 
     return "extended_break"
+
+
+def _summarise_distance_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la stabilité prédictive en fonction de la distance disputée."""
+
+    if not breakdown:
+        return {}
+
+    distance_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        distances = [int(value) for value in payload.get("distances", []) if value]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["average_distance"] = _safe_average(distances)
+        summary["min_distance"] = min(distances) if distances else None
+        summary["max_distance"] = max(distances) if distances else None
+
+        distance_metrics[segment] = summary
+
+    return distance_metrics
 
 
 def _summarise_field_size_performance(
@@ -1341,6 +1388,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_counter: Counter[str] = Counter()
         confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
+        distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1444,6 +1492,29 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             discipline_bucket["predictions"].append(predicted_label)
             discipline_bucket["scores"].append(probability)
             discipline_bucket.setdefault("courses", set()).add(course.course_id)
+
+            # Ventile également les performances selon la distance officielle afin
+            # de vérifier que le modèle reste stable entre sprint, classique et tenue.
+            distance_segment = _categorise_course_distance(
+                getattr(course, "distance", None)
+            )
+            distance_bucket = distance_breakdown.setdefault(
+                distance_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "distances": [],
+                },
+            )
+            distance_bucket["truths"].append(is_top3)
+            distance_bucket["predictions"].append(predicted_label)
+            distance_bucket["scores"].append(probability)
+            distance_bucket.setdefault("courses", set()).add(course.course_id)
+            course_distance = getattr(course, "distance", None)
+            if course_distance:
+                distance_bucket.setdefault("distances", []).append(int(course_distance))
 
             surface_label = (
                 course.surface_type.value
@@ -1742,6 +1813,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
+        distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
@@ -1791,6 +1863,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "daily_performance": daily_performance,
             "discipline_performance": discipline_performance,
+            "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
@@ -1824,6 +1897,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
             "discipline_performance": discipline_performance,
+            "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
@@ -1876,6 +1950,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "odds_alignment": odds_alignment,
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
+            "distance_performance": distance_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,
