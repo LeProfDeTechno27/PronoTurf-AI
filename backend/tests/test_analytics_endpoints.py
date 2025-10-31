@@ -3,7 +3,8 @@ from __future__ import annotations
 import importlib
 import os
 import unicodedata
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pytest
@@ -207,6 +208,148 @@ class StubAspiturfClient:
         )
 
         return leaderboard[: max(1, limit)]
+
+    async def performance_trend(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        granularity: str = "month",
+    ) -> Dict[str, Any]:
+        key_field = {
+            "horse": "idChe",
+            "jockey": "idJockey",
+            "trainer": "idEntraineur",
+        }.get(entity_type)
+
+        label_field = {
+            "horse": "nom_cheval",
+            "jockey": "jockey",
+            "trainer": "entraineur",
+        }.get(entity_type)
+
+        if not key_field:
+            return {"entity_id": entity_id, "entity_label": None, "points": []}
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        def period_bounds(race_date: date) -> Tuple[Tuple[int, int], date, date, str]:
+            if granularity == "week":
+                iso_year, iso_week, _ = race_date.isocalendar()
+                start = race_date - timedelta(days=race_date.weekday())
+                end = start + timedelta(days=6)
+                return (iso_year, iso_week), start, end, f"{iso_year}-S{iso_week:02d}"
+
+            month_last_day = monthrange(race_date.year, race_date.month)[1]
+            start = race_date.replace(day=1)
+            end = race_date.replace(day=month_last_day)
+            return (
+                (race_date.year, race_date.month),
+                start,
+                end,
+                f"{race_date.year}-{race_date.month:02d}",
+            )
+
+        buckets: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        min_date: Optional[date] = None
+        max_date: Optional[date] = None
+
+        for row in self._rows:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                label_value = row.get(label_field)
+                if isinstance(label_value, str) and label_value.strip():
+                    entity_label = label_value.strip()
+
+            if min_date is None or race_date < min_date:
+                min_date = race_date
+
+            if max_date is None or race_date > max_date:
+                max_date = race_date
+
+            key, start, end, label = period_bounds(race_date)
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "period_start": start,
+                    "period_end": end,
+                    "label": label,
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds = row.get("cotedirect") or row.get("coteprob")
+            if isinstance(odds, (int, float)):
+                bucket["odds"].append(float(odds))
+
+        points: List[Dict[str, Any]] = []
+        for bucket in sorted(buckets.values(), key=lambda item: item["period_start"]):
+            races = bucket["races"]
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+            positions = bucket["positions"]
+            odds_values = bucket["odds"]
+
+            average_finish = sum(positions) / len(positions) if positions else None
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            points.append(
+                {
+                    "period_start": bucket["period_start"],
+                    "period_end": bucket["period_end"],
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": min_date,
+            "date_end": max_date,
+            "points": points,
+        }
     async def search_entities(
         self,
         entity_type: str,
@@ -554,6 +697,86 @@ async def test_insights_endpoint_validates_date_range(analytics_client: AsyncCli
 
     assert response.status_code == 400
     assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_trends_endpoint_returns_monthly_series(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/trends",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "granularity": "month",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-1"
+    assert payload["granularity"] == "month"
+    assert payload["metadata"]["date_start"] == "2024-05-04"
+    assert payload["metadata"]["date_end"] == "2024-05-18"
+
+    points = payload["points"]
+    assert len(points) == 1
+    first_point = points[0]
+    assert first_point["label"] == "2024-05"
+    assert first_point["races"] == 2
+    assert first_point["wins"] == 1
+    assert first_point["podiums"] == 2
+    assert first_point["average_finish"] == 2.0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_trends_endpoint_supports_weekly_breakdown(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/trends",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "granularity": "week",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    points = payload["points"]
+    assert len(points) == 2
+    labels = {point["label"] for point in points}
+    assert labels == {"2024-S18", "2024-S20"}
+
+
+@pytest.mark.anyio("asyncio")
+async def test_trends_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/trends",
+        params={
+            "entity_type": "jockey",
+            "entity_id": "J-77",
+            "start_date": "2024-06-15",
+            "end_date": "2024-05-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_trends_endpoint_returns_404_on_missing_data(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/trends",
+        params={
+            "entity_type": "trainer",
+            "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
 
 
 @pytest.mark.anyio("asyncio")

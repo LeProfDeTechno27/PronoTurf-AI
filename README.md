@@ -19,6 +19,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Explorateur frontend enrichi** avec autocomplétion : sélectionnez un identifiant en quelques clics et pré-remplissez les filtres.
 - **Mise à jour du tableau de bord** : filtres hippodrome synchronisés sur toutes les cartes analytics pour accélérer l'analyse pré-course.
 - **Classements express multi-entités** : l'endpoint `/api/v1/analytics/insights` calcule en temps réel les meilleurs chevaux, jockeys et entraîneurs selon vos filtres (dates, hippodrome, limite), directement consommé depuis la page Analytics.
+- **Tendances de performance** : l'endpoint `/api/v1/analytics/trends` agrège les résultats par semaine ou par mois et l'interface React restitue les courbes d'évolution pour un cheval, un jockey ou un entraîneur.
 
 ## Technologies
 

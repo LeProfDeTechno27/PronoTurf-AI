@@ -15,7 +15,8 @@ Format: Fichiers CSV avec délimiteur personnalisable.
 import logging
 import csv
 import io
-from datetime import date, datetime
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Union
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -719,6 +720,171 @@ class AspiturfClient:
         )
 
         return leaderboard[: max(1, limit)]
+
+    async def performance_trend(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        granularity: str = "month",
+    ) -> Dict[str, Any]:
+        """Agrège les courses d'une entité par période temporelle."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not entity_id:
+            raise ValueError("entity_id est requis pour calculer une tendance")
+
+        if granularity not in {"month", "week"}:
+            raise ValueError(f"Granularité inconnue: {granularity}")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_fields = ("nom_cheval", "cheval")
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_fields = ("jockey",)
+        else:
+            key_field = "idEntraineur"
+            label_fields = ("entraineur",)
+
+        buckets: Dict[Any, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+
+        def build_period_bounds(race_date: date) -> Dict[str, Any]:
+            """Calcule les bornes et le libellé selon la granularité."""
+
+            if granularity == "week":
+                iso_year, iso_week, _ = race_date.isocalendar()
+                start = race_date - timedelta(days=race_date.weekday())
+                end = start + timedelta(days=6)
+                label = f"{iso_year}-S{iso_week:02d}"
+                return {
+                    "key": (iso_year, iso_week),
+                    "start": start,
+                    "end": end,
+                    "label": label,
+                }
+
+            month_last_day = monthrange(race_date.year, race_date.month)[1]
+            start = race_date.replace(day=1)
+            end = race_date.replace(day=month_last_day)
+            label = f"{race_date.year}-{race_date.month:02d}"
+            return {
+                "key": (race_date.year, race_date.month),
+                "start": start,
+                "end": end,
+                "label": label,
+            }
+
+        for row in self._data:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                # Impossible de dater la course => on ignore pour un graphe temporel.
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                for field in label_fields:
+                    label_value = row.get(field)
+                    if isinstance(label_value, str) and label_value.strip():
+                        entity_label = label_value.strip()
+                        break
+
+            if first_date is None or race_date < first_date:
+                first_date = race_date
+
+            if last_date is None or race_date > last_date:
+                last_date = race_date
+
+            period_data = build_period_bounds(race_date)
+            bucket = buckets.setdefault(
+                period_data["key"],
+                {
+                    "period_start": period_data["start"],
+                    "period_end": period_data["end"],
+                    "label": period_data["label"],
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds = row.get("cotedirect") or row.get("coteprob")
+            if isinstance(odds, (int, float)):
+                bucket["odds"].append(float(odds))
+
+        points: List[Dict[str, Any]] = []
+
+        for _, bucket in sorted(buckets.items(), key=lambda item: item[1]["period_start"]):
+            races = bucket["races"]
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+
+            positions = bucket["positions"]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            odds_values = bucket["odds"]
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            points.append(
+                {
+                    "period_start": bucket["period_start"],
+                    "period_end": bucket["period_end"],
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "date_start": first_date,
+            "date_end": last_date,
+            "points": points,
+        }
 
     async def search_entities(
         self,

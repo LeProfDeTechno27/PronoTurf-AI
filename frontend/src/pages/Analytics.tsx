@@ -12,6 +12,10 @@ import type {
   PerformanceBreakdown,
   RecentRace,
   TrainerAnalyticsResponse,
+  PerformanceTrendResponse,
+  PerformanceTrendPoint,
+  TrendEntityType,
+  TrendGranularity,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -50,6 +54,15 @@ type InsightsFilters = {
   startDate?: string
   endDate?: string
   limit: number
+}
+
+type TrendFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  granularity: TrendGranularity
 }
 
 const isJockeyResponse = (
@@ -219,6 +232,46 @@ function LeaderboardTable({
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.podium_rate)}</td>
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(item.average_finish)}</td>
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatDate(item.last_seen)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TrendTable({ points }: { points: PerformanceTrendPoint[] }) {
+  // Met en forme l'évolution d'une entité période par période.
+  if (!points.length) {
+    return <p className="text-gray-500">Aucune course sur la période sélectionnée.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Période</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Courses</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Victoires</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Podiums</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux victoire</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux podium</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Arrivée moy.</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Cote moy.</th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {points.map((point) => (
+            <tr key={point.label}>
+              <td className="px-4 py-2 text-sm text-gray-900">{point.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.races)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(point.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(point.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(point.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(point.average_odds)}</td>
             </tr>
           ))}
         </tbody>
@@ -449,6 +502,47 @@ function InsightsPanel({ data }: { data: AnalyticsInsightsResponse }) {
   )
 }
 
+function TrendPanel({ data }: { data: PerformanceTrendResponse }) {
+  // Résume la tendance agrégée avant d'afficher le détail période par période.
+  const entityDisplay = data.entity_label
+    ? `${data.entity_label} (${data.entity_id})`
+    : data.entity_id
+
+  const granularityLabel = data.granularity === 'week' ? 'Semaine' : 'Mois'
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats
+          label="Granularité"
+          value={granularityLabel}
+        />
+        <SummaryStats
+          label="Période"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <SummaryStats
+          label="Hippodrome filtré"
+          value={data.metadata.hippodrome_filter ?? 'Tous'}
+        />
+        <SummaryStats
+          label="Nombre de périodes"
+          value={`${formatNumber(data.points.length)} intervalles`}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-lg font-semibold text-gray-900">Historique des performances</h3>
+        <TrendTable points={data.points} />
+      </div>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   // États dédiés aux classements transverses.
   const [insightHippoInput, setInsightHippoInput] = useState('')
@@ -457,6 +551,15 @@ export default function AnalyticsPage() {
   const [insightLimitInput, setInsightLimitInput] = useState('5')
   const [insightError, setInsightError] = useState<string | null>(null)
   const [insightFilters, setInsightFilters] = useState<InsightsFilters>({ limit: 5 })
+
+  const [trendTypeInput, setTrendTypeInput] = useState<TrendEntityType>('horse')
+  const [trendIdInput, setTrendIdInput] = useState('')
+  const [trendHippoInput, setTrendHippoInput] = useState('')
+  const [trendStartInput, setTrendStartInput] = useState('')
+  const [trendEndInput, setTrendEndInput] = useState('')
+  const [trendGranularityInput, setTrendGranularityInput] = useState<TrendGranularity>('month')
+  const [trendError, setTrendError] = useState<string | null>(null)
+  const [trendFilters, setTrendFilters] = useState<TrendFilters | null>(null)
 
   const [horseIdInput, setHorseIdInput] = useState('')
   const [horseHippoInput, setHorseHippoInput] = useState('')
@@ -510,6 +613,37 @@ export default function AnalyticsPage() {
         endDate: insightFilters.endDate,
         limit: insightFilters.limit,
       }),
+  })
+
+  const trendQueryKey = useMemo(
+    () =>
+      trendFilters
+        ? [
+            'analytics',
+            'trends',
+            trendFilters.entityType,
+            trendFilters.entityId,
+            trendFilters.hippodrome ?? '',
+            trendFilters.startDate ?? '',
+            trendFilters.endDate ?? '',
+            trendFilters.granularity,
+          ]
+        : ['analytics', 'trends', 'idle'],
+    [trendFilters],
+  )
+
+  const trendQuery = useQuery({
+    queryKey: trendQueryKey,
+    queryFn: () =>
+      analyticsService.getPerformanceTrend({
+        entityType: trendFilters!.entityType,
+        entityId: trendFilters!.entityId,
+        granularity: trendFilters!.granularity,
+        hippodrome: trendFilters?.hippodrome,
+        startDate: trendFilters?.startDate,
+        endDate: trendFilters?.endDate,
+      }),
+    enabled: Boolean(trendFilters?.entityId),
   })
 
   const horseQueryKey = useMemo(() => (
@@ -625,6 +759,33 @@ export default function AnalyticsPage() {
     }
 
     setInsightFilters(nextFilters)
+  }
+
+  const handleTrendSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = trendIdInput.trim()
+
+    if (!id) {
+      setTrendError("Veuillez saisir un identifiant Aspiturf valide.")
+      setTrendFilters(null)
+      return
+    }
+
+    if (trendStartInput && trendEndInput && trendStartInput > trendEndInput) {
+      setTrendError('La date de début doit précéder la date de fin.')
+      setTrendFilters(null)
+      return
+    }
+
+    setTrendError(null)
+    setTrendFilters({
+      entityType: trendTypeInput,
+      entityId: id,
+      hippodrome: trendHippoInput.trim() || undefined,
+      startDate: trendStartInput || undefined,
+      endDate: trendEndInput || undefined,
+      granularity: trendGranularityInput,
+    })
   }
 
   const handleHorseSubmit = (event: FormEvent) => {
@@ -785,16 +946,79 @@ export default function AnalyticsPage() {
           {insightsQuery.isLoading && (
             <p className="text-sm text-gray-500">Calcul des classements en cours…</p>
           )}
-          {insightsQuery.isError && (
-            <p className="text-sm text-red-600">Erreur: {(insightsQuery.error as Error).message}</p>
-          )}
-          {insightsQuery.data && <InsightsPanel data={insightsQuery.data} />}
-        </SectionCard>
+        {insightsQuery.isError && (
+          <p className="text-sm text-red-600">Erreur: {(insightsQuery.error as Error).message}</p>
+        )}
+        {insightsQuery.data && <InsightsPanel data={insightsQuery.data} />}
+      </SectionCard>
 
-        <SectionCard
-          title="Cheval"
-          description="Obtenez la fiche complète d'un cheval à partir de son identifiant Aspiturf (idChe)."
+      <SectionCard
+        title="Tendances de performance"
+        description="Mesurez l'évolution d'un cheval, d'un jockey ou d'un entraîneur grâce à une agrégation hebdomadaire ou mensuelle."
+      >
+        <form
+          onSubmit={handleTrendSubmit}
+          className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
         >
+          <select
+            value={trendTypeInput}
+            onChange={(event) => setTrendTypeInput(event.target.value as TrendEntityType)}
+            className="input"
+          >
+            <option value="horse">Cheval</option>
+            <option value="jockey">Jockey</option>
+            <option value="trainer">Entraîneur</option>
+          </select>
+          <input
+            value={trendIdInput}
+            onChange={(event) => setTrendIdInput(event.target.value)}
+            placeholder="Identifiant Aspiturf (id)"
+            className="input"
+          />
+          <input
+            value={trendHippoInput}
+            onChange={(event) => setTrendHippoInput(event.target.value)}
+            placeholder="Filtrer par hippodrome (optionnel)"
+            className="input"
+          />
+          <input
+            type="date"
+            value={trendStartInput}
+            onChange={(event) => setTrendStartInput(event.target.value)}
+            className="input"
+          />
+          <input
+            type="date"
+            value={trendEndInput}
+            onChange={(event) => setTrendEndInput(event.target.value)}
+            className="input"
+          />
+          <select
+            value={trendGranularityInput}
+            onChange={(event) => setTrendGranularityInput(event.target.value as TrendGranularity)}
+            className="input"
+          >
+            <option value="month">Mois</option>
+            <option value="week">Semaine</option>
+          </select>
+          <button type="submit" className="btn btn-primary">
+            Générer
+          </button>
+        </form>
+        {trendError && <p className="text-sm text-red-600">{trendError}</p>}
+        {trendQuery.isPending && (
+          <p className="text-sm text-gray-500">Calcul des tendances en cours…</p>
+        )}
+        {trendQuery.isError && (
+          <p className="text-sm text-red-600">Erreur: {(trendQuery.error as Error).message}</p>
+        )}
+        {trendQuery.data && <TrendPanel data={trendQuery.data} />}
+      </SectionCard>
+
+      <SectionCard
+        title="Cheval"
+        description="Obtenez la fiche complète d'un cheval à partir de son identifiant Aspiturf (idChe)."
+      >
           <form onSubmit={handleHorseSubmit} className="grid gap-4 md:grid-cols-[2fr,2fr,auto]">
             <input
               value={horseIdInput}

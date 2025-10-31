@@ -44,6 +44,32 @@ export interface LeaderboardEntry {
   last_seen?: string | null
 }
 
+export type TrendEntityType = 'horse' | 'jockey' | 'trainer'
+
+export type TrendGranularity = 'week' | 'month'
+
+export interface PerformanceTrendPoint {
+  period_start: string
+  period_end: string
+  label: string
+  races: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+}
+
+export interface PerformanceTrendResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  granularity: TrendGranularity
+  metadata: AnalyticsMetadata
+  points: PerformanceTrendPoint[]
+}
+
 export interface HorseAnalyticsResponse {
   horse_id: string
   horse_name?: string | null

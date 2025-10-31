@@ -19,11 +19,15 @@ from app.schemas.analytics import (
     HorseAnalyticsResponse,
     JockeyAnalyticsResponse,
     LeaderboardEntry,
+    PerformanceTrendPoint,
+    PerformanceTrendResponse,
     PartantInsight,
     PerformanceBreakdown,
     PerformanceSummary,
     RecentRace,
     TrainerAnalyticsResponse,
+    TrendEntityType,
+    TrendGranularity,
 )
 
 try:  # pragma: no cover - optional dependency for tests
@@ -197,6 +201,30 @@ def _to_leaderboard_entries(rows: List[Dict[str, Any]]) -> List[LeaderboardEntry
     return entries
 
 
+def _to_trend_points(rows: List[Dict[str, Any]]) -> List[PerformanceTrendPoint]:
+    """Cast des agrégats de tendance fournis par le client en schémas Pydantic."""
+
+    points: List[PerformanceTrendPoint] = []
+
+    for row in rows:
+        points.append(
+            PerformanceTrendPoint(
+                period_start=row.get("period_start"),
+                period_end=row.get("period_end"),
+                label=str(row.get("label")),
+                races=int(row.get("races", 0)),
+                wins=int(row.get("wins", 0)),
+                podiums=int(row.get("podiums", 0)),
+                win_rate=row.get("win_rate"),
+                podium_rate=row.get("podium_rate"),
+                average_finish=row.get("average_finish"),
+                average_odds=row.get("average_odds"),
+            )
+        )
+
+    return points
+
+
 @router.get(
     "/insights",
     response_model=AnalyticsInsightsResponse,
@@ -255,6 +283,82 @@ async def get_analytics_insights(
         top_horses=_to_leaderboard_entries(horse_rows),
         top_jockeys=_to_leaderboard_entries(jockey_rows),
         top_trainers=_to_leaderboard_entries(trainer_rows),
+    )
+
+
+@router.get(
+    "/trends",
+    response_model=PerformanceTrendResponse,
+    summary="Visualiser la tendance de performance d'une entité",
+    description=(
+        "Agrège les courses par semaine ou par mois afin d'identifier la dynamique d'un cheval, "
+        "d'un jockey ou d'un entraîneur."
+    ),
+)
+async def get_performance_trends(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    granularity: TrendGranularity = Query(
+        TrendGranularity.MONTH,
+        description="Granularité temporelle de l'agrégation",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+) -> PerformanceTrendResponse:
+    """Retourne l'évolution des résultats d'une entité sur une période donnée."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    trend_payload = await client.performance_trend(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+        granularity=granularity.value,
+    )
+
+    points = _to_trend_points(trend_payload.get("points", []))
+
+    if not points:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=trend_payload.get("date_start"),
+        date_end=trend_payload.get("date_end"),
+    )
+
+    return PerformanceTrendResponse(
+        entity_type=entity_type,
+        entity_id=trend_payload.get("entity_id", entity_id),
+        entity_label=trend_payload.get("entity_label"),
+        granularity=granularity,
+        metadata=metadata,
+        points=points,
     )
 
 

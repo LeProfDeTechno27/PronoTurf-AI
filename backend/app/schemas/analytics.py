@@ -277,3 +277,63 @@ class AnalyticsInsightsResponse(BaseModel):
         description="Classement des entraineurs les plus performants",
     )
 
+
+class TrendGranularity(str, Enum):
+    """Résolutions temporelles disponibles pour les tendances de performance."""
+
+    WEEK = "week"
+    MONTH = "month"
+
+
+class TrendEntityType(str, Enum):
+    """Entités compatibles avec l'analyse de tendance."""
+
+    HORSE = "horse"
+    JOCKEY = "jockey"
+    TRAINER = "trainer"
+
+
+class PerformanceTrendPoint(BaseModel):
+    """Mesure agrégée sur une période temporelle."""
+
+    period_start: date_type = Field(..., description="Date de début de la période")
+    period_end: date_type = Field(..., description="Date de fin de la période")
+    label: str = Field(..., description="Libellé lisible de la période (AAAA-MM, AAAA-Sxx)")
+    races: int = Field(..., ge=0, description="Nombre de courses disputées")
+    wins: int = Field(..., ge=0, description="Nombre de victoires sur la période")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums sur la période")
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire sur la période",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium sur la période",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne à l'arrivée",
+    )
+    average_odds: Optional[float] = Field(
+        default=None,
+        description="Cote moyenne observée (directe ou probable)",
+    )
+
+
+class PerformanceTrendResponse(BaseModel):
+    """Réponse retournée par l'endpoint /analytics/trends."""
+
+    entity_type: TrendEntityType = Field(..., description="Type de l'entité analysée")
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(default=None, description="Libellé humain de l'entité")
+    granularity: TrendGranularity = Field(..., description="Granularité choisie pour l'agrégation")
+    metadata: AnalyticsMetadata = Field(default_factory=AnalyticsMetadata)
+    points: List[PerformanceTrendPoint] = Field(
+        default_factory=list,
+        description="Liste des mesures agrégées par période",
+    )
+
