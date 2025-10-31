@@ -286,6 +286,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["top1_accuracy"] == pytest.approx(0.5, rel=1e-3)
     assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    calibration_table = metrics["calibration_table"]
+    assert len(calibration_table) == 5
+    assert calibration_table[0]["empirical_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert calibration_table[-1]["count"] == 2
+    assert calibration_table[-1]["empirical_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    threshold_grid = metrics["threshold_sensitivity"]
+    assert threshold_grid["0.20"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert threshold_grid["0.20"]["precision"] == pytest.approx(0.8, rel=1e-3)
+    assert threshold_grid["0.40"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert threshold_grid["0.50"]["precision"] == pytest.approx(1.0, rel=1e-3)
+
     confidence = result["confidence_distribution"]
     assert confidence == {"high": 1, "low": 2, "medium": 3}
 

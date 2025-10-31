@@ -34,6 +34,11 @@ PronoTurf est une plateforme moderne qui combine :
 - **Charge de travail & repos** : l'endpoint `/api/v1/analytics/workload` analyse les jours de repos entre chaque participation, synthétise les rythmes d'engagement et fournit un tableau chronologique détaillé côté frontend.
 - **Progression chronologique** : l'endpoint `/api/v1/analytics/progression` calcule les variations de classement course par course, détecte les séries d'amélioration/régression et alimente un tableau interactif de suivi dans l'interface analytics.
 
+## Suivi de la performance du modèle ML
+
+- **Table de calibration automatique** : chaque exécution de la tâche Celery `update_model_performance` construit désormais des quantiles de probabilité (5 tranches) afin de comparer probabilité moyenne et taux de réussite observé. Cela permet d'identifier immédiatement les sur/sous-estimations du modèle.
+- **Analyse multi-seuils prête à l'emploi** : les métriques clés (accuracy, précision, rappel, F1, taux de positifs) sont recalculées pour un jeu de seuils standards (`0.20`, `0.30`, `0.40`, `0.50`). Les résultats sont historisés dans la table `ml_model` pour suivre la sensibilité de la stratégie de coupure.
+
 ## Technologies
 
 ### Backend

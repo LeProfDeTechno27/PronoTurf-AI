@@ -161,6 +161,84 @@ def _safe_average(values: List[float]) -> Optional[float]:
     return sum(values) / len(values) if values else None
 
 
+def _build_calibration_table(
+    scores: List[float],
+    truths: List[int],
+    *,
+    bins: int = 5,
+) -> List[Dict[str, object]]:
+    """Construit un tableau de calibration par quantiles.
+
+    L'objectif est d'exposer à la fois le volume de prédictions par tranche et
+    l'écart éventuel entre probabilité moyenne et fréquence observée.
+    """
+
+    if not scores or not truths or len(scores) != len(truths):
+        return []
+
+    combined = sorted(zip(scores, truths), key=lambda item: item[0])
+    bucket_size = max(1, len(combined) // bins)
+
+    calibration_rows: List[Dict[str, object]] = []
+
+    for idx in range(bins):
+        start = idx * bucket_size
+        end = (idx + 1) * bucket_size if idx < bins - 1 else len(combined)
+
+        if start >= len(combined):
+            break
+
+        bucket = combined[start:end]
+        bucket_scores = [item[0] for item in bucket]
+        bucket_truths = [item[1] for item in bucket]
+
+        calibration_rows.append(
+            {
+                "bin": idx + 1,
+                "count": len(bucket),
+                "min_probability": min(bucket_scores),
+                "max_probability": max(bucket_scores),
+                "average_probability": _safe_average(bucket_scores),
+                "empirical_rate": _safe_average(bucket_truths),
+            }
+        )
+
+    return calibration_rows
+
+
+def _evaluate_threshold_grid(
+    scores: List[float],
+    truths: List[int],
+    thresholds: List[float],
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Calcule la sensibilité des métriques pour plusieurs seuils."""
+
+    if not scores or not truths:
+        return {}
+
+    evaluation: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for threshold in sorted(set(thresholds)):
+        predicted = [1 if score >= threshold else 0 for score in scores]
+
+        accuracy = precision = recall = f1 = None
+        if accuracy_score:
+            accuracy = accuracy_score(truths, predicted)
+            precision = precision_score(truths, predicted, zero_division=0)
+            recall = recall_score(truths, predicted, zero_division=0)
+            f1 = f1_score(truths, predicted, zero_division=0)
+
+        evaluation[f"{threshold:.2f}"] = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "positive_rate": sum(predicted) / len(predicted) if predicted else None,
+        }
+
+    return evaluation
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -241,6 +319,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_versions: Counter[str] = Counter()
         course_stats: Dict[int, Dict[str, object]] = {}
 
+        # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
+        # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
         for prediction, partant, pronostic, course in predictions_with_results:
             probability = float(prediction.win_probability)
             probability = max(0.0, min(probability, 1.0))
@@ -329,6 +409,13 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 if item.get("final_position") and int(item["final_position"]) <= 3:
                     top3_probabilities.append(float(item["probability"]))
 
+        calibration_table = _build_calibration_table(y_scores, y_true, bins=5)
+        threshold_grid = _evaluate_threshold_grid(
+            y_scores,
+            y_true,
+            thresholds=[0.2, probability_threshold, 0.4, 0.5],
+        )
+
         metrics = {
             "accuracy": accuracy,
             "precision": precision,
@@ -350,6 +437,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
             "average_winner_probability": _safe_average(winner_probabilities),
             "average_top3_probability": _safe_average(top3_probabilities),
+            "calibration_table": calibration_table,
+            "threshold_sensitivity": threshold_grid,
         }
 
         confidence_distribution = {
