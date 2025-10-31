@@ -1,145 +1,107 @@
-"""
-Pydantic schemas pour validation et sérialisation
-"""
+"""Pydantic schemas package with lazy exports."""
 
-# User schemas
-from .user import UserCreate, UserRead, UserUpdate, Token
+from importlib import import_module
+from types import ModuleType
+from typing import TYPE_CHECKING, Dict
 
-# Hippodrome schemas
-from .hippodrome import (
-    HippodromeCreate,
-    HippodromeUpdate,
-    HippodromeResponse,
-    HippodromeSimple,
-    HippodromeList,
-)
+_module_exports = {
+    "user": ("UserCreate", "UserRead", "UserUpdate", "Token"),
+    "hippodrome": (
+        "HippodromeCreate",
+        "HippodromeUpdate",
+        "HippodromeResponse",
+        "HippodromeSimple",
+        "HippodromeList",
+    ),
+    "reunion": (
+        "ReunionCreate",
+        "ReunionUpdate",
+        "ReunionResponse",
+        "ReunionSimple",
+        "ReunionWithHippodrome",
+        "ReunionList",
+        "ReunionDetailResponse",
+    ),
+    "course": (
+        "CourseCreate",
+        "CourseUpdate",
+        "CourseResponse",
+        "CourseSimple",
+        "CourseWithReunion",
+        "CourseList",
+        "CourseDetailResponse",
+        "CourseFilter",
+    ),
+    "horse": (
+        "HorseCreate",
+        "HorseUpdate",
+        "HorseResponse",
+        "HorseSimple",
+        "HorseList",
+        "HorseDetailResponse",
+    ),
+    "jockey": (
+        "JockeyCreate",
+        "JockeyUpdate",
+        "JockeyResponse",
+        "JockeySimple",
+        "JockeyList",
+        "JockeyDetailResponse",
+    ),
+    "trainer": (
+        "TrainerCreate",
+        "TrainerUpdate",
+        "TrainerResponse",
+        "TrainerSimple",
+        "TrainerList",
+        "TrainerDetailResponse",
+    ),
+    "partant": (
+        "PartantCreate",
+        "PartantUpdate",
+        "PartantResponse",
+        "PartantSimple",
+        "PartantWithRelations",
+        "PartantList",
+        "PartantDetailResponse",
+        "PartantBatchCreate",
+        "PartantResultUpdate",
+        "PartantOddsUpdate",
+    ),
+}
 
-# Reunion schemas
-from .reunion import (
-    ReunionCreate,
-    ReunionUpdate,
-    ReunionResponse,
-    ReunionSimple,
-    ReunionWithHippodrome,
-    ReunionList,
-    ReunionDetailResponse,
-)
+_symbol_to_module = {
+    symbol: module for module, symbols in _module_exports.items() for symbol in symbols
+}
 
-# Course schemas
-from .course import (
-    CourseCreate,
-    CourseUpdate,
-    CourseResponse,
-    CourseSimple,
-    CourseWithReunion,
-    CourseList,
-    CourseDetailResponse,
-    CourseFilter,
-)
+__all__ = list(_symbol_to_module) + list(_module_exports)
 
-# Horse schemas
-from .horse import (
-    HorseCreate,
-    HorseUpdate,
-    HorseResponse,
-    HorseSimple,
-    HorseList,
-    HorseDetailResponse,
-)
+_loaded_modules: Dict[str, ModuleType] = {}
 
-# Jockey schemas
-from .jockey import (
-    JockeyCreate,
-    JockeyUpdate,
-    JockeyResponse,
-    JockeySimple,
-    JockeyList,
-    JockeyDetailResponse,
-)
 
-# Trainer schemas
-from .trainer import (
-    TrainerCreate,
-    TrainerUpdate,
-    TrainerResponse,
-    TrainerSimple,
-    TrainerList,
-    TrainerDetailResponse,
-)
+def _load_module(module: str) -> ModuleType:
+    if module not in _loaded_modules:
+        _loaded_modules[module] = import_module(f"{__name__}.{module}")
+    return _loaded_modules[module]
 
-# Partant schemas
-from .partant import (
-    PartantCreate,
-    PartantUpdate,
-    PartantResponse,
-    PartantSimple,
-    PartantWithRelations,
-    PartantList,
-    PartantDetailResponse,
-    PartantBatchCreate,
-    PartantResultUpdate,
-    PartantOddsUpdate,
-)
 
-__all__ = [
-    # User
-    "UserCreate",
-    "UserRead",
-    "UserUpdate",
-    "Token",
-    # Hippodrome
-    "HippodromeCreate",
-    "HippodromeUpdate",
-    "HippodromeResponse",
-    "HippodromeSimple",
-    "HippodromeList",
-    # Reunion
-    "ReunionCreate",
-    "ReunionUpdate",
-    "ReunionResponse",
-    "ReunionSimple",
-    "ReunionWithHippodrome",
-    "ReunionList",
-    "ReunionDetailResponse",
-    # Course
-    "CourseCreate",
-    "CourseUpdate",
-    "CourseResponse",
-    "CourseSimple",
-    "CourseWithReunion",
-    "CourseList",
-    "CourseDetailResponse",
-    "CourseFilter",
-    # Horse
-    "HorseCreate",
-    "HorseUpdate",
-    "HorseResponse",
-    "HorseSimple",
-    "HorseList",
-    "HorseDetailResponse",
-    # Jockey
-    "JockeyCreate",
-    "JockeyUpdate",
-    "JockeyResponse",
-    "JockeySimple",
-    "JockeyList",
-    "JockeyDetailResponse",
-    # Trainer
-    "TrainerCreate",
-    "TrainerUpdate",
-    "TrainerResponse",
-    "TrainerSimple",
-    "TrainerList",
-    "TrainerDetailResponse",
-    # Partant
-    "PartantCreate",
-    "PartantUpdate",
-    "PartantResponse",
-    "PartantSimple",
-    "PartantWithRelations",
-    "PartantList",
-    "PartantDetailResponse",
-    "PartantBatchCreate",
-    "PartantResultUpdate",
-    "PartantOddsUpdate",
-]
+def __getattr__(name: str):  # pragma: no cover - passthrough helper
+    if name in _module_exports:
+        return _load_module(name)
+    module_name = _symbol_to_module.get(name)
+    if module_name:
+        module = _load_module(module_name)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+if TYPE_CHECKING:  # pragma: no cover
+    from . import course, hippodrome, horse, jockey, partant, reunion, trainer, user
+    from .course import *  # noqa: F401,F403
+    from .hippodrome import *  # noqa: F401,F403
+    from .horse import *  # noqa: F401,F403
+    from .jockey import *  # noqa: F401,F403
+    from .partant import *  # noqa: F401,F403
+    from .reunion import *  # noqa: F401,F403
+    from .trainer import *  # noqa: F401,F403
+    from .user import *  # noqa: F401,F403
