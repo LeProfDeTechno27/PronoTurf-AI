@@ -12,6 +12,7 @@ import type {
   AnalyticsFormResponse,
   AnalyticsValueResponse,
   AnalyticsVolatilityResponse,
+  AnalyticsWorkloadResponse,
   AnalyticsMomentumResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
@@ -34,6 +35,7 @@ import type {
   CalendarRaceDetail,
   ValueOpportunitySample,
   VolatilityRaceSample,
+  WorkloadTimelineEntry,
   MomentumSlice,
 } from '../types/analytics'
 
@@ -148,6 +150,14 @@ type ValueFilters = {
 }
 
 type VolatilityFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+}
+
+type WorkloadFilters = {
   entityType: TrendEntityType
   entityId: string
   hippodrome?: string
@@ -1364,6 +1374,120 @@ function VolatilityPanel({ data }: { data: AnalyticsVolatilityResponse }) {
   )
 }
 
+function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const { summary, timeline } = data
+  const distributionEntries = Object.entries(summary.rest_distribution)
+
+  const formatRest = (value?: number | null, digits = 1) =>
+    value == null ? '—' : `${value.toFixed(digits)} j`
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats
+          label="Plage des données"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats label="Courses analysées" value={formatNumber(summary.sample_size)} />
+        <SummaryStats label="Repos moyen" value={formatRest(summary.average_rest_days)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats
+          label="Victoires / Podiums"
+          value={`${formatNumber(summary.wins)} / ${formatNumber(summary.podiums)}`}
+        />
+        <SummaryStats label="Taux de victoire" value={formatPercent(summary.win_rate)} />
+        <SummaryStats label="Repos médian" value={formatRest(summary.median_rest_days)} />
+        <SummaryStats
+          label="Activité 30j / 90j"
+          value={`${formatNumber(summary.races_last_30_days)} / ${formatNumber(summary.races_last_90_days)}`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats label="Repos min" value={formatRest(summary.shortest_rest_days, 0)} />
+        <SummaryStats label="Repos max" value={formatRest(summary.longest_rest_days, 0)} />
+        <SummaryStats
+          label="Rythme mensuel"
+          value={summary.average_monthly_races != null ? `${summary.average_monthly_races.toFixed(2)} courses` : '—'}
+        />
+      </div>
+
+      {distributionEntries.length ? (
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <h4 className="text-sm font-semibold text-gray-700">Répartition des repos</h4>
+          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {distributionEntries.map(([label, count]) => (
+              <div key={label} className="rounded-md bg-slate-50 p-3">
+                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+                <dd className="text-lg font-semibold text-slate-800">{formatNumber(count)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+
+      <div className="overflow-hidden rounded-lg border border-gray-200">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Date
+              </th>
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Hippodrome
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Course
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Distance
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Arrivée
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Repos
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Cote
+              </th>
+              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Victoire
+              </th>
+              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Podium
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 bg-white">
+            {timeline.map((race: WorkloadTimelineEntry, index) => (
+              <tr key={`${race.date}-${race.course_number}-${index}`}>
+                <td className="px-3 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
+                <td className="px-3 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
+                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
+                <td className="px-3 py-2 text-sm text-right text-gray-700">
+                  {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
+                </td>
+                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
+                <td className="px-3 py-2 text-sm text-right text-gray-700">
+                  {race.rest_days != null ? `${race.rest_days} j` : '—'}
+                </td>
+                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds)}</td>
+                <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
+                <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function MomentumSliceTable({ title, slice }: { title: string; slice: MomentumSlice }) {
   return (
     <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -1565,6 +1689,14 @@ export default function AnalyticsPage() {
   const [volatilityEndInput, setVolatilityEndInput] = useState('')
   const [volatilityError, setVolatilityError] = useState<string | null>(null)
   const [volatilityFilters, setVolatilityFilters] = useState<VolatilityFilters | null>(null)
+
+  const [workloadTypeInput, setWorkloadTypeInput] = useState<TrendEntityType>('horse')
+  const [workloadIdInput, setWorkloadIdInput] = useState('')
+  const [workloadHippoInput, setWorkloadHippoInput] = useState('')
+  const [workloadStartInput, setWorkloadStartInput] = useState('')
+  const [workloadEndInput, setWorkloadEndInput] = useState('')
+  const [workloadError, setWorkloadError] = useState<string | null>(null)
+  const [workloadFilters, setWorkloadFilters] = useState<WorkloadFilters | null>(null)
 
   const [momentumTypeInput, setMomentumTypeInput] = useState<TrendEntityType>('horse')
   const [momentumIdInput, setMomentumIdInput] = useState('')
@@ -1853,6 +1985,35 @@ export default function AnalyticsPage() {
         endDate: volatilityFilters?.endDate,
       }),
     enabled: Boolean(volatilityFilters?.entityId),
+  })
+
+  const workloadQueryKey = useMemo(
+    () =>
+      workloadFilters
+        ? [
+            'analytics',
+            'workload',
+            workloadFilters.entityType,
+            workloadFilters.entityId,
+            workloadFilters.hippodrome ?? '',
+            workloadFilters.startDate ?? '',
+            workloadFilters.endDate ?? '',
+          ]
+        : ['analytics', 'workload', 'idle'],
+    [workloadFilters],
+  )
+
+  const workloadQuery = useQuery({
+    queryKey: workloadQueryKey,
+    queryFn: () =>
+      analyticsService.getWorkloadProfile({
+        entityType: workloadFilters!.entityType,
+        entityId: workloadFilters!.entityId,
+        hippodrome: workloadFilters?.hippodrome,
+        startDate: workloadFilters?.startDate,
+        endDate: workloadFilters?.endDate,
+      }),
+    enabled: Boolean(workloadFilters?.entityId),
   })
 
   const momentumQueryKey = useMemo(
@@ -2165,6 +2326,32 @@ export default function AnalyticsPage() {
       hippodrome: volatilityHippoInput.trim() || undefined,
       startDate: volatilityStartInput || undefined,
       endDate: volatilityEndInput || undefined,
+    })
+  }
+
+  const handleWorkloadSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = workloadIdInput.trim()
+
+    if (!id) {
+      setWorkloadError("Veuillez saisir un identifiant Aspiturf valide.")
+      setWorkloadFilters(null)
+      return
+    }
+
+    if (workloadStartInput && workloadEndInput && workloadStartInput > workloadEndInput) {
+      setWorkloadError('La date de début doit précéder la date de fin.')
+      setWorkloadFilters(null)
+      return
+    }
+
+    setWorkloadError(null)
+    setWorkloadFilters({
+      entityType: workloadTypeInput,
+      entityId: id,
+      hippodrome: workloadHippoInput.trim() || undefined,
+      startDate: workloadStartInput || undefined,
+      endDate: workloadEndInput || undefined,
     })
   }
 
@@ -2722,13 +2909,68 @@ export default function AnalyticsPage() {
       {volatilityQuery.isError && (
         <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
       )}
-      {volatilityQuery.data && <VolatilityPanel data={volatilityQuery.data} />}
-    </SectionCard>
+    {volatilityQuery.data && <VolatilityPanel data={volatilityQuery.data} />}
+  </SectionCard>
 
-    <SectionCard
-      title="Momentum récent"
-      description="Comparez la dynamique actuelle d'un cheval, jockey ou entraîneur à sa période précédente pour détecter un regain ou une baisse de forme."
+  <SectionCard
+    title="Charge de travail"
+    description="Évaluez les temps de repos et la fréquence d'engagement d'un cheval, d'un jockey ou d'un entraîneur."
+  >
+    <form
+      onSubmit={handleWorkloadSubmit}
+      className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
     >
+      <select
+        value={workloadTypeInput}
+        onChange={(event) => setWorkloadTypeInput(event.target.value as TrendEntityType)}
+        className="input"
+      >
+        <option value="horse">Cheval</option>
+        <option value="jockey">Jockey</option>
+        <option value="trainer">Entraîneur</option>
+      </select>
+      <input
+        value={workloadIdInput}
+        onChange={(event) => setWorkloadIdInput(event.target.value)}
+        placeholder="Identifiant Aspiturf (id)"
+        className="input"
+      />
+      <input
+        value={workloadHippoInput}
+        onChange={(event) => setWorkloadHippoInput(event.target.value)}
+        placeholder="Filtrer par hippodrome (optionnel)"
+        className="input"
+      />
+      <input
+        type="date"
+        value={workloadStartInput}
+        onChange={(event) => setWorkloadStartInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="date"
+        value={workloadEndInput}
+        onChange={(event) => setWorkloadEndInput(event.target.value)}
+        className="input"
+      />
+      <button type="submit" className="btn btn-primary">
+        Diagnostiquer
+      </button>
+    </form>
+    {workloadError && <p className="text-sm text-red-600">{workloadError}</p>}
+    {workloadQuery.isPending && (
+      <p className="text-sm text-gray-500">Calcul des rythmes de participation en cours…</p>
+    )}
+    {workloadQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(workloadQuery.error as Error).message}</p>
+    )}
+    {workloadQuery.data && <WorkloadPanel data={workloadQuery.data} />}
+  </SectionCard>
+
+  <SectionCard
+    title="Momentum récent"
+    description="Comparez la dynamique actuelle d'un cheval, jockey ou entraîneur à sa période précédente pour détecter un regain ou une baisse de forme."
+  >
       <form
         onSubmit={handleMomentumSubmit}
         className="grid gap-4 md:grid-cols-[repeat(7,minmax(0,1fr)),auto]"

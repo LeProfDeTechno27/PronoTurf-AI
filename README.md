@@ -28,6 +28,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Chasse aux value bets** : l'endpoint `/api/v1/analytics/value` compare la cote observée et la cote probable Aspiturf pour identifier les opportunités les plus rentables et restitue un ROI théorique directement dans l'interface.
 - **Analyse de volatilité** : l'endpoint `/api/v1/analytics/volatility` calcule les écarts-types de positions et de cotes pour visualiser la régularité d'une entité, avec un module dédié dans la page Analytics.
 - **Momentum comparatif** : l'endpoint `/api/v1/analytics/momentum` confronte les dernières courses d'une entité à sa période de référence pour mesurer l'évolution des taux de victoire/podium et du ROI, le tout visualisé dans un nouveau panneau React.
+- **Charge de travail & repos** : l'endpoint `/api/v1/analytics/workload` analyse les jours de repos entre chaque participation, synthétise les rythmes d'engagement et fournit un tableau chronologique détaillé côté frontend.
 
 ## Technologies
 
@@ -858,6 +859,7 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Client Aspiturf enrichi avec agrégateurs (classements, tendances, séries, distributions, forme, comparaisons, calendrier) et stubs de tests
 - [x] Suite de tests FastAPI couvrant recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier
 - [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
+- [x] Ajout des modules `/analytics/value`, `/volatility`, `/momentum` et `/workload` avec UI dédiée (value bets, dispersion, momentum, charge de travail)
 
 ### Sprint 7 (Planifié)
 - [ ] Service Telegram pour notifications

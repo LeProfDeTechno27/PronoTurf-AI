@@ -245,6 +245,43 @@ export interface AnalyticsVolatilityResponse {
   races: VolatilityRaceSample[]
 }
 
+export interface WorkloadTimelineEntry {
+  date?: string | null
+  hippodrome?: string | null
+  course_number?: number | null
+  distance?: number | null
+  final_position?: number | null
+  rest_days?: number | null
+  odds?: number | null
+  is_win: boolean
+  is_podium: boolean
+}
+
+export interface WorkloadSummary {
+  sample_size: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_rest_days?: number | null
+  median_rest_days?: number | null
+  shortest_rest_days?: number | null
+  longest_rest_days?: number | null
+  races_last_30_days: number
+  races_last_90_days: number
+  average_monthly_races?: number | null
+  rest_distribution: Record<string, number>
+}
+
+export interface AnalyticsWorkloadResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  summary: WorkloadSummary
+  timeline: WorkloadTimelineEntry[]
+}
+
 export interface MomentumSlice {
   label: string
   start_date?: string | null

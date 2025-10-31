@@ -1653,6 +1653,72 @@ async def test_volatility_endpoint_returns_404_on_missing_data(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_workload_endpoint_returns_activity_metrics(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/workload",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_id"] == "H-3"
+    assert payload["summary"]["sample_size"] == 6
+    assert payload["summary"]["wins"] == 2
+    assert payload["summary"]["podiums"] == 3
+    assert payload["summary"]["win_rate"] == pytest.approx(0.3333, rel=1e-3)
+    assert payload["summary"]["average_rest_days"] == pytest.approx(27.4, rel=1e-3)
+    assert payload["summary"]["median_rest_days"] == pytest.approx(16.0, rel=1e-3)
+    assert payload["summary"]["rest_distribution"] == {
+        "15-30 jours": 4,
+        "60+ jours": 1,
+    }
+
+    metadata = payload["metadata"]
+    assert metadata["date_start"] == "2024-03-05"
+    assert metadata["date_end"] == "2024-07-20"
+
+    timeline = payload["timeline"]
+    assert timeline[0]["date"] == "2024-07-20"
+    assert timeline[0]["rest_days"] == 15
+    assert timeline[-1]["date"] == "2024-03-05"
+    assert timeline[-1]["rest_days"] is None
+
+
+@pytest.mark.anyio("asyncio")
+async def test_workload_endpoint_validates_dates(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/workload",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-07-01",
+            "end_date": "2024-06-01",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio("asyncio")
+async def test_workload_endpoint_returns_404_on_missing_data(
+    analytics_client: AsyncClient,
+):
+    response = await analytics_client.get(
+        "/api/v1/analytics/workload",
+        params={
+            "entity_type": "jockey",
+            "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio("asyncio")
 async def test_momentum_endpoint_returns_comparative_windows(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/momentum",

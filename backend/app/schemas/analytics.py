@@ -2,7 +2,7 @@
 
 from enum import Enum
 from datetime import date as date_type
-from typing import List, Optional, Literal
+from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -906,6 +906,126 @@ class AnalyticsVolatilityResponse(BaseModel):
     races: List[VolatilityRaceSample] = Field(
         default_factory=list,
         description="Liste des courses retenues, triées par date décroissante",
+    )
+
+
+class WorkloadTimelineEntry(BaseModel):
+    """Course annotée du repos observé avant l'engagement."""
+
+    date: Optional[date_type] = Field(
+        default=None, description="Date de la course étudiée",
+    )
+    hippodrome: Optional[str] = Field(
+        default=None, description="Hippodrome ayant accueilli la course",
+    )
+    course_number: Optional[int] = Field(
+        default=None, description="Numéro officiel de la course dans la réunion",
+    )
+    distance: Optional[int] = Field(
+        default=None, description="Distance totale de l'épreuve en mètres",
+    )
+    final_position: Optional[int] = Field(
+        default=None, description="Classement final obtenu",
+    )
+    rest_days: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Nombre de jours de repos depuis la participation précédente",
+    )
+    odds: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote directe observée (si disponible)",
+    )
+    is_win: bool = Field(
+        default=False,
+        description="Indique si l'entité a remporté la course",
+    )
+    is_podium: bool = Field(
+        default=False,
+        description="Indique si l'entité a terminé sur le podium",
+    )
+
+
+class WorkloadSummary(BaseModel):
+    """Synthèse d'activité calculée sur l'historique d'une entité."""
+
+    sample_size: int = Field(
+        ..., ge=0, description="Nombre de courses retenues dans la période",
+    )
+    wins: int = Field(..., ge=0, description="Nombre de victoires dans la période")
+    podiums: int = Field(
+        ..., ge=0, description="Nombre de podiums (top 3) sur la période",
+    )
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire rapporté à l'échantillon",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium rapporté à l'échantillon",
+    )
+    average_rest_days: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Repos moyen observé entre deux participations",
+    )
+    median_rest_days: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Repos médian observé entre deux participations",
+    )
+    shortest_rest_days: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Plus court repos observé",
+    )
+    longest_rest_days: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Plus long repos observé",
+    )
+    races_last_30_days: int = Field(
+        ..., ge=0, description="Courses disputées sur les 30 derniers jours",
+    )
+    races_last_90_days: int = Field(
+        ..., ge=0, description="Courses disputées sur les 90 derniers jours",
+    )
+    average_monthly_races: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Fréquence moyenne de participation (courses/mois)",
+    )
+    rest_distribution: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Répartition du repos par tranches (ex: '0-7 jours': 3)",
+    )
+
+
+class AnalyticsWorkloadResponse(BaseModel):
+    """Réponse structurée pour l'endpoint `/analytics/workload`."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)",
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible correspondant à l'entité",
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées globales sur l'échantillon considéré",
+    )
+    summary: WorkloadSummary = Field(
+        ..., description="Synthèse d'activité et d'espacement entre les courses",
+    )
+    timeline: List[WorkloadTimelineEntry] = Field(
+        default_factory=list,
+        description="Chronologie annotée des courses analysées",
     )
 
 

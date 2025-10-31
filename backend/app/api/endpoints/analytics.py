@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from itertools import combinations
 from statistics import mean, median, pstdev
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
@@ -24,6 +24,7 @@ from app.schemas.analytics import (
     AnalyticsCalendarResponse,
     AnalyticsValueResponse,
     AnalyticsVolatilityResponse,
+    AnalyticsWorkloadResponse,
     DistributionBucket,
     DistributionDimension,
     FormRace,
@@ -47,6 +48,8 @@ from app.schemas.analytics import (
     ValueOpportunitySample,
     VolatilityMetrics,
     VolatilityRaceSample,
+    WorkloadSummary,
+    WorkloadTimelineEntry,
     TrainerAnalyticsResponse,
     TrendEntityType,
     TrendGranularity,
@@ -159,6 +162,20 @@ def _parse_float(value: Any) -> Optional[float]:
         except ValueError:
             return None
     return None
+
+
+def _rest_bucket(rest_days: int) -> str:
+    """Regroupe un nombre de jours de repos dans une tranche lisible."""
+
+    if rest_days <= 7:
+        return "0-7 jours"
+    if rest_days <= 14:
+        return "8-14 jours"
+    if rest_days <= 30:
+        return "15-30 jours"
+    if rest_days <= 60:
+        return "31-60 jours"
+    return "60+ jours"
 
 
 def _is_win(row: Dict[str, Any]) -> bool:
@@ -1325,6 +1342,189 @@ async def get_volatility_profile(
         metadata=metadata,
         metrics=metrics,
         races=race_samples,
+    )
+
+
+@router.get(
+    "/workload",
+    response_model=AnalyticsWorkloadResponse,
+    summary="Mesurer la charge de travail et les temps de repos d'une entité",
+    description=(
+        "Analyse les espacements entre les courses successives pour un cheval, un jockey ou un "
+        "entraîneur afin de dégager des tendances d'activité (repos moyens, pics de participation)."
+    ),
+)
+async def get_workload_profile(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date"
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date"
+    ),
+) -> AnalyticsWorkloadResponse:
+    """Calcule les rythmes de participation récents d'une entité Aspiturf."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    # Tri chronologique pour pouvoir mesurer l'écart de jours entre deux engagements successifs.
+    rows.sort(
+        key=lambda item: (
+            item.get("jour") if isinstance(item.get("jour"), date) else date.min,
+            item.get("prix") if isinstance(item.get("prix"), int) else -1,
+        )
+    )
+
+    label_fields: Tuple[str, ...]
+    if entity_type == TrendEntityType.HORSE:
+        label_fields = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(rows, label_fields)
+
+    wins = sum(1 for row in rows if _is_win(row))
+    podiums = sum(1 for row in rows if _is_podium(row))
+    sample_size = len(rows)
+
+    rest_values: List[int] = []
+    rest_distribution: Dict[str, int] = {}
+    timeline_entries: List[WorkloadTimelineEntry] = []
+    race_dates: List[date] = []
+    previous_date: Optional[date] = None
+
+    for row in rows:
+        race_date_value = row.get("jour")
+        race_date = race_date_value if isinstance(race_date_value, date) else None
+        if race_date is not None:
+            race_dates.append(race_date)
+
+        rest_days: Optional[int] = None
+        if race_date is not None and previous_date is not None:
+            delta_days = (race_date - previous_date).days
+            if delta_days >= 0:
+                rest_days = delta_days
+                rest_values.append(delta_days)
+                bucket = _rest_bucket(delta_days)
+                rest_distribution[bucket] = rest_distribution.get(bucket, 0) + 1
+
+        if race_date is not None:
+            previous_date = race_date
+
+        timeline_entries.append(
+            WorkloadTimelineEntry(
+                date=race_date,
+                hippodrome=row.get("hippo"),
+                course_number=row.get("prix") if isinstance(row.get("prix"), int) else None,
+                distance=row.get("dist") if isinstance(row.get("dist"), int) else None,
+                final_position=row.get("cl") if isinstance(row.get("cl"), int) else None,
+                rest_days=rest_days,
+                odds=_parse_float(row.get("cotedirect") or row.get("cote_direct")),
+                is_win=_is_win(row),
+                is_podium=_is_podium(row),
+            )
+        )
+
+    first_date = min(race_dates) if race_dates else None
+    last_date = max(race_dates) if race_dates else None
+
+    races_last_30 = 0
+    races_last_90 = 0
+    if last_date is not None:
+        thirty_limit = last_date - timedelta(days=30)
+        ninety_limit = last_date - timedelta(days=90)
+        for race_date in race_dates:
+            if race_date >= thirty_limit:
+                races_last_30 += 1
+            if race_date >= ninety_limit:
+                races_last_90 += 1
+
+    average_rest = _safe_mean(rest_values)
+    median_rest = round(median(rest_values), 1) if rest_values else None
+    shortest_rest = min(rest_values) if rest_values else None
+    longest_rest = max(rest_values) if rest_values else None
+
+    average_monthly_races: Optional[float] = None
+    if first_date is not None and last_date is not None:
+        total_days = (last_date - first_date).days
+        months_span = max(total_days / 30.0, 1.0)
+        average_monthly_races = round(sample_size / months_span, 2)
+
+    ordered_distribution = {
+        label: rest_distribution[label]
+        for label in ("0-7 jours", "8-14 jours", "15-30 jours", "31-60 jours", "60+ jours")
+        if label in rest_distribution
+    }
+
+    summary = WorkloadSummary(
+        sample_size=sample_size,
+        wins=wins,
+        podiums=podiums,
+        win_rate=_safe_rate(wins, sample_size),
+        podium_rate=_safe_rate(podiums, sample_size),
+        average_rest_days=average_rest,
+        median_rest_days=median_rest,
+        shortest_rest_days=shortest_rest,
+        longest_rest_days=longest_rest,
+        races_last_30_days=races_last_30,
+        races_last_90_days=races_last_90,
+        average_monthly_races=average_monthly_races,
+        rest_distribution=ordered_distribution,
+    )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=first_date,
+        date_end=last_date,
+    )
+
+    timeline_entries.sort(
+        key=lambda entry: (
+            entry.date if isinstance(entry.date, date) else date.min,
+            entry.course_number or -1,
+        ),
+        reverse=True,
+    )
+
+    return AnalyticsWorkloadResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        summary=summary,
+        timeline=timeline_entries,
     )
 
 
