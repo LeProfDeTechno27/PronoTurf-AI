@@ -1113,6 +1113,53 @@ def _summarise_model_version_performance(
     return version_metrics
 
 
+def _categorise_field_size(field_size: Optional[int]) -> str:
+    """Regroupe les tailles de champs en segments homogènes pour l'analyse."""
+
+    if not field_size:
+        return "unknown"
+
+    if field_size <= 8:
+        return "small_field"
+
+    if field_size <= 12:
+        return "medium_field"
+
+    return "large_field"
+
+
+def _summarise_field_size_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Évalue la précision du modèle selon la taille des pelotons rencontrés."""
+
+    if not breakdown:
+        return {}
+
+    field_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        field_sizes = [int(size) for size in payload.get("field_sizes", []) if size]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["average_field_size"] = _safe_average(field_sizes)
+        summary["min_field_size"] = min(field_sizes) if field_sizes else None
+        summary["max_field_size"] = max(field_sizes) if field_sizes else None
+
+        field_metrics[segment] = summary
+
+    return field_metrics
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -1194,6 +1241,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
+        field_size_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -1255,6 +1303,13 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "is_top3": bool(is_top3),
                 }
             )
+            # Stocke le nombre de partants observés afin de catégoriser ensuite
+            # les courses par taille de peloton (utile pour repérer les champs
+            # où le modèle excelle ou se dégrade).
+            course_entry["field_size"] = (
+                getattr(course, "number_of_runners", None)
+                or len(course_entry["predictions"])
+            )
 
             betting_samples.append(
                 {
@@ -1308,6 +1363,29 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             value_bet_bucket["predictions"].append(predicted_label)
             value_bet_bucket["scores"].append(probability)
             value_bet_bucket.setdefault("courses", set()).add(course.course_id)
+
+            field_size = course_entry.get("field_size")
+            field_segment = _categorise_field_size(
+                int(field_size) if field_size else None
+            )
+            field_bucket = field_size_breakdown.setdefault(
+                field_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "field_sizes": [],
+                },
+            )
+            field_bucket["truths"].append(is_top3)
+            field_bucket["predictions"].append(predicted_label)
+            field_bucket["scores"].append(probability)
+            courses_seen: Set[int] = field_bucket.setdefault("courses", set())
+            is_new_course = course.course_id not in courses_seen
+            courses_seen.add(course.course_id)
+            if field_size and is_new_course:
+                field_bucket.setdefault("field_sizes", []).append(int(field_size))
 
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
@@ -1492,6 +1570,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
+        field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         model_version_performance = _summarise_model_version_performance(
             model_version_breakdown,
             len(y_true),
@@ -1535,6 +1614,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
+            "field_size_performance": field_size_performance,
             "model_version_performance": model_version_performance,
         }
 
@@ -1564,6 +1644,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "surface_performance": surface_performance,
             "value_bet_performance": value_bet_performance,
+            "field_size_performance": field_size_performance,
             "model_version_performance": model_version_performance,
         }
 

@@ -113,7 +113,7 @@ def _seed_reference_data(db: Session) -> None:
         start_type=StartType.STALLE,
         scheduled_time=time(14, 0),
         status=CourseStatus.FINISHED,
-        number_of_runners=3,
+        number_of_runners=8,
     )
     course2 = Course(
         reunion_id=reunion.reunion_id,
@@ -128,7 +128,7 @@ def _seed_reference_data(db: Session) -> None:
         start_type=StartType.STALLE,
         scheduled_time=time(15, 0),
         status=CourseStatus.FINISHED,
-        number_of_runners=3,
+        number_of_runners=14,
     )
     db.add_all([course1, course2])
     db.flush()
@@ -489,6 +489,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert value_bet_performance["standard"]["samples"] == 3
     assert value_bet_performance["standard"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    field_size_performance = metrics["field_size_performance"]
+    assert set(field_size_performance.keys()) == {"large_field", "small_field"}
+    assert field_size_performance["small_field"]["samples"] == 3
+    assert field_size_performance["small_field"]["average_field_size"] == pytest.approx(8.0, abs=1e-6)
+    assert field_size_performance["large_field"]["samples"] == 3
+    assert field_size_performance["large_field"]["max_field_size"] == 14
+
     version_performance = metrics["model_version_performance"]
     assert set(version_performance.keys()) == {"v1.0", "v2.0"}
 
@@ -536,6 +543,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
