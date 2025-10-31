@@ -1,11 +1,11 @@
-"""
-Tâches Celery pour le Machine Learning et les prédictions
-"""
+"""Tâches Celery pour le Machine Learning et les prédictions."""
 
+import json
 import logging
-from datetime import date, datetime
+from collections import Counter
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -13,10 +13,24 @@ from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.ml.predictor import RacePredictionService
 from app.ml.training import ModelTrainer
-from app.models.course import Course
+from app.models.course import Course, CourseStatus
 from app.models.reunion import Reunion
 from app.models.pronostic import Pronostic
 from app.models.partant_prediction import PartantPrediction
+
+try:
+    from sklearn.metrics import (
+        accuracy_score,
+        confusion_matrix,
+        f1_score,
+        log_loss,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+    )
+except Exception:  # pragma: no cover - defensive import guard
+    accuracy_score = precision_score = recall_score = f1_score = roc_auc_score = log_loss = None
+    confusion_matrix = None
 
 logger = logging.getLogger(__name__)
 
@@ -141,44 +155,355 @@ def train_ml_model(
         db.close()
 
 
-@celery_app.task
-def update_model_performance(days_back: int = 7):
+def _safe_average(values: List[float]) -> Optional[float]:
+    """Retourne la moyenne d'une liste ou ``None`` si elle est vide."""
+
+    return sum(values) / len(values) if values else None
+
+
+def _build_calibration_table(
+    scores: List[float],
+    truths: List[int],
+    *,
+    bins: int = 5,
+) -> List[Dict[str, object]]:
+    """Construit un tableau de calibration par quantiles.
+
+    L'objectif est d'exposer à la fois le volume de prédictions par tranche et
+    l'écart éventuel entre probabilité moyenne et fréquence observée.
     """
-    Met à jour les métriques de performance du modèle ML
-    en évaluant ses prédictions sur les courses récentes
+
+    if not scores or not truths or len(scores) != len(truths):
+        return []
+
+    combined = sorted(zip(scores, truths), key=lambda item: item[0])
+    bucket_size = max(1, len(combined) // bins)
+
+    calibration_rows: List[Dict[str, object]] = []
+
+    for idx in range(bins):
+        start = idx * bucket_size
+        end = (idx + 1) * bucket_size if idx < bins - 1 else len(combined)
+
+        if start >= len(combined):
+            break
+
+        bucket = combined[start:end]
+        bucket_scores = [item[0] for item in bucket]
+        bucket_truths = [item[1] for item in bucket]
+
+        calibration_rows.append(
+            {
+                "bin": idx + 1,
+                "count": len(bucket),
+                "min_probability": min(bucket_scores),
+                "max_probability": max(bucket_scores),
+                "average_probability": _safe_average(bucket_scores),
+                "empirical_rate": _safe_average(bucket_truths),
+            }
+        )
+
+    return calibration_rows
+
+
+def _evaluate_threshold_grid(
+    scores: List[float],
+    truths: List[int],
+    thresholds: List[float],
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Calcule la sensibilité des métriques pour plusieurs seuils."""
+
+    if not scores or not truths:
+        return {}
+
+    evaluation: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for threshold in sorted(set(thresholds)):
+        predicted = [1 if score >= threshold else 0 for score in scores]
+
+        accuracy = precision = recall = f1 = None
+        if accuracy_score:
+            accuracy = accuracy_score(truths, predicted)
+            precision = precision_score(truths, predicted, zero_division=0)
+            recall = recall_score(truths, predicted, zero_division=0)
+            f1 = f1_score(truths, predicted, zero_division=0)
+
+        evaluation[f"{threshold:.2f}"] = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "positive_rate": sum(predicted) / len(predicted) if predicted else None,
+        }
+
+    return evaluation
+
+
+def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
+    """Convertit un champ JSON éventuel en dictionnaire python."""
+
+    if not payload:
+        return {}
+
+    if isinstance(payload, dict):
+        return dict(payload)
+
+    if isinstance(payload, str):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return {"raw": payload}
+
+    return {"raw": payload}
+
+
+@celery_app.task
+def update_model_performance(days_back: int = 7, probability_threshold: float = 0.3):
+    """Évalue les prédictions récentes et met à jour les métriques du modèle.
 
     Args:
-        days_back: Nombre de jours en arrière pour l'évaluation
+        days_back: Nombre de jours d'historique à prendre en compte.
+        probability_threshold: Seuil utilisé pour convertir une probabilité en label.
 
     Returns:
-        Dictionnaire avec les métriques de performance
+        Un dictionnaire détaillant les métriques calculées.
     """
+
     db = SessionLocal()
 
     try:
-        logger.info(f"Updating model performance metrics (last {days_back} days)")
+        logger.info(
+            "Updating model performance metrics (last %s days, threshold=%s)",
+            days_back,
+            probability_threshold,
+        )
 
-        # Récupérer les pronostics et résultats réels
-        from datetime import timedelta
+        from app.models.partant import Partant
+        from app.models.reunion import Reunion
+        from app.models.ml_model import MLModel
 
         cutoff_date = date.today() - timedelta(days=days_back)
+        cutoff_datetime = datetime.combine(cutoff_date, datetime.min.time())
 
-        # Comparer prédictions vs résultats réels
-        # TODO: Implémenter l'évaluation détaillée
+        predictions_with_results: List[Tuple[PartantPrediction, Partant, Pronostic, Course]] = (
+            db.query(PartantPrediction, Partant, Pronostic, Course)
+            .join(Partant, PartantPrediction.partant_id == Partant.partant_id)
+            .join(Pronostic, PartantPrediction.pronostic_id == Pronostic.pronostic_id)
+            .join(Course, Pronostic.course_id == Course.course_id)
+            .join(Reunion, Course.reunion_id == Reunion.reunion_id)
+            .filter(
+                Reunion.reunion_date >= cutoff_date,
+                Partant.final_position.isnot(None),
+                Partant.disqualified.isnot(True),
+                PartantPrediction.win_probability.isnot(None),
+                Course.status == CourseStatus.FINISHED,
+                Pronostic.generated_at >= cutoff_datetime,
+            )
+            .all()
+        )
 
-        logger.info("Model performance updated successfully")
+        if not predictions_with_results:
+            logger.warning("No predictions with results found for evaluation window")
+            return {
+                "status": "no_data",
+                "days_evaluated": days_back,
+                "cutoff_date": cutoff_date.isoformat(),
+                "evaluated_samples": 0,
+                "message": "No predictions with associated race results in the given window",
+            }
+
+        y_true: List[int] = []
+        y_scores: List[float] = []
+        y_pred: List[int] = []
+        confidence_counter: Counter[str] = Counter()
+        model_versions: Counter[str] = Counter()
+        course_stats: Dict[int, Dict[str, object]] = {}
+
+        # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
+        # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
+        for prediction, partant, pronostic, course in predictions_with_results:
+            probability = float(prediction.win_probability)
+            probability = max(0.0, min(probability, 1.0))
+            is_top3 = 1 if partant.final_position and partant.final_position <= 3 else 0
+            predicted_label = 1 if probability >= probability_threshold else 0
+
+            y_true.append(is_top3)
+            y_scores.append(probability)
+            y_pred.append(predicted_label)
+
+            confidence_counter[prediction.confidence_level or "unknown"] += 1
+            model_versions[pronostic.model_version or "unknown"] += 1
+
+            course_entry = course_stats.setdefault(
+                course.course_id,
+                {
+                    "predictions": [],
+                    "value_bet_detected": bool(pronostic.value_bet_detected),
+                },
+            )
+
+            course_entry["predictions"].append(
+                {
+                    "probability": probability,
+                    "final_position": partant.final_position,
+                    "is_top3": bool(is_top3),
+                }
+            )
+
+        evaluation_timestamp = datetime.now().isoformat()
+
+        accuracy = precision = recall = f1 = roc_auc = logloss = None
+        if accuracy_score:
+            accuracy = accuracy_score(y_true, y_pred)
+            precision = precision_score(y_true, y_pred, zero_division=0)
+            recall = recall_score(y_true, y_pred, zero_division=0)
+            f1 = f1_score(y_true, y_pred, zero_division=0)
+            if len(set(y_true)) > 1:
+                roc_auc = roc_auc_score(y_true, y_scores)
+            clipped_scores = [min(max(score, 1e-6), 1 - 1e-6) for score in y_scores]
+            try:
+                logloss = log_loss(y_true, clipped_scores)
+            except ValueError:
+                logloss = None
+
+        brier_score = sum((score - truth) ** 2 for score, truth in zip(y_scores, y_true)) / len(y_true)
+
+        cm = [
+            [0, 0],
+            [0, 0],
+        ]
+        if confusion_matrix:
+            cm = confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist()
+
+        positives = sum(y_pred)
+        negatives = len(y_pred) - positives
+
+        avg_positive_prob = _safe_average([score for score, label in zip(y_scores, y_pred) if label == 1])
+        avg_negative_prob = _safe_average([score for score, label in zip(y_scores, y_pred) if label == 0])
+
+        course_count = len(course_stats)
+        top1_correct = 0
+        top3_course_hits = 0
+        winner_probabilities: List[float] = []
+        top3_probabilities: List[float] = []
+
+        for data in course_stats.values():
+            predictions: List[Dict[str, object]] = data["predictions"]  # type: ignore[assignment]
+            sorted_predictions = sorted(predictions, key=lambda item: item["probability"], reverse=True)
+            if not sorted_predictions:
+                continue
+
+            winner_entry = next((item for item in sorted_predictions if item["final_position"] == 1), None)
+            if winner_entry:
+                winner_probabilities.append(float(winner_entry["probability"]))
+
+            top1 = sorted_predictions[0]
+            if top1.get("final_position") == 1:
+                top1_correct += 1
+
+            top3_predictions = sorted_predictions[:3]
+            if any(item.get("final_position") and int(item["final_position"]) <= 3 for item in top3_predictions):
+                top3_course_hits += 1
+
+            for item in sorted_predictions:
+                if item.get("final_position") and int(item["final_position"]) <= 3:
+                    top3_probabilities.append(float(item["probability"]))
+
+        calibration_table = _build_calibration_table(y_scores, y_true, bins=5)
+        threshold_grid = _evaluate_threshold_grid(
+            y_scores,
+            y_true,
+            thresholds=[0.2, probability_threshold, 0.4, 0.5],
+        )
+
+        metrics = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "roc_auc": roc_auc,
+            "log_loss": logloss,
+            "brier_score": brier_score,
+            "confusion_matrix": {
+                "true_negative": cm[0][0],
+                "false_positive": cm[0][1],
+                "false_negative": cm[1][0],
+                "true_positive": cm[1][1],
+            },
+            "positive_prediction_rate": positives / len(y_pred) if y_pred else 0.0,
+            "average_positive_probability": avg_positive_prob,
+            "average_negative_probability": avg_negative_prob,
+            "top1_accuracy": top1_correct / course_count if course_count else None,
+            "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
+            "average_winner_probability": _safe_average(winner_probabilities),
+            "average_top3_probability": _safe_average(top3_probabilities),
+            "calibration_table": calibration_table,
+            "threshold_sensitivity": threshold_grid,
+        }
+
+        confidence_distribution = {
+            level: confidence_counter[level]
+            for level in sorted(confidence_counter.keys())
+        }
+
+        evaluation_summary = {
+            "timestamp": evaluation_timestamp,
+            "days_back": days_back,
+            "probability_threshold": probability_threshold,
+            "samples": len(y_true),
+            "courses": course_count,
+            "metrics": metrics,
+            "confidence_distribution": confidence_distribution,
+            "model_version_breakdown": dict(model_versions),
+        }
+
+        active_model = (
+            db.query(MLModel)
+            .filter(MLModel.is_active.is_(True))
+            .order_by(MLModel.training_date.desc())
+            .first()
+        )
+
+        model_updated = False
+        if active_model:
+            active_model.accuracy = metrics["accuracy"]
+            active_model.precision_score = metrics["precision"]
+            active_model.recall_score = metrics["recall"]
+            active_model.f1_score = metrics["f1"]
+            active_model.roc_auc = metrics["roc_auc"]
+
+            existing_metrics = _coerce_metrics(active_model.performance_metrics)
+            history: List[Dict[str, object]] = existing_metrics.get("evaluation_history", [])  # type: ignore[assignment]
+            history.append(evaluation_summary)
+            existing_metrics["last_evaluation"] = evaluation_summary
+            existing_metrics["evaluation_history"] = history[-20:]
+            active_model.performance_metrics = existing_metrics
+
+            db.commit()
+            model_updated = True
+
+        logger.info("Model performance updated successfully (%s samples)", len(y_true))
 
         return {
             "status": "success",
             "days_evaluated": days_back,
-            "updated_at": datetime.now().isoformat()
+            "cutoff_date": cutoff_date.isoformat(),
+            "evaluated_samples": len(y_true),
+            "courses_evaluated": course_count,
+            "probability_threshold": probability_threshold,
+            "metrics": metrics,
+            "confidence_distribution": confidence_distribution,
+            "model_version_breakdown": dict(model_versions),
+            "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
+            "evaluation_timestamp": evaluation_timestamp,
+            "model_updated": model_updated,
         }
 
-    except Exception as e:
+    except Exception as e:  # pragma: no cover - defensive logging
         logger.error(f"Error updating model performance: {e}", exc_info=True)
         return {
             "status": "error",
-            "message": str(e)
+            "message": str(e),
         }
 
     finally:
