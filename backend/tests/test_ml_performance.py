@@ -384,6 +384,22 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert betting_value["best_value_candidates"][0]["edge"] == pytest.approx(0.2571428, rel=1e-3)
     assert betting_value["best_value_candidates"][0]["won"] is False
 
+    odds_alignment = metrics["odds_alignment"]
+    assert odds_alignment["priced_samples"] == 6
+    assert odds_alignment["usable_samples"] == 6
+    assert odds_alignment["pearson_correlation"] == pytest.approx(0.765364, rel=1e-3)
+    assert odds_alignment["mean_probability_gap"] == pytest.approx(0.140331, rel=1e-3)
+    assert odds_alignment["mean_absolute_error"] == pytest.approx(0.140331, rel=1e-3)
+    assert odds_alignment["root_mean_squared_error"] == pytest.approx(0.1624147, rel=1e-3)
+    assert odds_alignment["average_predicted_probability"] == pytest.approx(1 / 3, rel=1e-3)
+    assert odds_alignment["average_implied_probability"] == pytest.approx(0.1930014, rel=1e-3)
+    assert odds_alignment["average_overround"] == pytest.approx(-0.4209956, rel=1e-3)
+    assert odds_alignment["median_overround"] == pytest.approx(-0.4209956, rel=1e-3)
+    assert odds_alignment["courses_with_overlay"] == 2
+    assert len(odds_alignment["course_overrounds"]) == 2
+    assert odds_alignment["course_overrounds"][0]["overround"] == pytest.approx(-1 / 3, rel=1e-3)
+    assert odds_alignment["course_overrounds"][0]["runner_count"] == 3
+
     pr_curve = metrics["precision_recall_curve"]
     assert len(pr_curve) == 7
     assert pr_curve[0]["threshold"] == pytest.approx(0.15, rel=1e-3)
@@ -486,6 +502,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]

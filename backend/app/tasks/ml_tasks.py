@@ -4,7 +4,7 @@ import json
 import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
-from math import ceil
+from math import ceil, sqrt
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -683,6 +683,168 @@ def _summarise_threshold_recommendations(
     }
 
 
+def _analyse_odds_alignment(
+    samples: List[Dict[str, object]]
+) -> Dict[str, object]:
+    """Quantifie l'alignement entre les probabilités projetées et les cotes publiques."""
+
+    def _empty_payload(priced_count: int = 0) -> Dict[str, object]:
+        """Construit une réponse neutre lorsque les données sont insuffisantes."""
+
+        return {
+            "priced_samples": priced_count,
+            "usable_samples": 0,
+            "pearson_correlation": None,
+            "mean_probability_gap": None,
+            "mean_absolute_error": None,
+            "root_mean_squared_error": None,
+            "average_predicted_probability": None,
+            "average_implied_probability": None,
+            "average_overround": None,
+            "median_overround": None,
+            "courses_with_overlay": 0,
+            "course_overrounds": [],
+        }
+
+    if not samples:
+        return _empty_payload(0)
+
+    priced_samples = [
+        sample
+        for sample in samples
+        if sample.get("odds") is not None and float(sample.get("odds", 0.0)) > 0.0
+    ]
+
+    if not priced_samples:
+        return _empty_payload(0)
+
+    predicted_probabilities: List[float] = []
+    implied_probabilities: List[float] = []
+    course_implied_map: Dict[object, List[float]] = {}
+
+    for sample in priced_samples:
+        probability = float(sample.get("probability", 0.0))
+        odds = float(sample.get("odds", 0.0))
+
+        if odds <= 0.0:
+            # Les cotes nulles ou négatives ne peuvent pas être converties en probabilité implicite.
+            continue
+
+        implied_probability = 1.0 / odds
+
+        predicted_probabilities.append(probability)
+        implied_probabilities.append(implied_probability)
+
+        course_id = sample.get("course_id")
+        course_implied_map.setdefault(course_id, []).append(implied_probability)
+
+    usable_samples = len(predicted_probabilities)
+    if usable_samples == 0:
+        # Si toutes les entrées avaient des cotes invalides, on reste sur un retour neutre.
+        return _empty_payload(len(priced_samples))
+
+    # Moyennes et écarts moyens pour visualiser l'écart général au marché.
+    mean_gap = sum(
+        probability - implied
+        for probability, implied in zip(predicted_probabilities, implied_probabilities)
+    ) / usable_samples
+
+    mean_absolute_error = sum(
+        abs(probability - implied)
+        for probability, implied in zip(predicted_probabilities, implied_probabilities)
+    ) / usable_samples
+
+    root_mean_squared_error = sqrt(
+        sum(
+            (probability - implied) ** 2
+            for probability, implied in zip(predicted_probabilities, implied_probabilities)
+        )
+        / usable_samples
+    )
+
+    average_predicted_probability = sum(predicted_probabilities) / usable_samples
+    average_implied_probability = sum(implied_probabilities) / usable_samples
+
+    # Calcul de la corrélation de Pearson pour mesurer la cohérence du classement proposé
+    # par rapport aux cotes publiées.
+    mean_predicted = average_predicted_probability
+    mean_implied = average_implied_probability
+
+    numerator = sum(
+        (probability - mean_predicted) * (implied - mean_implied)
+        for probability, implied in zip(predicted_probabilities, implied_probabilities)
+    )
+    denominator_predicted = sum(
+        (probability - mean_predicted) ** 2 for probability in predicted_probabilities
+    )
+    denominator_implied = sum(
+        (implied - mean_implied) ** 2 for implied in implied_probabilities
+    )
+
+    if denominator_predicted <= 0.0 or denominator_implied <= 0.0:
+        pearson_correlation = None
+    else:
+        pearson_correlation = numerator / sqrt(denominator_predicted * denominator_implied)
+
+    course_overrounds: List[Dict[str, object]] = []
+    overround_values: List[float] = []
+
+    for course_id, implied_values in course_implied_map.items():
+        total_implied = sum(implied_values)
+        overround = total_implied - 1.0
+        overround_values.append(overround)
+        course_overrounds.append(
+            {
+                "course_id": course_id,
+                "runner_count": len(implied_values),
+                "implied_probability_sum": total_implied,
+                "overround": overround,
+            }
+        )
+
+    def _course_sort_key(entry: Dict[str, object]) -> Tuple[int, object]:
+        course_identifier = entry.get("course_id")
+        return (1, 0) if course_identifier is None else (0, course_identifier)
+
+    course_overrounds.sort(key=_course_sort_key)
+
+    courses_with_overlay = sum(1 for value in overround_values if value < 0.0)
+
+    average_overround = (
+        sum(overround_values) / len(overround_values)
+        if overround_values
+        else None
+    )
+
+    median_overround: Optional[float]
+    if not overround_values:
+        median_overround = None
+    else:
+        sorted_overrounds = sorted(overround_values)
+        mid = len(sorted_overrounds) // 2
+        if len(sorted_overrounds) % 2 == 1:
+            median_overround = sorted_overrounds[mid]
+        else:
+            median_overround = (
+                sorted_overrounds[mid - 1] + sorted_overrounds[mid]
+            ) / 2.0
+
+    return {
+        "priced_samples": len(priced_samples),
+        "usable_samples": usable_samples,
+        "pearson_correlation": pearson_correlation,
+        "mean_probability_gap": mean_gap,
+        "mean_absolute_error": mean_absolute_error,
+        "root_mean_squared_error": root_mean_squared_error,
+        "average_predicted_probability": average_predicted_probability,
+        "average_implied_probability": average_implied_probability,
+        "average_overround": average_overround,
+        "median_overround": median_overround,
+        "courses_with_overlay": courses_with_overlay,
+        "course_overrounds": course_overrounds,
+    }
+
+
 def _summarise_betting_value(
     samples: List[Dict[str, object]],
     threshold: float,
@@ -1207,6 +1369,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             probability_threshold,
         )
 
+        # Mesure l'alignement global avec le marché (corrélation et surcote)
+        # pour contextualiser les écarts du modèle par rapport aux bookmakers.
+        odds_alignment = _analyse_odds_alignment(betting_samples)
+
         # Fournit une vision cumulative du gain : en ne conservant que les
         # meilleures probabilités, quelle part des arrivées dans les 3 est
         # capturée ? Cette courbe complète la calibration en évaluant la
@@ -1302,6 +1468,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "threshold_sensitivity": threshold_grid,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
+            "odds_alignment": odds_alignment,
             "gain_curve": gain_curve,
             "lift_analysis": lift_analysis,
             "average_precision": average_precision,
@@ -1333,6 +1500,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
+            "odds_alignment": odds_alignment,
             "lift_analysis": lift_analysis,
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
@@ -1382,6 +1550,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
+            "odds_alignment": odds_alignment,
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),

@@ -49,6 +49,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Chronologie quotidienne des performances** : un tableau `daily_performance` récapitule chaque journée analysée (volumétrie, précision, rappel, part de paris à valeur) pour repérer d'éventuelles dérives temporelles ou effets de calendrier sans quitter le tableau de bord.
 - **Vue segmentée par discipline/surface/value bet** : les métriques clés sont désormais ventilées par discipline hippique, type de surface et présence d'un pari de valeur détecté pour cibler immédiatement les contextes où le modèle décroche.
 - **Analyse de rentabilité des paris** : une synthèse `betting_value_analysis` confronte les probabilités du modèle aux cotes PMU pour dériver ROI réalisé, espérance de gain théorique, écart moyen probabilité/cote et top 3 des opportunités offrant la meilleure valeur attendue.
+- **Alignement aux cotes publiques** : l'analyse `odds_alignment` mesure la corrélation avec les cotes, l'écart moyen modèle/marché et l'overround par course afin de détecter les segments où le modèle s'écarte significativement du marché PMU.
 
 ## Technologies
 
