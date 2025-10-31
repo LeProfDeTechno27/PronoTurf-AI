@@ -826,7 +826,7 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Client Aspiturf avec parsing CSV
 - [x] PMUService refactorisé avec fallback
 - [x] Script de test complet
-- [ ] Intégration avec pipeline ML (features Aspiturf)
+- [x] Intégration avec pipeline ML (features Aspiturf)
 - [ ] Endpoints API pour statistiques enrichies
 - [ ] Dashboard avec métriques Aspiturf
 
