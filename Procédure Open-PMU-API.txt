@@ -1,0 +1,672 @@
+Procédure Open-PMU-API
+
+Comment utiliser open-pmu-api pour compléter les données Turfinfo API
+
+L'API open-pmu-api est parfaitement complémentaire à Turfinfo API dans votre application Prono_Gold. Voici comment les intégrer ensemble pour un système complet de pronostics hippiques.
+
+Vue d'ensemble : Complémentarité des deux API
+
+Turfinfo API : Données AVANT la course
+•	Programme des réunions et courses du jour
+•	Informations détaillées des partants (chevaux, jockeys, entraîneurs)
+•	Musique et historique des performances
+•	Cotes probables
+
+Open-PMU-API : Données APRÈS la course
+•	Arrivées officielles définitives
+•	Rapports PMU complets (tous types de paris)
+•	Non-partants
+•	Historique fiable des résultats
+
+Intégration dans votre architecture Prono_Gold
+Étape 1 : Créer le client Open-PMU-API
+Ajoutez un nouveau fichier backend/app/services/open_pmu_client.py:
+python
+# backend/app/services/open_pmu_client.py
+import httpx
+import logging
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type
+)
+
+logger = logging.getLogger(__name__)
+
+class OpenPmuClient:
+    """
+    Client asynchrone pour l'API open-pmu-api
+    Fournit les résultats officiels des courses PMU
+    """
+    
+    BASE_URL = "https://open-pmu-api.vercel.app/api"
+    
+    def __init__(self, timeout: int = 30, max_retries: int = 3):
+        """
+        Initialise le client Open-PMU
+        
+        Args:
+            timeout: Timeout des requêtes HTTP en secondes
+            max_retries: Nombre maximum de tentatives
+        """
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._client: Optional[httpx.AsyncClient] = None
+        
+    async def __aenter__(self):
+        """Context manager entry"""
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout),
+            follow_redirects=True
+        )
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        if self._client:
+            await self._client.aclose()
+    
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10)
+    )
+    async def _make_request(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Effectue une requête HTTP avec retry
+        
+        Args:
+            endpoint: Endpoint de l'API (ex: "arrivees")
+            params: Paramètres query string
+            
+        Returns:
+            Données JSON décodées
+        """
+        if not self._client:
+            raise RuntimeError("Client non initialisé")
+            
+        url = f"{self.BASE_URL}/{endpoint}"
+        
+        try:
+            response = await self._client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur HTTP {e.response.status_code} pour {url}: {e}")
+            raise
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout pour {url}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Erreur inattendue pour {url}: {e}")
+            raise
+    
+    async def get_arrivees_by_date(
+        self,
+        date: datetime
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère toutes les arrivées d'une date
+        
+        Args:
+            date: Date des courses (format DD/MM/YYYY pour l'API)
+            
+        Returns:
+            Liste des arrivées avec rapports PMU
+            
+        Example:
+            >>> async with OpenPmuClient() as client:
+            ...     arrivees = await client.get_arrivees_by_date(
+            ...         datetime(2025, 10, 27)
+            ...     )
+        """
+        # Format attendu par l'API: DD/MM/YYYY
+        date_str = date.strftime("%d/%m/%Y")
+        
+        logger.info(f"Récupération arrivées open-pmu pour {date_str}")
+        
+        data = await self._make_request(
+            "arrivees",
+            params={"date": date_str}
+        )
+        
+        return data.get("arrivees", [])
+    
+    async def get_arrivees_by_hippodrome(
+        self,
+        hippodrome: str,
+        date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère les arrivées d'un hippodrome spécifique
+        
+        Args:
+            hippodrome: Nom de l'hippodrome (ex: "Vincennes")
+            date: Date optionnelle (défaut: aujourd'hui)
+            
+        Returns:
+            Liste des arrivées filtrées par hippodrome
+        """
+        if date is None:
+            date = datetime.now()
+            
+        date_str = date.strftime("%d/%m/%Y")
+        
+        logger.info(
+            f"Récupération arrivées open-pmu pour "
+            f"{hippodrome} le {date_str}"
+        )
+        
+        data = await self._make_request(
+            "arrivees",
+            params={
+                "date": date_str,
+                "hippo": hippodrome
+            }
+        )
+        
+        return data.get("arrivees", [])
+    
+    async def get_arrivees_by_prix(
+        self,
+        prix: str,
+        date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère les arrivées d'un prix spécifique
+        
+        Args:
+            prix: Nom du prix (ex: "Prix de Cornulier")
+            date: Date optionnelle
+            
+        Returns:
+            Liste des arrivées du prix
+        """
+        if date is None:
+            date = datetime.now()
+            
+        date_str = date.strftime("%d/%m/%Y")
+        
+        logger.info(f"Récupération arrivées open-pmu pour {prix}")
+        
+        data = await self._make_request(
+            "arrivees",
+            params={
+                "date": date_str,
+                "prix": prix
+            }
+        )
+        
+        return data.get("arrivees", [])
+Étape 2 : Service d'intégration des résultats
+Créez backend/app/services/results_integration.py pour combiner les deux API:
+python
+# backend/app/services/results_integration.py
+import logging
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from app.models.models import Race, Runner, ExternalAPICache
+from app.services.open_pmu_client import OpenPmuClient
+from app.services.turfinfo_client import TurfinfoClient
+import json
+
+logger = logging.getLogger(__name__)
+
+class ResultsIntegrationService:
+    """
+    Service pour synchroniser les résultats open-pmu 
+    avec les données Turfinfo stockées
+    """
+    
+    def __init__(
+        self,
+        db: AsyncSession,
+        open_pmu_client: OpenPmuClient,
+        turfinfo_client: Optional[TurfinfoClient] = None
+    ):
+        self.db = db
+        self.open_pmu = open_pmu_client
+        self.turfinfo = turfinfo_client
+    
+    async def sync_results_for_date(
+        self,
+        date: datetime
+    ) -> Dict[str, Any]:
+        """
+        Synchronise tous les résultats d'une journée
+        
+        Args:
+            date: Date à synchroniser
+            
+        Returns:
+            Statistiques de synchronisation
+        """
+        logger.info(f"Début synchronisation résultats pour {date.date()}")
+        
+        stats = {
+            "date": date.date().isoformat(),
+            "courses_updated": 0,
+            "runners_updated": 0,
+            "errors": []
+        }
+        
+        try:
+            # Récupérer les arrivées depuis open-pmu-api
+            arrivees = await self.open_pmu.get_arrivees_by_date(date)
+            
+            logger.info(f"Trouvé {len(arrivees)} arrivées dans open-pmu")
+            
+            for arrivee in arrivees:
+                try:
+                    await self._process_arrivee(arrivee, date, stats)
+                except Exception as e:
+                    error_msg = (
+                        f"Erreur traitement arrivée "
+                        f"R{arrivee.get('reunion')}C{arrivee.get('course')}: {e}"
+                    )
+                    logger.error(error_msg)
+                    stats["errors"].append(error_msg)
+            
+            await self.db.commit()
+            
+        except Exception as e:
+            logger.error(f"Erreur globale synchronisation: {e}")
+            await self.db.rollback()
+            stats["errors"].append(str(e))
+        
+        logger.info(
+            f"Synchronisation terminée: {stats['courses_updated']} courses, "
+            f"{stats['runners_updated']} partants mis à jour"
+        )
+        
+        return stats
+    
+    async def _process_arrivee(
+        self,
+        arrivee: Dict[str, Any],
+        date: datetime,
+        stats: Dict[str, Any]
+    ):
+        """
+        Traite une arrivée et met à jour la base de données
+        
+        Args:
+            arrivee: Données de l'arrivée depuis open-pmu
+            date: Date de la course
+            stats: Dictionnaire de statistiques à mettre à jour
+        """
+        reunion = arrivee.get("reunion")
+        course = arrivee.get("course")
+        
+        # Vérifier que la course existe en base
+        race_query = select(Race).where(
+            Race.date == date.date(),
+            Race.num_reunion == reunion,
+            Race.num_course == course
+        )
+        result = await self.db.execute(race_query)
+        race = result.scalar_one_or_none()
+        
+        if not race:
+            logger.warning(
+                f"Course R{reunion}C{course} introuvable en base - skip"
+            )
+            return
+        
+        # Mettre à jour le statut de la course
+        race.statut = "TERMINE"
+        race.arrivee_officielle = json.dumps(arrivee.get("arrivee", []))
+        race.arrivee_complete = json.dumps(arrivee.get("arrivee_complete", []))
+        race.non_partants = json.dumps(arrivee.get("non_partants", []))
+        race.rapports_pmu = json.dumps(arrivee.get("rapports", {}))
+        
+        stats["courses_updated"] += 1
+        
+        # Mettre à jour l'ordre d'arrivée des partants
+        arrivee_list = arrivee.get("arrivee_complete", [])
+        non_partants = arrivee.get("non_partants", [])
+        
+        for position, num_pmu_str in enumerate(arrivee_list, start=1):
+            num_pmu = int(num_pmu_str)
+            
+            stmt = (
+                update(Runner)
+                .where(
+                    Runner.date == date.date(),
+                    Runner.num_reunion == reunion,
+                    Runner.num_course == course,
+                    Runner.num_pmu == num_pmu
+                )
+                .values(
+                    ordre_arrivee=position,
+                    est_arrivee=True
+                )
+            )
+            await self.db.execute(stmt)
+            stats["runners_updated"] += 1
+        
+        # Marquer les non-partants
+        for num_pmu_str in non_partants:
+            num_pmu = int(num_pmu_str)
+            
+            stmt = (
+                update(Runner)
+                .where(
+                    Runner.date == date.date(),
+                    Runner.num_reunion == reunion,
+                    Runner.num_course == course,
+                    Runner.num_pmu == num_pmu
+                )
+                .values(
+                    est_non_partant=True,
+                    est_arrivee=False
+                )
+            )
+            await self.db.execute(stmt)
+    
+    async def get_race_complete_data(
+        self,
+        date: datetime,
+        num_reunion: int,
+        num_course: int
+    ) -> Dict[str, Any]:
+        """
+        Récupère les données complètes d'une course
+        (Turfinfo + résultats open-pmu)
+        
+        Args:
+            date: Date de la course
+            num_reunion: Numéro de réunion
+            num_course: Numéro de course
+            
+        Returns:
+            Données complètes avec partants et résultats
+        """
+        # Récupérer la course en base
+        race_query = select(Race).where(
+            Race.date == date.date(),
+            Race.num_reunion == num_reunion,
+            Race.num_course == num_course
+        )
+        result = await self.db.execute(race_query)
+        race = result.scalar_one_or_none()
+        
+        if not race:
+            raise ValueError(f"Course R{num_reunion}C{num_course} introuvable")
+        
+        # Récupérer les partants
+        runners_query = select(Runner).where(
+            Runner.date == date.date(),
+            Runner.num_reunion == num_reunion,
+            Runner.num_course == num_course
+        ).order_by(Runner.num_pmu)
+        
+        result = await self.db.execute(runners_query)
+        runners = result.scalars().all()
+        
+        # Construire la réponse complète
+        return {
+            "course": {
+                "date": race.date.isoformat(),
+                "reunion": race.num_reunion,
+                "course": race.num_course,
+                "heure_depart": race.heure_depart,
+                "libelle": race.libelle,
+                "discipline": race.discipline,
+                "distance": race.distance,
+                "statut": race.statut,
+                "arrivee_officielle": (
+                    json.loads(race.arrivee_officielle) 
+                    if race.arrivee_officielle else None
+                ),
+                "rapports_pmu": (
+                    json.loads(race.rapports_pmu)
+                    if race.rapports_pmu else None
+                )
+            },
+            "partants": [
+                {
+                    "num_pmu": r.num_pmu,
+                    "nom": r.nom,
+                    "age": r.age,
+                    "sexe": r.sexe,
+                    "driver": r.driver_nom,
+                    "entraineur": r.entraineur_nom,
+                    "musique": r.musique,
+                    "ordre_arrivee": r.ordre_arrivee,
+                    "est_non_partant": r.est_non_partant
+                }
+                for r in runners
+            ]
+        }
+Étape 3 : Ajouter les colonnes manquantes au modèle
+Mettez à jour backend/app/models/models.py:
+python
+# backend/app/models/models.py (ajouts)
+from sqlalchemy import Column, Integer, String, Date, Time, JSON, Boolean, Text
+
+class Race(Base):
+    __tablename__ = "races"
+    
+    # ... colonnes existantes ...
+    
+    # Nouvelles colonnes pour résultats
+    statut = Column(String(50), default="PROGRAMME")  # PROGRAMME, EN_COURS, TERMINE
+    arrivee_officielle = Column(JSON, nullable=True)  # Top 5 ['3', '7', '12', '1', '9']
+    arrivee_complete = Column(JSON, nullable=True)    # Tous les arrivés
+    non_partants = Column(JSON, nullable=True)        # Liste des non-partants
+    rapports_pmu = Column(JSON, nullable=True)        # Tous les rapports
+
+class Runner(Base):
+    __tablename__ = "runners"
+    
+    # ... colonnes existantes ...
+    
+    # Nouvelles colonnes pour résultats
+    ordre_arrivee = Column(Integer, nullable=True)    # Position à l'arrivée
+    est_arrivee = Column(Boolean, default=False)      # A terminé la course
+    est_non_partant = Column(Boolean, default=False)  # N'a pas couru
+Étape 4 : Créer l'endpoint API pour la synchronisation
+Ajoutez backend/app/api/v1/endpoints/results.py:
+python
+# backend/app/api/v1/endpoints/results.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, date
+from app.api.deps import get_db
+from app.services.open_pmu_client import OpenPmuClient
+from app.services.results_integration import ResultsIntegrationService
+from pydantic import BaseModel
+from typing import Optional
+
+router = APIRouter()
+
+class SyncResultsResponse(BaseModel):
+    """Modèle de réponse pour la synchronisation"""
+    date: str
+    courses_updated: int
+    runners_updated: int
+    errors: list
+
+@router.post("/sync/{date_course}", response_model=SyncResultsResponse)
+async def sync_results(
+    date_course: date,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Synchronise les résultats d'une journée depuis open-pmu-api
+    
+    Args:
+        date_course: Date au format YYYY-MM-DD
+        
+    Returns:
+        Statistiques de synchronisation
+    """
+    date_obj = datetime.combine(date_course, datetime.min.time())
+    
+    async with OpenPmuClient() as open_pmu_client:
+        service = ResultsIntegrationService(db, open_pmu_client)
+        stats = await service.sync_results_for_date(date_obj)
+    
+    return SyncResultsResponse(**stats)
+
+@router.get("/complete/{date_course}/R{num_reunion}/C{num_course}")
+async def get_complete_race_data(
+    date_course: date,
+    num_reunion: int,
+    num_course: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Récupère les données complètes d'une course
+    (partants Turfinfo + résultats open-pmu)
+    
+    Args:
+        date_course: Date de la course
+        num_reunion: Numéro de réunion
+        num_course: Numéro de course
+        
+    Returns:
+        Données complètes de la course avec résultats
+    """
+    date_obj = datetime.combine(date_course, datetime.min.time())
+    
+    async with OpenPmuClient() as open_pmu_client:
+        service = ResultsIntegrationService(db, open_pmu_client)
+        data = await service.get_race_complete_data(
+            date_obj, num_reunion, num_course
+        )
+    
+    return data
+Étape 5 : Planifier la synchronisation automatique
+Mettez à jour backend/app/scheduler.py:
+python
+# backend/app/scheduler.py (ajout)
+from app.services.open_pmu_client import OpenPmuClient
+from app.services.results_integration import ResultsIntegrationService
+
+async def scheduled_results_sync():
+    """
+    Job planifié pour synchroniser les résultats
+    S'exécute toutes les heures de 8h à 23h
+    """
+    logger.info("Démarrage synchronisation résultats open-pmu")
+    
+    async with AsyncSessionLocal() as db:
+        async with OpenPmuClient() as open_pmu:
+            service = ResultsIntegrationService(db, open_pmu)
+            
+            # Synchroniser aujourd'hui
+            stats = await service.sync_results_for_date(datetime.now())
+            
+            logger.info(
+                f"Sync résultats: {stats['courses_updated']} courses, "
+                f"{stats['runners_updated']} partants"
+            )
+
+def start_scheduler():
+    """Démarre le scheduler avec les jobs configurés"""
+    
+    # ... jobs existants ...
+    
+    # Synchronisation résultats toutes les heures de 8h à 23h
+    scheduler.add_job(
+        scheduled_results_sync,
+        trigger="cron",
+        hour="8-23",
+        minute=15,
+        id="sync_results_hourly",
+        replace_existing=True
+    )
+    
+    scheduler.start()
+Étape 6 : Configuration environnement
+Mettez à jour .env et docker-compose.yml:
+bash
+# .env
+# API Turfinfo
+TURFINFO_API_URL=https://offline.turfinfo.api.pmu.fr
+TURFINFO_CACHE_TTL_MINUTES=60
+
+# API Open-PMU
+OPEN_PMU_API_URL=https://open-pmu-api.vercel.app/api
+OPEN_PMU_CACHE_TTL_MINUTES=1440  # 24h pour résultats (données stables)
+OPEN_PMU_TIMEOUT_SECONDS=30
+Étape 7 : Tests d'intégration
+Créez backend/tests/test_results_integration.py:
+python
+# backend/tests/test_results_integration.py
+import pytest
+from datetime import datetime
+from app.services.open_pmu_client import OpenPmuClient
+
+@pytest.mark.asyncio
+async def test_open_pmu_get_arrivees():
+    """Test récupération arrivées"""
+    async with OpenPmuClient() as client:
+        # Utiliser une date connue avec résultats
+        date = datetime(2025, 10, 27)
+        arrivees = await client.get_arrivees_by_date(date)
+        
+        assert isinstance(arrivees, list)
+        
+        if len(arrivees) > 0:
+            arrivee = arrivees[0]
+            assert "reunion" in arrivee
+            assert "course" in arrivee
+            assert "arrivee" in arrivee
+            assert "rapports" in arrivee
+
+@pytest.mark.asyncio
+async def test_integration_complete():
+    """Test workflow complet Turfinfo + open-pmu"""
+    # À implémenter selon votre architecture de tests
+    pass
+Utilisation pratique
+Workflow quotidien automatisé
+bash
+# 1. Le matin (6h): Ingestion Turfinfo
+# Récupère programme et partants
+# → Job APScheduler automatique
+
+# 2. Pendant la journée: Les courses se déroulent
+# Utilisateurs consultent pronostics
+
+# 3. Toutes les heures (8h-23h): Sync résultats open-pmu
+# Récupère arrivées et rapports
+# → Job APScheduler automatique
+
+# 4. Nuit: Entraînement modèle ML
+# Utilise résultats pour améliorer prédictions
+# → Job APScheduler automatique
+Appels manuels API
+bash
+# Synchroniser les résultats d'une journée
+curl -X POST http://localhost:8000/api/v1/results/sync/2025-10-27
+
+# Récupérer données complètes d'une course
+curl http://localhost:8000/api/v1/results/complete/2025-10-27/R1/C3
+Avantages de cette intégration
+Complémentarité parfaite : Turfinfo pour l'avant-course, open-pmu pour l'après-course
+
+Fiabilité : Résultats officiels PMU via open-pmu-api
+
+Gratuit : Les deux API sont libres d'accès
+
+Cache intelligent : Résultats stables cachés 24h, économise les appels
+
+ML amélioré : Historique complet pour entraîner vos modèles de prédiction
+
+Rapports complets : Tous types de paris PMU disponibles pour analyses
+
+Cette approche vous permet d'avoir un système complet de données hippiques, depuis la programmation jusqu'aux résultats finaux, tout en restant dans l'écosystème gratuit et open-source.

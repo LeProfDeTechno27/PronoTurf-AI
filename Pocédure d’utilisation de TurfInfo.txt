@@ -1,0 +1,770 @@
+Pocédure d’utilisation de TurfInfo API
+Turfinfo api (avant course), doc API :
+Étape 1 : Comprendre les endpoints Turfinfo disponibles
+Endpoints principaux
+
+Programme complet du jour :
+https://offline.turfinfo.api.pmu.fr/rest/client/7/programme/{JJMMAAAA}
+
+Partants d'une course spécifique :
+https://offline.turfinfo.api.pmu.fr/rest/client/7/programme/{JJMMAAAA}/R{num_reunion}/C{num_course}/participants
+
+Performances détaillées :
+https://online.turfinfo.api.pmu.fr/rest/client/61/programme/{JJMMAAAA}/R{num_reunion}/C{num_course}/performances-detaillees/pretty
+
+Rapports définitifs :
+https://online.turfinfo.api.pmu.fr/rest/client/1/programme/{JJMMAAAA}/R{num_reunion}/C{num_course}/rapports-definitifs
+
+Différence offline vs online
+
+    offline : données optimisées pour points de vente physiques (PMU, hippodromes)
+
+    online : données pour paris internet, souvent plus détaillées
+
+    
+
+Étape 2 : Créer le client HTTP asynchrone avec circuit breaker
+
+Créez un fichier backend/app/services/turfinfo_client.py en suivant les bonnes pratiques FastAPI:
+
+
+
+python
+# backend/app/services/turfinfo_client.py
+import httpx
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_log,
+    after_log
+)
+from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+class TurfinfoClient:
+    """Client asynchrone pour l'API Turfinfo avec circuit breaker et cache"""
+    
+    BASE_URL_OFFLINE = "https://offline.turfinfo.api.pmu.fr/rest/client/7"
+    BASE_URL_ONLINE = "https://online.turfinfo.api.pmu.fr/rest/client/61"
+    
+    def __init__(
+        self,
+        timeout: int = 30,
+        max_retries: int = 3,
+        cache_ttl_minutes: int = 60
+    ):
+        """
+        Initialise le client Turfinfo
+        
+        Args:
+            timeout: Timeout des requêtes HTTP en secondes
+            max_retries: Nombre maximum de tentatives
+            cache_ttl_minutes: Durée de vie du cache en minutes
+        """
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.cache_ttl_minutes = cache_ttl_minutes
+        self._client: Optional[httpx.AsyncClient] = None
+        
+    async def __aenter__(self):
+        """Context manager entry - crée le client HTTP"""
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout),
+            limits=httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=100
+            )
+        )
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ferme le client HTTP"""
+        if self._client:
+            await self._client.aclose()
+            
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before=before_log(logger, logging.INFO),
+        after=after_log(logger, logging.WARNING)
+    )
+    async def _make_request(self, url: str) -> Dict[str, Any]:
+        """
+        Effectue une requête HTTP avec retry et gestion d'erreurs
+        
+        Args:
+            url: URL complète de l'endpoint
+            
+        Returns:
+            Données JSON décodées
+            
+        Raises:
+            HTTPException: En cas d'erreur API
+        """
+        if not self._client:
+            raise RuntimeError("Client non initialisé. Utilisez le context manager.")
+            
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return response.json()
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur HTTP {e.response.status_code} pour {url}: {e}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Erreur API Turfinfo: {e.response.text}"
+            )
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout lors de l'appel à {url}: {e}")
+            raise HTTPException(
+                status_code=504,
+                detail="Timeout lors de la récupération des données Turfinfo"
+            )
+        except Exception as e:
+            logger.error(f"Erreur inattendue pour {url}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Erreur interne: {str(e)}"
+            )
+    
+    async def get_programme_jour(
+        self,
+        date: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Récupère le programme complet d'une journée
+        
+        Args:
+            date: Date du programme (par défaut aujourd'hui)
+            
+        Returns:
+            Données du programme avec réunions et courses
+        """
+        if date is None:
+            date = datetime.now()
+            
+        date_str = date.strftime("%d%m%Y")
+        url = f"{self.BASE_URL_OFFLINE}/programme/{date_str}"
+        
+        logger.info(f"Récupération programme du {date_str}")
+        return await self._make_request(url)
+    
+    async def get_partants_course(
+        self,
+        date: datetime,
+        num_reunion: int,
+        num_course: int
+    ) -> Dict[str, Any]:
+        """
+        Récupère les partants d'une course spécifique
+        
+        Args:
+            date: Date de la course
+            num_reunion: Numéro de la réunion (ex: 1 pour R1)
+            num_course: Numéro de la course (ex: 3 pour C3)
+            
+        Returns:
+            Liste des participants avec leurs données
+        """
+        date_str = date.strftime("%d%m%Y")
+        url = (
+            f"{self.BASE_URL_OFFLINE}/programme/{date_str}/"
+            f"R{num_reunion}/C{num_course}/participants"
+        )
+        
+        logger.info(f"Récupération partants {date_str} R{num_reunion}C{num_course}")
+        return await self._make_request(url)
+    
+    async def get_performances_detaillees(
+        self,
+        date: datetime,
+        num_reunion: int,
+        num_course: int
+    ) -> Dict[str, Any]:
+        """
+        Récupère les performances détaillées d'une course
+        
+        Args:
+            date: Date de la course
+            num_reunion: Numéro de la réunion
+            num_course: Numéro de la course
+            
+        Returns:
+            Performances détaillées des chevaux
+        """
+        date_str = date.strftime("%d%m%Y")
+        url = (
+            f"{self.BASE_URL_ONLINE}/programme/{date_str}/"
+            f"R{num_reunion}/C{num_course}/performances-detaillees/pretty"
+        )
+        
+        logger.info(
+            f"Récupération performances détaillées "
+            f"{date_str} R{num_reunion}C{num_course}"
+        )
+        return await self._make_request(url)
+    
+    async def get_rapports_definitifs(
+        self,
+        date: datetime,
+        num_reunion: int,
+        num_course: int
+    ) -> Dict[str, Any]:
+        """
+        Récupère les rapports définitifs (résultats) d'une course
+        
+        Args:
+            date: Date de la course
+            num_reunion: Numéro de la réunion
+            num_course: Numéro de la course
+            
+        Returns:
+            Rapports PMU (tiercé, quarté, quinté, etc.)
+        """
+        date_str = date.strftime("%d%m%Y")
+        url = (
+            f"{self.BASE_URL_ONLINE}/programme/{date_str}/"
+            f"R{num_reunion}/C{num_course}/rapports-definitifs"
+        )
+        
+        logger.info(
+            f"Récupération rapports définitifs "
+            f"{date_str} R{num_reunion}C{num_course}"
+        )
+        return await self._make_request(url)
+
+Étape 3 : Intégrer avec le système de cache existant
+
+Modifiez backend/app/services/ingestion.py pour utiliser votre cache persistant:
+
+
+
+python
+# backend/app/services/ingestion.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, insert
+from app.models.models import ExternalAPICache, Meeting, Race, Runner
+from app.services.turfinfo_client import TurfinfoClient
+from datetime import datetime, timedelta
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+async def get_or_fetch_programme(
+    db: AsyncSession,
+    date: datetime,
+    turfinfo_client: TurfinfoClient
+) -> dict:
+    """
+    Récupère le programme depuis le cache ou l'API Turfinfo
+    
+    Args:
+        db: Session SQLAlchemy async
+        date: Date du programme
+        turfinfo_client: Instance du client Turfinfo
+        
+    Returns:
+        Données du programme
+    """
+    date_str = date.strftime("%d%m%Y")
+    cache_key = f"turfinfo_programme_{date_str}"
+    
+    # Vérifier le cache
+    cache_query = select(ExternalAPICache).where(
+        ExternalAPICache.provider == "turfinfo",
+        ExternalAPICache.endpoint == f"/programme/{date_str}",
+        ExternalAPICache.expires_at > datetime.utcnow()
+    )
+    result = await db.execute(cache_query)
+    cached = result.scalar_one_or_none()
+    
+    if cached:
+        logger.info(f"Cache HIT pour programme {date_str}")
+        return json.loads(cached.response_data)
+    
+    # Appel API si pas de cache valide
+    logger.info(f"Cache MISS pour programme {date_str} - Appel API")
+    data = await turfinfo_client.get_programme_jour(date)
+    
+    # Stocker en cache
+    cache_entry = ExternalAPICache(
+        provider="turfinfo",
+        endpoint=f"/programme/{date_str}",
+        response_data=json.dumps(data),
+        expires_at=datetime.utcnow() + timedelta(
+            minutes=turfinfo_client.cache_ttl_minutes
+        ),
+        created_at=datetime.utcnow()
+    )
+    db.add(cache_entry)
+    await db.commit()
+    
+    return data
+
+async def ingest_daily_program(
+    db: AsyncSession,
+    date: Optional[datetime] = None
+):
+    """
+    Ingestion complète du programme du jour
+    
+    Args:
+        db: Session SQLAlchemy async
+        date: Date à ingérer (défaut: aujourd'hui)
+    """
+    if date is None:
+        date = datetime.now()
+        
+    async with TurfinfoClient() as client:
+        # Récupérer le programme complet
+        programme = await get_or_fetch_programme(db, date, client)
+        
+        # Parser et stocker les réunions
+        reunions = programme.get("programme", {}).get("reunions", [])
+        logger.info(f"Trouvé {len(reunions)} réunions pour le {date.date()}")
+        
+        for reunion in reunions:
+            # Créer/mettre à jour la réunion
+            meeting_data = {
+                "date": date.date(),
+                "num_officiel": reunion["numOfficiel"],
+                "hippodrome_code": reunion["hippodrome"]["code"],
+                "hippodrome_nom": reunion["hippodrome"]["libelleLong"]
+            }
+            
+            # Insérer la réunion
+            stmt = insert(Meeting).values(**meeting_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["date", "num_officiel"],
+                set_=meeting_data
+            )
+            await db.execute(stmt)
+            
+            # Traiter chaque course
+            courses = reunion.get("courses", [])
+            for course in courses:
+                await ingest_race_and_runners(
+                    db,
+                    client,
+                    date,
+                    reunion["numOfficiel"],
+                    course
+                )
+        
+        await db.commit()
+        logger.info(f"Ingestion terminée pour le {date.date()}")
+
+async def ingest_race_and_runners(
+    db: AsyncSession,
+    client: TurfinfoClient,
+    date: datetime,
+    num_reunion: int,
+    course_data: dict
+):
+    """
+    Ingère une course et ses partants
+    
+    Args:
+        db: Session SQLAlchemy async
+        client: Client Turfinfo
+        date: Date de la course
+        num_reunion: Numéro de réunion
+        course_data: Données de la course depuis le programme
+    """
+    num_course = course_data["numOrdre"]
+    
+    # Stocker la course
+    race_data = {
+        "date": date.date(),
+        "num_reunion": num_reunion,
+        "num_course": num_course,
+        "heure_depart": course_data.get("heureDepart"),
+        "libelle": course_data.get("libelle"),
+        "discipline": course_data.get("discipline"),
+        "distance": course_data.get("distance"),
+        "montant_prix": course_data.get("montantPrix"),
+        "nombre_partants": course_data.get("nombreDeclaresPartants")
+    }
+    
+    stmt = insert(Race).values(**race_data)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["date", "num_reunion", "num_course"],
+        set_=race_data
+    )
+    await db.execute(stmt)
+    
+    # Récupérer les partants détaillés
+    try:
+        partants_data = await client.get_partants_course(
+            date, num_reunion, num_course
+        )
+        
+        participants = partants_data.get("participants", [])
+        logger.info(
+            f"Ingestion de {len(participants)} partants "
+            f"pour R{num_reunion}C{num_course}"
+        )
+        
+        for participant in participants:
+            runner_data = {
+                "date": date.date(),
+                "num_reunion": num_reunion,
+                "num_course": num_course,
+                "num_pmu": participant.get("numPmu"),
+                "nom": participant.get("nom"),
+                "age": participant.get("age"),
+                "sexe": participant.get("sexe"),
+                "driver_nom": participant.get("driver", {}).get("nom"),
+                "entraineur_nom": participant.get("entraineur", {}).get("nom"),
+                "musique": participant.get("musique"),
+                "nombre_courses": participant.get("nombreCourses"),
+                "nombre_victoires": participant.get("nombreVictoires"),
+                "deferre": participant.get("deferre", False),
+                "oeilleres": participant.get("oeilleres", False)
+            }
+            
+            stmt = insert(Runner).values(**runner_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    "date", "num_reunion", "num_course", "num_pmu"
+                ],
+                set_=runner_data
+            )
+            await db.execute(stmt)
+            
+    except Exception as e:
+        logger.error(
+            f"Erreur lors de l'ingestion des partants "
+            f"R{num_reunion}C{num_course}: {e}"
+        )
+        # Continuer avec les autres courses malgré l'erreur
+
+Étape 4 : Créer les dépendances FastAPI
+
+Créez backend/app/api/deps.py pour l'injection de dépendances:
+
+
+
+python
+# backend/app/api/deps.py
+from typing import AsyncGenerator
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import AsyncSessionLocal
+from app.services.turfinfo_client import TurfinfoClient
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Générateur de session SQLAlchemy async
+    
+    Yields:
+        Session de base de données
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+async def get_turfinfo_client() -> AsyncGenerator[TurfinfoClient, None]:
+    """
+    Générateur de client Turfinfo
+    
+    Yields:
+        Client Turfinfo configuré
+    """
+    async with TurfinfoClient(
+        timeout=30,
+        max_retries=3,
+        cache_ttl_minutes=60
+    ) as client:
+        yield client
+
+Étape 5 : Créer les endpoints API
+
+Ajoutez backend/app/api/v1/endpoints/races.py:
+
+python
+# backend/app/api/v1/endpoints/races.py
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, date
+from typing import Optional, List
+from app.api.deps import get_db, get_turfinfo_client
+from app.services.turfinfo_client import TurfinfoClient
+from app.services.ingestion import get_or_fetch_programme
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class RaceInfo(BaseModel):
+    """Modèle de réponse pour une course"""
+    num_reunion: int
+    num_course: int
+    heure_depart: str
+    libelle: str
+    discipline: str
+    distance: int
+    nombre_partants: int
+    hippodrome: str
+
+class RunnerInfo(BaseModel):
+    """Modèle de réponse pour un partant"""
+    num_pmu: int
+    nom: str
+    age: int
+    sexe: str
+    driver: str
+    entraineur: str
+    musique: Optional[str]
+
+@router.get("/programme/{date_course}", response_model=List[RaceInfo])
+async def get_programme(
+    date_course: date,
+    db: AsyncSession = Depends(get_db),
+    client: TurfinfoClient = Depends(get_turfinfo_client)
+):
+    """
+    Récupère le programme complet d'une journée
+    
+    Args:
+        date_course: Date au format YYYY-MM-DD
+        
+    Returns:
+        Liste des courses de la journée
+    """
+    date_obj = datetime.combine(date_course, datetime.min.time())
+    programme = await get_or_fetch_programme(db, date_obj, client)
+    
+    races = []
+    for reunion in programme.get("programme", {}).get("reunions", []):
+        hippodrome = reunion["hippodrome"]["libelleLong"]
+        for course in reunion.get("courses", []):
+            races.append(
+                RaceInfo(
+                    num_reunion=reunion["numOfficiel"],
+                    num_course=course["numOrdre"],
+                    heure_depart=course.get("heureDepart", ""),
+                    libelle=course.get("libelle", ""),
+                    discipline=course.get("discipline", ""),
+                    distance=course.get("distance", 0),
+                    nombre_partants=course.get("nombreDeclaresPartants", 0),
+                    hippodrome=hippodrome
+                )
+            )
+    
+    return races
+
+@router.get(
+    "/partants/{date_course}/R{num_reunion}/C{num_course}",
+    response_model=List[RunnerInfo]
+)
+async def get_partants(
+    date_course: date,
+    num_reunion: int,
+    num_course: int,
+    client: TurfinfoClient = Depends(get_turfinfo_client)
+):
+    """
+    Récupère les partants d'une course spécifique
+    
+    Args:
+        date_course: Date de la course
+        num_reunion: Numéro de réunion
+        num_course: Numéro de course
+        
+    Returns:
+        Liste des partants avec leurs informations
+    """
+    date_obj = datetime.combine(date_course, datetime.min.time())
+    data = await client.get_partants_course(date_obj, num_reunion, num_course)
+    
+    runners = []
+    for p in data.get("participants", []):
+        runners.append(
+            RunnerInfo(
+                num_pmu=p.get("numPmu"),
+                nom=p.get("nom", ""),
+                age=p.get("age", 0),
+                sexe=p.get("sexe", ""),
+                driver=p.get("driver", {}).get("nom", ""),
+                entraineur=p.get("entraineur", {}).get("nom", ""),
+                musique=p.get("musique")
+            )
+        )
+    
+    return runners
+
+Étape 6 : Configuration de l'environnement
+
+Mettez à jour docker-compose.yml et .env:
+
+text
+# docker-compose.yml (extrait)
+services:
+  backend:
+    environment:
+      - TURFINFO_API_URL=https://offline.turfinfo.api.pmu.fr
+      - TURFINFO_CACHE_TTL_MINUTES=60
+      - TURFINFO_TIMEOUT_SECONDS=30
+      - TURFINFO_MAX_RETRIES=3
+
+bash
+# .env
+TURFINFO_API_URL=https://offline.turfinfo.api.pmu.fr
+TURFINFO_CACHE_TTL_MINUTES=60
+TURFINFO_TIMEOUT_SECONDS=30
+TURFINFO_MAX_RETRIES=3
+
+Étape 7 : Planifier l'ingestion quotidienne avec APScheduler
+
+Modifiez backend/app/scheduler.py:
+
+python
+# backend/app/scheduler.py
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime, timedelta
+from app.db.session import AsyncSessionLocal
+from app.services.ingestion import ingest_daily_program
+import logging
+
+logger = logging.getLogger(__name__)
+scheduler = AsyncIOScheduler()
+
+async def scheduled_ingestion_job():
+    """Job planifié pour l'ingestion quotidienne"""
+    logger.info("Démarrage ingestion planifiée")
+    
+    async with AsyncSessionLocal() as db:
+        # Ingérer aujourd'hui
+        await ingest_daily_program(db, datetime.now())
+        
+        # Ingérer demain (pré-chargement)
+        await ingest_daily_program(db, datetime.now() + timedelta(days=1))
+    
+    logger.info("Ingestion planifiée terminée")
+
+def start_scheduler():
+    """Démarre le scheduler avec les jobs configurés"""
+    
+    # Ingestion quotidienne à 6h du matin
+    scheduler.add_job(
+        scheduled_ingestion_job,
+        trigger="cron",
+        hour=6,
+        minute=0,
+        id="daily_ingestion",
+        replace_existing=True
+    )
+    
+    # Warmup la veille à 22h30
+    scheduler.add_job(
+        scheduled_ingestion_job,
+        trigger="cron",
+        hour=22,
+        minute=30,
+        id="warmup_ingestion",
+        replace_existing=True
+    )
+    
+    scheduler.start()
+    logger.info("Scheduler démarré")
+
+Étape 8 : Tests et validation
+
+Créez backend/tests/test_turfinfo_client.py:
+
+python
+# backend/tests/test_turfinfo_client.py
+import pytest
+from datetime import datetime
+from app.services.turfinfo_client import TurfinfoClient
+
+@pytest.mark.asyncio
+async def test_get_programme_jour():
+    """Test de récupération du programme"""
+    async with TurfinfoClient() as client:
+        data = await client.get_programme_jour(datetime.now())
+        
+        assert "programme" in data
+        assert "reunions" in data["programme"]
+        assert isinstance(data["programme"]["reunions"], list)
+
+@pytest.mark.asyncio
+async def test_get_partants_course():
+    """Test de récupération des partants"""
+    async with TurfinfoClient() as client:
+        # Utiliser une date et course connue pour le test
+        date = datetime(2025, 10, 27)
+        data = await client.get_partants_course(date, 1, 1)
+        
+        assert "participants" in data
+        assert isinstance(data["participants"], list)
+
+Étape 9 : Monitoring et observabilité
+
+Ajoutez des métriques Prometheus dans backend/app/services/turfinfo_client.py:
+
+python
+from prometheus_client import Counter, Histogram
+
+# Métriques
+turfinfo_requests_total = Counter(
+    'turfinfo_requests_total',
+    'Nombre total de requêtes Turfinfo',
+    ['endpoint', 'status']
+)
+
+turfinfo_request_duration = Histogram(
+    'turfinfo_request_duration_seconds',
+    'Durée des requêtes Turfinfo',
+    ['endpoint']
+)
+
+# Dans _make_request, ajouter:
+with turfinfo_request_duration.labels(endpoint=url).time():
+    response = await self._client.get(url)
+    
+turfinfo_requests_total.labels(
+    endpoint=url,
+    status=response.status_code
+).inc()
+
+Étape 10 : Déploiement et vérification
+
+bash
+# Reconstruire les conteneurs
+docker-compose down
+docker-compose build
+
+# Démarrer l'application
+docker-compose up -d
+
+# Vérifier les logs
+docker-compose logs -f backend
+
+# Tester manuellement l'ingestion
+curl -X POST http://localhost:8000/api/v1/admin/sync-programme
+
+# Consulter le programme du jour
+curl http://localhost:8000/api/v1/races/programme/2025-10-27
+
+Points clés de cette intégration
+Résilience : Circuit breaker avec Tenacity pour gérer les pannes temporaires
+Performance : Cache persistant en base de données pour réduire les appels API
+Asynchrone : Utilisation complète de httpx.AsyncClient et SQLAlchemy async
+Monitoring : Métriques Prometheus pour suivre la santé de l'API
+Scalabilité : Compatible avec votre architecture Celery et APScheduler existante
+Testabilité : Structure modulaire facilitant les tests unitaires et d'intégration

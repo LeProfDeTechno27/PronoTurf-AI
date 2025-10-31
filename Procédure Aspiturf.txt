@@ -1,0 +1,126 @@
+Voici les intitulés des colonnes quand on télécharge un fichier csv. Je n'ai pas mis certaines colonnes qui ne sont plus utilisées.
+Les musiques et les nombres de courses courues, places et victoires sont données pour les 365 derniers jours.
+
+reun: Numéro de la réunion ou nom de l'hippodrome
+prix: Numéro de la course
+numcourse: Numéro unique pour chaque course
+jour: Date de la course
+hippo: Hippodrome
+cl: Classement du cheval à l'arrivé
+dist: Distance de la course
+partant: Nombre de partant
+typec: Type de la course (plat, attelé, haies...)
+cheque: Allocation de la course
+numero: Numéro du cheval
+sexe: Sexe du cheval (Femelle, Mâle, Hongre)
+age: Âge du cheval
+cotedirect: Correspond au rapport du PMU
+coteprob: Correspond à la côte probable avant la course, ou à la côte à l'ouverture quand la course est finie
+recence: Nombre de jour depuis la dernière course du cheval
+ecurie: Si le cheval cours "en écurie", il y a la lettre de l'écurie
+ecar: Écart à l'arrivé entre le cheval et le premier
+defoeil: Déferrage
+
+    DD: déferré des 4
+    DF: déferré antérieurs / ferré postèrieurs
+    DP: déferré des antérieurs - protégé des postérieurs
+    FD: ferré antérieurs / déferré postèrieurs
+    FF: ferré des 4
+    FP: ferré des antérieurs - protégé des postérieurs
+    PD: protégé des antérieurs - déferré des postérieurs
+    PF: protégé des antérieurs - ferré des postérieurs
+    PP: protégé/plaqué des 4
+
+defoeilPrec: Déferrage pour la course précédente
+recul: recul du cheval au départ
+gains: gains du cheval
+musiqueche: musique du cheval
+m1, m2 ... m6: 6 dernières musique du cheval
+jockey: Jockey ou Driver
+musiquejoc: Musique du jockey
+montesdujockeyjour: Nombre de course du jockey pour la journée
+couruejockeyjour: Nombre de course courues par le jockey dans la journée
+victoirejockeyjour: Victoire du jockey pour la journée
+entraineur: Entraineur du cheval
+musiqueent: Musique de l'entraineur
+monteentraineurjour: Nombre de course de l'entraineur pour la journée
+courueentraineurjour: Nombre de course courues par l'entraineur dans la journée
+victoireentraineurjour: Victoire de l'entraineur pour la journée
+coursescheval: Nombre de course totale du cheval
+victoirescheval: Nombre de victoire totale du cheval
+placescheval: Nombre de place totale du cheval
+coursesentraineur: Nombre de course totale de l'entraineur
+victoiresentraineur: Nombre de victoire totale de l'entraineur
+placeentraineur: Nombre de course totale de l'entraineur
+coursesjockey: Nombre de course totale du jockey
+victoiresjockey: Nombre de victoire totale du jockey
+placejockey: Nombre de course totale du jockey
+dernierhippo: Dernier hippodrome sur lequel à couru le cheval
+dernierealloc: Allocation de la course précédente du cheval
+derniernbpartants: Nombre de partant de la course précédente du cheval
+dernieredist: Distance de la course précédente du cheval
+derniereplace: Place à l'arrivé de la course précédente du cheval
+dernierecote: Côte de la course précédente du cheval
+dernierJoc: Jockey de la course précédente du cheval
+dernierEnt: Entraineur de la course précédente du cheval
+dernierProp: Propriétaire de la course précédente du cheval
+dernierRedKm: Réduction kilométrique de la course précédente du cheval
+proprietaire: Propriétaire du cheval
+poidmont: Poids monté
+pourcVictEntHippo: Pourcentage de victoire de entraineur sur cet hippodrome
+pourcPlaceEntHippo: Pourcentage de place de entraineur sur cet hippodrome
+pourcPlaceJock: Pourcentage de place du Jockey
+pourcVictJock: Pourcentage de victoire du jockey
+pourcVictJockHippo: Pourcentage de victoire du jockey sur cet hippodrome
+pourcPlaceJockHippo: Pourcentage de place du jockey sur cet hippodrome
+pourcVictChevalHippo: Pourcentage de victoire du cheval sur cet hippodrome
+pourcPlaceChevalHippo: Pourcentage de place du cheval sur cet hippodrome
+nbrCourseJockHippo: Nombre de course du jockey sur cet hippodrome
+nbrCourseEntHippo: Nombre de course du de l'entraineur sur cet hippodrome
+nbrCourseChevalHippo: Nombre de course du cheval sur cet hippodrome
+pere: Père du cheval
+mere: Mère du cheval
+tempstot: Temps total pour effectuer la course
+vha: Valeur handicap
+recordG: Record général du cheval
+txreclam: Taux de réclamation
+dernierTxreclam: Taux de réclamation de la course précédente du cheval
+gainsCarriere: Gains pour toute la carrière du cheval
+gainsVictoires: Gains qui correspondent à des victoires
+gainsPlace: Gains qui correspondent à des places
+gainsAnneeEnCours: Gains pour l'année en cours
+gainsAnneePrecedente: Gains pour l'année précédente
+jumentPleine: Si la jument est pleine
+indicateurInedit: Si le cheval est inédit (première course)
+handicapDistance: Handicap distance
+handicapPoids: Handicap poids
+nbCourseCouple: Nombre de course effectuée par ce cheval avec ce jockey
+TxVictCouple: Pourcentage de victoire de ce cheval avec ce jockey
+TxPlaceCouple: Pourcentage de placé de ce cheval avec ce jockey
+nbVictCouple: Nombre de victoire de ce cheval avec ce jockey
+nbPlaceCouple: Nombre de place de ce cheval avec ce jockey
+nbCourseCoupleHippo: Nombre de course effectuée par ce cheval sur cet hippodrome
+TxVictCoupleHippo: Pourcentage de victoire de ce cheval sur cet hippodrome
+TxPlaceCoupleHippo: Pourcentage de place de ce cheval sur cet hippodrome
+nbVictCoupleHippo: Nombre de victoire de ce cheval sur cet hippodrome
+nbPlaceCoupleHippo: Nombre de place de ce cheval sur cet hippodrome
+appetTerrain: Appétence pour le type de terrain. 0 si le cheval n'a jamais couru sur ce type de terrain; 1 s'il est arrivé dans les 4 premiers; 2 s'il a déjà couru mais n'est pas arrivé dans les 4 premiers; 10 si type de piste non trouvé
+idChe: id du cheval
+idJockey: id du jockey
+idEntraineur: id de l'entraineur
+defFirstTime: Déferrage première fois
+oeilFirstTime: Œillères première fois
+estSupplemente: Supplémenté
+oeil: œillères
+
+    O: œillères
+    A: œillères australienne
+
+devise: Code devise de la course
+dernierOeil: Œillères pour la course précédente
+coat: Robe du cheval
+country: Pays du cheval
+rangCotesIndex: Non utilisé, pour test
+eloChevalIndex: Non utilisé, pour test
+eloJockeyIndex: Non utilisé, pour test
+eloEntraineurIndex: Non utilisé, pour test
