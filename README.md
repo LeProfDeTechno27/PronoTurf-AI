@@ -13,6 +13,17 @@ PronoTurf est une plateforme moderne qui combine :
 - **Mode Entraînement** : Simulation sur courses passées pour améliorer ses compétences
 - **Notifications** : Alertes Telegram pour ne manquer aucune opportunité
 
+## Nouveautés Analytics Aspiturf
+
+- **Recherche instantanée** des chevaux, jockeys, entraîneurs et hippodromes via l'endpoint `/api/v1/analytics/search`.
+- **Explorateur frontend enrichi** avec autocomplétion : sélectionnez un identifiant en quelques clics et pré-remplissez les filtres.
+- **Mise à jour du tableau de bord** : filtres hippodrome synchronisés sur toutes les cartes analytics pour accélérer l'analyse pré-course.
+- **Classements express multi-entités** : l'endpoint `/api/v1/analytics/insights` calcule en temps réel les meilleurs chevaux, jockeys et entraîneurs selon vos filtres (dates, hippodrome, limite), directement consommé depuis la page Analytics.
+- **Tendances de performance** : l'endpoint `/api/v1/analytics/trends` agrège les résultats par semaine ou par mois et l'interface React restitue les courbes d'évolution pour un cheval, un jockey ou un entraîneur.
+- **Analyse des séries** : le nouvel endpoint `/api/v1/analytics/streaks` met en évidence les meilleures séries de victoires/podiums par entité et le frontend expose un module dédié pour suivre les séquences en cours.
+- **Répartition des performances** : l'endpoint `/api/v1/analytics/distributions` regroupe les courses par distance, numéro de corde, hippodrome ou discipline et la page Analytics propose un tableau interactif pour comparer les segments dominants.
+- **Indice de forme récent** : l'endpoint `/api/v1/analytics/form` calcule un score (0-5) et un indice de constance sur les N dernières courses d'une entité avec un tableau détaillé directement exploitable dans l'explorateur React.
+
 ## Technologies
 
 ### Backend
@@ -533,6 +544,12 @@ Documentation complète disponible via Swagger UI :
 
 ### Tests
 
+Avant d'exécuter les suites backend, assurez-vous d'installer les dépendances Python :
+
+```bash
+pip install -r backend/requirements.txt
+```
+
 ```bash
 # Backend - Tests unitaires
 cd backend
@@ -822,13 +839,14 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 
 ## Éléments à Venir
 
-### Sprint 5.1 (En cours - 20% complété)
+### Sprint 5.1 (Terminé)
 - [x] Client Aspiturf avec parsing CSV
 - [x] PMUService refactorisé avec fallback
 - [x] Script de test complet
 - [x] Intégration avec pipeline ML (features Aspiturf)
-- [ ] Endpoints API pour statistiques enrichies
-- [ ] Dashboard avec métriques Aspiturf
+- [x] Endpoints API pour statistiques enrichies
+- [x] Dashboard avec métriques Aspiturf
+- [x] Recherche interactive pour chevaux, jockeys, entraîneurs et hippodromes
 
 ### Sprint 6 (Planifié)
 - [ ] Service Telegram pour notifications
