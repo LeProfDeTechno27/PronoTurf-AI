@@ -22,6 +22,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Tendances de performance** : l'endpoint `/api/v1/analytics/trends` agrège les résultats par semaine ou par mois et l'interface React restitue les courbes d'évolution pour un cheval, un jockey ou un entraîneur.
 - **Analyse des séries** : le nouvel endpoint `/api/v1/analytics/streaks` met en évidence les meilleures séries de victoires/podiums par entité et le frontend expose un module dédié pour suivre les séquences en cours.
 - **Répartition des performances** : l'endpoint `/api/v1/analytics/distributions` regroupe les courses par distance, numéro de corde, hippodrome ou discipline et la page Analytics propose un tableau interactif pour comparer les segments dominants.
+- **Comparateur multi-entités** : l'endpoint `/api/v1/analytics/comparisons` consolide les statistiques de plusieurs chevaux/jockeys/entraîneurs et mesure leurs confrontations directes, accessible depuis un nouveau module de la page Analytics.
 - **Indice de forme récent** : l'endpoint `/api/v1/analytics/form` calcule un score (0-5) et un indice de constance sur les N dernières courses d'une entité avec un tableau détaillé directement exploitable dans l'explorateur React.
 
 ## Technologies

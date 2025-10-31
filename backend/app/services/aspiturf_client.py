@@ -574,7 +574,9 @@ class AspiturfClient:
         horse_id: Optional[str] = None,
         jockey_id: Optional[str] = None,
         trainer_id: Optional[str] = None,
-        hippodrome: Optional[str] = None
+        hippodrome: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         """Retourne les lignes Aspiturf filtrées selon plusieurs critères."""
 
@@ -598,6 +600,20 @@ class AspiturfClient:
                 row for row in races
                 if row.get('hippo') and row.get('hippo').upper() == hippo_upper
             ]
+
+        if start_date or end_date:
+            filtered: List[Dict[str, Any]] = []
+            for row in races:
+                race_date = row.get('jour')
+                if not isinstance(race_date, date):
+                    # Si la ligne n'est pas datée on ne peut pas appliquer un filtre temporel fiable.
+                    continue
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+                filtered.append(row)
+            races = filtered
 
         return races
 

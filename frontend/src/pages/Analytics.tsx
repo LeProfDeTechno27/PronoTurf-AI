@@ -23,6 +23,9 @@ import type {
   DistributionDimension,
   TrendEntityType,
   TrendGranularity,
+  AnalyticsComparisonResponse,
+  ComparisonEntitySummary,
+  HeadToHeadBreakdown,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -115,6 +118,14 @@ type DistributionFilters = {
   startDate?: string
   endDate?: string
   distanceStep?: number
+}
+
+type ComparisonFilters = {
+  entityType: TrendEntityType
+  entityIds: string[]
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
 }
 
 const isJockeyResponse = (
@@ -362,6 +373,107 @@ function SummaryStats({ label, value }: { label: string; value: ReactNode }) {
     <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
       <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
       <p className="mt-1 text-lg font-semibold text-gray-900">{value}</p>
+    </div>
+  )
+}
+
+function HeadToHeadTableView({ rows }: { rows: HeadToHeadBreakdown[] }) {
+  // Rend lisible le bilan des confrontations directes entité par entité.
+  if (!rows.length) {
+    return <p className="text-gray-500">Pas de duel direct enregistré.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200 text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left font-medium uppercase tracking-wide text-gray-500">Adversaire</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Courses</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Devant</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Derrière</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Indécis</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {rows.map((row) => (
+            <tr key={row.opponent_id}>
+              <td className="px-4 py-2 text-gray-900">{row.opponent_id}</td>
+              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.meetings)}</td>
+              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.ahead)}</td>
+              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.behind)}</td>
+              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.ties)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ComparisonEntityCard({ entity }: { entity: ComparisonEntitySummary }) {
+  // Présente les statistiques clés d'une entité comparée.
+  return (
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-lg font-semibold text-gray-900">{entity.label ?? entity.entity_id}</h4>
+          <p className="text-xs uppercase tracking-wide text-gray-500">{entity.entity_id}</p>
+        </div>
+        <SummaryStats label="Courses" value={formatNumber(entity.sample_size)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <SummaryStats
+          label="Victoires"
+          value={`${formatNumber(entity.wins)} (${formatPercent(entity.win_rate)})`}
+        />
+        <SummaryStats
+          label="Podiums"
+          value={`${formatNumber(entity.podiums)} (${formatPercent(entity.podium_rate)})`}
+        />
+        <SummaryStats label="Moyenne arrivée" value={formatAverage(entity.average_finish)} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <SummaryStats label="Meilleure place" value={entity.best_finish ?? '—'} />
+        <SummaryStats label="Dernière apparition" value={formatDate(entity.last_seen ?? null)} />
+      </div>
+
+      <div>
+        <h5 className="mb-2 text-sm font-semibold text-gray-900">Duels directs</h5>
+        <HeadToHeadTableView rows={entity.head_to_head} />
+      </div>
+    </div>
+  )
+}
+
+function ComparisonPanel({ data }: { data: AnalyticsComparisonResponse }) {
+  // Assemble les indicateurs globaux d'une comparaison multi-entités.
+  const typeLabel =
+    data.entity_type === 'horse'
+      ? 'Chevaux'
+      : data.entity_type === 'jockey'
+        ? 'Jockeys'
+        : 'Entraîneurs'
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Type analysé" value={typeLabel} />
+        <SummaryStats label="Entités comparées" value={formatNumber(data.entities.length)} />
+        <SummaryStats label="Courses communes" value={formatNumber(data.shared_races)} />
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {data.entities.map((entity) => (
+          <ComparisonEntityCard key={entity.entity_id} entity={entity} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -920,6 +1032,16 @@ export default function AnalyticsPage() {
   const [distributionError, setDistributionError] = useState<string | null>(null)
   const [distributionFilters, setDistributionFilters] = useState<DistributionFilters | null>(null)
 
+  const [comparisonTypeInput, setComparisonTypeInput] = useState<TrendEntityType>('horse')
+  const [comparisonIdInput, setComparisonIdInput] = useState('')
+  const [comparisonHippoInput, setComparisonHippoInput] = useState('')
+  const [comparisonStartInput, setComparisonStartInput] = useState('')
+  const [comparisonEndInput, setComparisonEndInput] = useState('')
+  const [comparisonQuery, setComparisonQuery] = useState('')
+  const [comparisonSelections, setComparisonSelections] = useState<AnalyticsSearchResult[]>([])
+  const [comparisonError, setComparisonError] = useState<string | null>(null)
+  const [comparisonFilters, setComparisonFilters] = useState<ComparisonFilters | null>(null)
+
   const [horseIdInput, setHorseIdInput] = useState('')
   const [horseHippoInput, setHorseHippoInput] = useState('')
   const [horseSearch, setHorseSearch] = useState<HorseSearch | null>(null)
@@ -1098,6 +1220,35 @@ export default function AnalyticsPage() {
     enabled: Boolean(distributionFilters?.entityId),
   })
 
+  const comparisonQueryKey = useMemo(
+    () =>
+      comparisonFilters
+        ? [
+            'analytics',
+            'comparisons',
+            comparisonFilters.entityType,
+            comparisonFilters.entityIds.join(','),
+            comparisonFilters.hippodrome ?? '',
+            comparisonFilters.startDate ?? '',
+            comparisonFilters.endDate ?? '',
+          ]
+        : ['analytics', 'comparisons', 'idle'],
+    [comparisonFilters],
+  )
+
+  const comparisonQueryResult = useQuery({
+    queryKey: comparisonQueryKey,
+    queryFn: () =>
+      analyticsService.getComparisons({
+        entityType: comparisonFilters!.entityType,
+        entityIds: comparisonFilters!.entityIds,
+        hippodrome: comparisonFilters?.hippodrome,
+        startDate: comparisonFilters?.startDate,
+        endDate: comparisonFilters?.endDate,
+      }),
+    enabled: Boolean(comparisonFilters?.entityIds?.length),
+  })
+
   const horseQueryKey = useMemo(() => (
     horseSearch ? ['analytics', 'horse', horseSearch.id, horseSearch.hippodrome ?? ''] : ['analytics', 'horse', 'idle']
   ), [horseSearch])
@@ -1129,6 +1280,13 @@ export default function AnalyticsPage() {
     queryKey: ['analytics', 'suggestions', 'jockey', jockeyNameQuery],
     queryFn: () => analyticsService.searchEntities('jockey', jockeyNameQuery),
     enabled: jockeyNameQuery.trim().length >= 2,
+    staleTime: 60_000,
+  })
+
+  const comparisonSuggestionsQuery = useQuery<AnalyticsSearchResult[]>({
+    queryKey: ['analytics', 'suggestions', 'comparison', comparisonTypeInput, comparisonQuery],
+    queryFn: () => analyticsService.searchEntities(comparisonTypeInput, comparisonQuery),
+    enabled: comparisonQuery.trim().length >= 2,
     staleTime: 60_000,
   })
 
@@ -1309,6 +1467,84 @@ export default function AnalyticsPage() {
       startDate: distributionStartInput || undefined,
       endDate: distributionEndInput || undefined,
       distanceStep: parsedStep,
+    })
+  }
+
+  const handleComparisonAddManual = () => {
+    const trimmed = comparisonIdInput.trim()
+
+    if (!trimmed) {
+      setComparisonError("Saisissez un identifiant Aspiturf à ajouter.")
+      return
+    }
+
+    if (comparisonSelections.some((item) => item.id === trimmed)) {
+      setComparisonError('Cet identifiant est déjà présent dans la sélection.')
+      return
+    }
+
+    if (comparisonSelections.length >= 6) {
+      setComparisonError('Limitez la comparaison à six entités maximum pour conserver une lecture claire.')
+      return
+    }
+
+    setComparisonSelections((previous) => [
+      ...previous,
+      { id: trimmed, label: trimmed, type: comparisonTypeInput, metadata: {} },
+    ])
+    setComparisonIdInput('')
+    setComparisonError(null)
+  }
+
+  const handleComparisonSuggestionSelect = (item: AnalyticsSearchResult) => {
+    if (comparisonSelections.some((entry) => entry.id === item.id)) {
+      setComparisonError('Cet identifiant est déjà présent dans la sélection.')
+      return
+    }
+
+    if (comparisonSelections.length >= 6) {
+      setComparisonError('Limitez la comparaison à six entités maximum pour conserver une lecture claire.')
+      return
+    }
+
+    setComparisonSelections((previous) => [...previous, item])
+    setComparisonError(null)
+    setComparisonQuery('')
+  }
+
+  const handleComparisonRemove = (identifier: string) => {
+    setComparisonSelections((previous) => {
+      const next = previous.filter((item) => item.id !== identifier)
+      if (next.length < 2) {
+        setComparisonFilters(null)
+      }
+      return next
+    })
+    setComparisonError(null)
+  }
+
+  const handleComparisonSubmit = (event: FormEvent) => {
+    event.preventDefault()
+
+    if (comparisonSelections.length < 2) {
+      setComparisonError('Sélectionnez au moins deux entités à comparer.')
+      setComparisonFilters(null)
+      return
+    }
+
+    if (comparisonStartInput && comparisonEndInput && comparisonStartInput > comparisonEndInput) {
+      setComparisonError('La date de début doit précéder la date de fin.')
+      setComparisonFilters(null)
+      return
+    }
+
+    setComparisonError(null)
+    setComparisonFilters({
+      entityType: comparisonTypeInput,
+      entityIds: comparisonSelections.map((item) => item.id),
+      hippodrome: comparisonHippoInput.trim() || undefined,
+      startDate: comparisonStartInput || undefined,
+      endDate: comparisonEndInput || undefined,
     })
   }
 
@@ -1626,11 +1862,126 @@ export default function AnalyticsPage() {
         {formQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
         )}
-        {formQuery.data && <FormPanel data={formQuery.data} />}
-      </SectionCard>
+      {formQuery.data && <FormPanel data={formQuery.data} />}
+    </SectionCard>
 
-      <SectionCard
-        title="Répartition des performances"
+    <SectionCard
+      title="Comparaison multi-entités"
+      description="Contrastez les statistiques de plusieurs chevaux, jockeys ou entraîneurs et analysez leurs confrontations directes."
+    >
+      <form
+        onSubmit={handleComparisonSubmit}
+        className="grid gap-4 md:grid-cols-[repeat(5,minmax(0,1fr)),auto]"
+      >
+        <select
+          value={comparisonTypeInput}
+          onChange={(event) => {
+            const nextType = event.target.value as TrendEntityType
+            setComparisonTypeInput(nextType)
+            setComparisonSelections([])
+            setComparisonFilters(null)
+          }}
+          className="input"
+        >
+          <option value="horse">Cheval</option>
+          <option value="jockey">Jockey</option>
+          <option value="trainer">Entraîneur</option>
+        </select>
+        <div className="flex gap-2">
+          <input
+            value={comparisonIdInput}
+            onChange={(event) => setComparisonIdInput(event.target.value)}
+            placeholder="Ajouter un identifiant Aspiturf"
+            className="input flex-1"
+          />
+          <button type="button" className="btn btn-secondary" onClick={handleComparisonAddManual}>
+            Ajouter
+          </button>
+        </div>
+        <input
+          value={comparisonHippoInput}
+          onChange={(event) => setComparisonHippoInput(event.target.value)}
+          placeholder="Filtrer par hippodrome (optionnel)"
+          className="input"
+        />
+        <input
+          type="date"
+          value={comparisonStartInput}
+          onChange={(event) => setComparisonStartInput(event.target.value)}
+          className="input"
+        />
+        <input
+          type="date"
+          value={comparisonEndInput}
+          onChange={(event) => setComparisonEndInput(event.target.value)}
+          className="input"
+        />
+        <button type="submit" className="btn btn-primary">
+          Comparer
+        </button>
+      </form>
+
+      {comparisonError && <p className="text-sm text-red-600">{comparisonError}</p>}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {comparisonSelections.length ? (
+          comparisonSelections.map((item) => (
+            <span
+              key={item.id}
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-sm text-indigo-700"
+            >
+              {item.label}
+              <button
+                type="button"
+                className="text-xs font-semibold uppercase tracking-wide"
+                onClick={() => handleComparisonRemove(item.id)}
+              >
+                Retirer
+              </button>
+            </span>
+          ))
+        ) : (
+          <p className="text-sm text-gray-500">Sélectionnez au moins deux entités pour lancer la comparaison.</p>
+        )}
+      </div>
+
+      <div className="mt-4 space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
+          <span className="text-xs text-gray-500">2 lettres minimum</span>
+        </div>
+        <input
+          value={comparisonQuery}
+          onChange={(event) => setComparisonQuery(event.target.value)}
+          placeholder="Rechercher une entité par nom ou identifiant"
+          className="input"
+        />
+        {comparisonQuery.trim().length >= 2 ? (
+          <SuggestionsList
+            results={comparisonSuggestionsQuery.data}
+            isLoading={comparisonSuggestionsQuery.isFetching}
+            error={toError(comparisonSuggestionsQuery.error)}
+            onSelect={handleComparisonSuggestionSelect}
+            emptyLabel="Aucune entité ne correspond à cette recherche."
+          />
+        ) : (
+          <p className="text-xs text-gray-500">
+            Combinez l'autocomplétion et l'ajout manuel pour constituer votre liste de comparaisons.
+          </p>
+        )}
+      </div>
+
+      {comparisonQueryResult.isPending && (
+        <p className="text-sm text-gray-500">Analyse comparative en cours…</p>
+      )}
+      {comparisonQueryResult.isError && (
+        <p className="text-sm text-red-600">Erreur: {(comparisonQueryResult.error as Error).message}</p>
+      )}
+      {comparisonQueryResult.data && <ComparisonPanel data={comparisonQueryResult.data} />}
+    </SectionCard>
+
+    <SectionCard
+      title="Répartition des performances"
         description="Décomposez les résultats d'un cheval, d'un jockey ou d'un entraîneur par distance, corde, hippodrome ou discipline."
       >
         <form

@@ -15,6 +15,7 @@ import type {
   PerformanceDistributionResponse,
   DistributionDimension,
   AnalyticsFormResponse,
+  AnalyticsComparisonResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -163,6 +164,39 @@ export const analyticsService = {
         ...(params.endDate ? { end_date: params.endDate } : {}),
         ...(params.distanceStep ? { distance_step: params.distanceStep } : {}),
       },
+    })
+
+    return response.data
+  },
+
+  async getComparisons(params: {
+    entityType: TrendEntityType
+    entityIds: string[]
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const queryParams = new URLSearchParams()
+    queryParams.set('type', params.entityType)
+
+    params.entityIds.forEach((id) => {
+      if (id) {
+        queryParams.append('ids', id)
+      }
+    })
+
+    if (params.hippodrome) {
+      queryParams.set('hippodrome', params.hippodrome)
+    }
+    if (params.startDate) {
+      queryParams.set('start_date', params.startDate)
+    }
+    if (params.endDate) {
+      queryParams.set('end_date', params.endDate)
+    }
+
+    const response = await apiClient.get<AnalyticsComparisonResponse>('/analytics/comparisons', {
+      params: queryParams,
     })
 
     return response.data

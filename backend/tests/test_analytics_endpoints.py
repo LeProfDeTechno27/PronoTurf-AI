@@ -61,6 +61,8 @@ class StubAspiturfClient:
         jockey_id: Optional[str] = None,
         trainer_id: Optional[str] = None,
         hippodrome: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         results = list(self._rows)
 
@@ -78,6 +80,19 @@ class StubAspiturfClient:
             results = [
                 row for row in results if row.get("hippo") and row["hippo"].upper() == hippo_upper
             ]
+
+        if start_date is not None or end_date is not None:
+            dated: List[Dict[str, Any]] = []
+            for row in results:
+                race_date = row.get("jour")
+                if not isinstance(race_date, date):
+                    continue
+                if start_date is not None and race_date < start_date:
+                    continue
+                if end_date is not None and race_date > end_date:
+                    continue
+                dated.append(row)
+            results = dated
 
         return [dict(row) for row in results]
 
@@ -858,6 +873,22 @@ def analytics_rows() -> List[Dict[str, Any]]:
             "numero": 3,
         },
         {
+            "jour": date(2024, 5, 4),
+            "hippo": "PARIS",
+            "prix": 5,
+            "dist": 2100,
+            "cl": 4,
+            "idChe": "H-2",
+            "nom_cheval": "Nouveau Départ",
+            "idJockey": "J-99",
+            "jockey": "Anne Leroy",
+            "idEntraineur": "T-99",
+            "entraineur": "Claire Dubois",
+            "cotedirect": 12.0,
+            "coteprob": 10.5,
+            "numero": 12,
+        },
+        {
             "jour": date(2024, 5, 18),
             "hippo": "LYON",
             "prix": 2,
@@ -1126,6 +1157,59 @@ async def test_form_endpoint_rejects_invalid_date_range(analytics_client: AsyncC
         },
     )
     assert response.status_code == 400
+
+
+@pytest.mark.anyio("asyncio")
+async def test_comparisons_endpoint_returns_duel_summary(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/comparisons",
+        params=[("type", "horse"), ("ids", "H-1"), ("ids", "H-2")],
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["entity_type"] == "horse"
+    assert payload["shared_races"] == 1
+    assert {item["entity_id"] for item in payload["entities"]} == {"H-1", "H-2"}
+
+    head_to_head = {
+        entry["entity_id"]: entry["head_to_head"][0] if entry["head_to_head"] else None
+        for entry in payload["entities"]
+    }
+
+    assert head_to_head["H-1"]["opponent_id"] == "H-2"
+    assert head_to_head["H-1"]["ahead"] == 1
+    assert head_to_head["H-1"]["behind"] == 0
+    assert head_to_head["H-2"]["behind"] == 1
+
+
+@pytest.mark.anyio("asyncio")
+async def test_comparisons_endpoint_requires_existing_ids(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/comparisons",
+        params=[("type", "horse"), ("ids", "H-1"), ("ids", "H-42")],
+    )
+
+    assert response.status_code == 404
+    assert "H-42" in response.json()["detail"]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_comparisons_endpoint_rejects_invalid_dates(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/comparisons",
+        params=[
+            ("type", "horse"),
+            ("ids", "H-1"),
+            ("ids", "H-2"),
+            ("start_date", "2024-06-02"),
+            ("end_date", "2024-05-01"),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
 
 
 @pytest.mark.anyio("asyncio")

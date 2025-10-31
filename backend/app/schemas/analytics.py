@@ -164,6 +164,95 @@ class LeaderboardEntry(BaseModel):
     )
 
 
+class HeadToHeadBreakdown(BaseModel):
+    """Bilan d'une confrontation directe avec une entité opposée."""
+
+    opponent_id: str = Field(..., description="Identifiant de l'adversaire comparé")
+    meetings: int = Field(
+        ...,
+        ge=0,
+        description="Nombre de courses communes observées avec l'adversaire",
+    )
+    ahead: int = Field(
+        ...,
+        ge=0,
+        description="Occurrences où l'entité termine devant l'adversaire",
+    )
+    behind: int = Field(
+        ...,
+        ge=0,
+        description="Occurrences où l'entité termine derrière l'adversaire",
+    )
+    ties: int = Field(
+        ...,
+        ge=0,
+        description="Courses sans classement exploitable ou positions identiques",
+    )
+
+
+class ComparisonEntitySummary(BaseModel):
+    """Résumé statistique d'une entité dans une comparaison multi-id."""
+
+    entity_id: str = Field(..., description="Identifiant unique de l'entité")
+    label: Optional[str] = Field(
+        default=None,
+        description="Libellé lisible de l'entité (nom ou alias)",
+    )
+    sample_size: int = Field(..., ge=0, description="Nombre de courses analysées")
+    wins: int = Field(..., ge=0, description="Nombre de victoires sur la période")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums sur la période")
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire rapporté à l'échantillon",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium rapporté à l'échantillon",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne à l'arrivée",
+    )
+    best_finish: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Meilleure place obtenue dans la période",
+    )
+    last_seen: Optional[date_type] = Field(
+        default=None,
+        description="Dernière date observée pour l'entité",
+    )
+    head_to_head: List[HeadToHeadBreakdown] = Field(
+        default_factory=list,
+        description="Bilan des confrontations directes contre les autres entités",
+    )
+
+
+class AnalyticsComparisonResponse(BaseModel):
+    """Réponse retournée par le comparateur d'entités analytics."""
+
+    entity_type: AnalyticsSearchType = Field(
+        ..., description="Type d'entités comparées (cheval, jockey ou entraîneur)"
+    )
+    shared_races: int = Field(
+        ...,
+        ge=0,
+        description="Nombre de courses où au moins deux entités étaient présentes",
+    )
+    entities: List[ComparisonEntitySummary] = Field(
+        ...,
+        description="Résumés statistiques par entité sélectionnée",
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Plage temporelle et filtres appliqués",
+    )
+
+
 class HorseAnalyticsResponse(BaseModel):
     """Réponse analytics pour un cheval."""
 

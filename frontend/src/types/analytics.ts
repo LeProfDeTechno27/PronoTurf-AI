@@ -48,6 +48,35 @@ export interface LeaderboardEntry {
   last_seen?: string | null
 }
 
+export interface HeadToHeadBreakdown {
+  opponent_id: string
+  meetings: number
+  ahead: number
+  behind: number
+  ties: number
+}
+
+export interface ComparisonEntitySummary {
+  entity_id: string
+  label?: string | null
+  sample_size: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  best_finish?: number | null
+  last_seen?: string | null
+  head_to_head: HeadToHeadBreakdown[]
+}
+
+export interface AnalyticsComparisonResponse {
+  entity_type: 'horse' | 'jockey' | 'trainer'
+  shared_races: number
+  entities: ComparisonEntitySummary[]
+  metadata: AnalyticsMetadata
+}
+
 export type TrendEntityType = 'horse' | 'jockey' | 'trainer'
 
 export type TrendGranularity = 'week' | 'month'

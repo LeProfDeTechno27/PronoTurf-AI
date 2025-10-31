@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from datetime import date
+from itertools import combinations
 from statistics import mean, median, pstdev
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.config import settings
 from app.schemas.analytics import (
     AnalyticsMetadata,
+    AnalyticsComparisonResponse,
+    ComparisonEntitySummary,
+    HeadToHeadBreakdown,
     AnalyticsFormResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
@@ -391,6 +395,116 @@ async def get_analytics_insights(
         top_horses=_to_leaderboard_entries(horse_rows),
         top_jockeys=_to_leaderboard_entries(jockey_rows),
         top_trainers=_to_leaderboard_entries(trainer_rows),
+    )
+
+
+@router.get(
+    "/comparisons",
+    response_model=AnalyticsComparisonResponse,
+    summary="Comparer plusieurs entités sur une période",
+    description=(
+        "Agrège les statistiques principales de plusieurs chevaux, jockeys ou entraîneurs "
+        "et calcule un bilan des confrontations directes lorsqu'ils se sont affrontés."
+    ),
+)
+async def compare_entities(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., alias="type", description="Type d'entités à comparer (cheval, jockey, entraîneur)"
+    ),
+    entity_ids: List[str] = Query(
+        ...,
+        alias="ids",
+        min_items=2,
+        description="Liste des identifiants Aspiturf à comparer (au moins deux)",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer sur un hippodrome spécifique (optionnel)",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Ignorer les courses disputées avant cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Ignorer les courses disputées après cette date",
+    ),
+) -> AnalyticsComparisonResponse:
+    """Compare plusieurs entités homogènes en exposant un résumé et les duels directs."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    normalized_ids: List[str] = []
+    for entity_id in entity_ids:
+        candidate = entity_id.strip()
+        if candidate and candidate not in normalized_ids:
+            normalized_ids.append(candidate)
+
+    if len(normalized_ids) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Fournir au moins deux identifiants distincts à comparer",
+        )
+
+    rows_by_entity: Dict[str, List[Dict[str, Any]]] = {}
+    missing: List[str] = []
+
+    for entity_id in normalized_ids:
+        race_kwargs = {
+            "hippodrome": hippodrome,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+
+        if entity_type == TrendEntityType.HORSE:
+            race_kwargs["horse_id"] = entity_id
+        elif entity_type == TrendEntityType.JOCKEY:
+            race_kwargs["jockey_id"] = entity_id
+        else:
+            race_kwargs["trainer_id"] = entity_id
+
+        rows = await client.get_races(**race_kwargs)
+
+        if not rows:
+            missing.append(entity_id)
+            continue
+
+        rows_by_entity[entity_id] = rows
+
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Aucune donnée trouvée pour les identifiants suivants: "
+                + ", ".join(sorted(missing))
+            ),
+        )
+
+    if len(rows_by_entity) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail="Impossible de comparer les entités demandées sur la période sélectionnée",
+        )
+
+    summaries, shared_races, metadata = _aggregate_comparison(
+        entity_type=AnalyticsSearchType(entity_type.value),
+        rows_by_entity=rows_by_entity,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    return AnalyticsComparisonResponse(
+        entity_type=AnalyticsSearchType(entity_type.value),
+        shared_races=shared_races,
+        entities=summaries,
+        metadata=metadata,
     )
 
 
@@ -835,6 +949,142 @@ def _build_performance_summary(
         win_rate=_safe_rate(wins_value, total_value),
         place_rate=_safe_rate(places_value, total_value),
     )
+
+
+def _aggregate_comparison(
+    *,
+    entity_type: AnalyticsSearchType,
+    rows_by_entity: Dict[str, List[Dict[str, Any]]],
+    hippodrome: Optional[str],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> Tuple[List[ComparisonEntitySummary], int, AnalyticsMetadata]:
+    """Construit les statistiques comparatives et le métadata associés."""
+
+    if entity_type == AnalyticsSearchType.HORSE:
+        label_fields = ("nom_cheval", "cheval")
+    elif entity_type == AnalyticsSearchType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    observed_start: Optional[date] = None
+    observed_end: Optional[date] = None
+
+    # Construit un index des courses afin de calculer les confrontations directes.
+    race_participations: Dict[Tuple[Any, Any, Any], Dict[str, Dict[str, Any]]] = {}
+
+    for entity_id, rows in rows_by_entity.items():
+        for row in rows:
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                if observed_start is None or race_date < observed_start:
+                    observed_start = race_date
+                if observed_end is None or race_date > observed_end:
+                    observed_end = race_date
+
+            race_key = (
+                row.get("jour"),
+                row.get("hippo"),
+                row.get("prix") or row.get("numcourse") or row.get("course"),
+            )
+            race_participations.setdefault(race_key, {})[entity_id] = row
+
+    shared_races = sum(1 for rows in race_participations.values() if len(rows) >= 2)
+
+    pair_stats: Dict[Tuple[str, str], Dict[str, int]] = {}
+
+    for race_rows in race_participations.values():
+        if len(race_rows) < 2:
+            continue
+
+        for left_id, right_id in combinations(race_rows.keys(), 2):
+            left_row = race_rows[left_id]
+            right_row = race_rows[right_id]
+
+            left_stats = pair_stats.setdefault(
+                (left_id, right_id), {"meetings": 0, "ahead": 0, "behind": 0, "ties": 0}
+            )
+            right_stats = pair_stats.setdefault(
+                (right_id, left_id), {"meetings": 0, "ahead": 0, "behind": 0, "ties": 0}
+            )
+
+            left_stats["meetings"] += 1
+            right_stats["meetings"] += 1
+
+            left_pos = left_row.get("cl") if isinstance(left_row.get("cl"), int) else None
+            right_pos = right_row.get("cl") if isinstance(right_row.get("cl"), int) else None
+
+            if left_pos is None or right_pos is None:
+                left_stats["ties"] += 1
+                right_stats["ties"] += 1
+            elif left_pos < right_pos:
+                left_stats["ahead"] += 1
+                right_stats["behind"] += 1
+            elif left_pos > right_pos:
+                left_stats["behind"] += 1
+                right_stats["ahead"] += 1
+            else:
+                left_stats["ties"] += 1
+                right_stats["ties"] += 1
+
+    summaries: List[ComparisonEntitySummary] = []
+
+    for entity_id, rows in rows_by_entity.items():
+        sample_size = len(rows)
+        wins = sum(1 for row in rows if _is_win(row))
+        podiums = sum(1 for row in rows if _is_podium(row))
+        positions = [row.get("cl") for row in rows if isinstance(row.get("cl"), int)]
+
+        label = _extract_name(rows, label_fields)
+        best_finish = min(positions) if positions else None
+        last_seen = None
+
+        for row in rows:
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                if last_seen is None or race_date > last_seen:
+                    last_seen = race_date
+
+        matchups = [
+            HeadToHeadBreakdown(
+                opponent_id=opponent,
+                meetings=stats.get("meetings", 0),
+                ahead=stats.get("ahead", 0),
+                behind=stats.get("behind", 0),
+                ties=stats.get("ties", 0),
+            )
+            for (source, opponent), stats in pair_stats.items()
+            if source == entity_id
+        ]
+
+        matchups.sort(key=lambda item: (-item.meetings, item.opponent_id))
+
+        summaries.append(
+            ComparisonEntitySummary(
+                entity_id=entity_id,
+                label=label,
+                sample_size=sample_size,
+                wins=wins,
+                podiums=podiums,
+                win_rate=_safe_rate(wins, sample_size),
+                podium_rate=_safe_rate(podiums, sample_size),
+                average_finish=_safe_mean(positions),
+                best_finish=best_finish,
+                last_seen=last_seen,
+                head_to_head=matchups,
+            )
+        )
+
+    summaries.sort(key=lambda item: (item.entity_id))
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=observed_start or start_date,
+        date_end=observed_end or end_date,
+    )
+
+    return summaries, shared_races, metadata
 
 
 def _distance_label(_: Any, rows: List[Dict[str, Any]]) -> str:
