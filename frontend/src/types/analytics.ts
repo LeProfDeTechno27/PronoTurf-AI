@@ -125,6 +125,32 @@ export interface PerformanceDistributionResponse {
   buckets: DistributionBucket[]
 }
 
+export type SeasonalityGranularity = 'month' | 'weekday'
+
+export interface SeasonalityBucket {
+  key: string
+  label: string
+  races: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  average_odds?: number | null
+}
+
+export interface AnalyticsSeasonalityResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  granularity: SeasonalityGranularity
+  metadata: AnalyticsMetadata
+  total_races: number
+  total_wins: number
+  total_podiums: number
+  buckets: SeasonalityBucket[]
+}
+
 export interface CalendarRaceDetail {
   hippodrome?: string | null
   course_number?: number | null

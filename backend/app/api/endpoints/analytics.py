@@ -18,6 +18,7 @@ from app.schemas.analytics import (
     AnalyticsMomentumResponse,
     AnalyticsProgressionResponse,
     AnalyticsFormResponse,
+    AnalyticsSeasonalityResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
     AnalyticsOddsResponse,
@@ -42,6 +43,8 @@ from app.schemas.analytics import (
     PerformanceTrendPoint,
     PerformanceTrendResponse,
     PerformanceDistributionResponse,
+    SeasonalityBucket,
+    SeasonalityGranularity,
     PartantInsight,
     PerformanceBreakdown,
     MomentumSlice,
@@ -1152,6 +1155,117 @@ async def get_performance_distribution(
         entity_label=payload.get("entity_label"),
         dimension=dimension,
         metadata=metadata,
+        buckets=buckets,
+    )
+
+
+@router.get(
+    "/seasonality",
+    response_model=AnalyticsSeasonalityResponse,
+    summary="Analyser la saisonnalité des performances d'une entité",
+    description=(
+        "Regroupe les résultats par mois ou par jour de semaine afin d'identifier les"
+        " périodes les plus favorables pour un cheval, jockey ou entraîneur."
+    ),
+)
+async def get_performance_seasonality(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    granularity: SeasonalityGranularity = Query(
+        SeasonalityGranularity.MONTH,
+        description="Granularité temporelle pour l'agrégation (mois ou jour)",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Limiter l'analyse à un hippodrome particulier",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+    min_races: int = Query(
+        1,
+        ge=1,
+        le=50,
+        description="Nombre minimum de courses requis pour conserver une période",
+    ),
+) -> AnalyticsSeasonalityResponse:
+    """Expose les statistiques de saisonnalité pour une entité Aspiturf."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    payload = await client.seasonality(
+        entity_type=entity_type.value,
+        entity_id=entity_id,
+        granularity=granularity.value,
+        start_date=start_date,
+        end_date=end_date,
+        hippodrome=hippodrome,
+        min_races=min_races,
+    )
+
+    raw_buckets = payload.get("buckets", [])
+    buckets: List[SeasonalityBucket] = []
+
+    for item in raw_buckets:
+        races = int(item.get("races") or 0)
+        if races <= 0:
+            # On ignore les seaux sans volume exploitable pour éviter les divisions par zéro.
+            continue
+
+        buckets.append(
+            SeasonalityBucket(
+                key=str(item.get("key")),
+                label=str(item.get("label")),
+                races=races,
+                wins=int(item.get("wins") or 0),
+                podiums=int(item.get("podiums") or 0),
+                win_rate=item.get("win_rate"),
+                podium_rate=item.get("podium_rate"),
+                average_finish=item.get("average_finish"),
+                average_odds=item.get("average_odds"),
+            )
+        )
+
+    total_races = int(payload.get("total_races") or 0)
+    total_wins = int(payload.get("total_wins") or 0)
+    total_podiums = int(payload.get("total_podiums") or 0)
+
+    if not buckets or total_races == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=payload.get("date_start"),
+        date_end=payload.get("date_end"),
+    )
+
+    return AnalyticsSeasonalityResponse(
+        entity_type=entity_type,
+        entity_id=payload.get("entity_id", entity_id),
+        entity_label=payload.get("entity_label"),
+        granularity=granularity,
+        metadata=metadata,
+        total_races=total_races,
+        total_wins=total_wins,
+        total_podiums=total_podiums,
         buckets=buckets,
     )
 

@@ -22,6 +22,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Tendances de performance** : l'endpoint `/api/v1/analytics/trends` agrège les résultats par semaine ou par mois et l'interface React restitue les courbes d'évolution pour un cheval, un jockey ou un entraîneur.
 - **Analyse des séries** : le nouvel endpoint `/api/v1/analytics/streaks` met en évidence les meilleures séries de victoires/podiums par entité et le frontend expose un module dédié pour suivre les séquences en cours.
 - **Répartition des performances** : l'endpoint `/api/v1/analytics/distributions` regroupe les courses par distance, numéro de corde, hippodrome ou discipline et la page Analytics propose un tableau interactif pour comparer les segments dominants.
+- **Saisonnalité des performances** : l'endpoint `/api/v1/analytics/seasonality` regroupe les résultats par mois ou jour de semaine afin de repérer les périodes les plus rentables, avec un module interactif dans l'explorateur React.
 - **Comparateur multi-entités** : l'endpoint `/api/v1/analytics/comparisons` consolide les statistiques de plusieurs chevaux/jockeys/entraîneurs et mesure leurs confrontations directes, accessible depuis un nouveau module de la page Analytics.
 - **Indice de forme récent** : l'endpoint `/api/v1/analytics/form` calcule un score (0-5) et un indice de constance sur les N dernières courses d'une entité avec un tableau détaillé directement exploitable dans l'explorateur React.
 - **Calendrier de performances** : l'endpoint `/api/v1/analytics/calendar` agrège les résultats jour par jour et l'explorateur React affiche un tableau détaillé des réunions et partants associés.
@@ -862,7 +863,7 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Client Aspiturf enrichi avec agrégateurs (classements, tendances, séries, distributions, forme, comparaisons, calendrier) et stubs de tests
 - [x] Suite de tests FastAPI couvrant recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier
 - [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
-- [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/odds`, `/momentum`, `/workload` et `/progression` avec UI dédiée (value bets, dispersion, efficacité vs cotes, segments de cotes, momentum, charge de travail, suivi des variations)
+- [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/odds`, `/momentum`, `/workload`, `/progression` et `/seasonality` avec UI dédiée (value bets, dispersion, efficacité vs cotes, segments de cotes, momentum, charge de travail, suivi des variations, saisonnalité)
 
 ### Sprint 7 (Planifié)
 - [ ] Service Telegram pour notifications

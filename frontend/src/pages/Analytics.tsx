@@ -17,6 +17,7 @@ import type {
   AnalyticsWorkloadResponse,
   AnalyticsProgressionResponse,
   AnalyticsMomentumResponse,
+  AnalyticsSeasonalityResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
@@ -28,6 +29,8 @@ import type {
   PerformanceDistributionResponse,
   DistributionBucket,
   DistributionDimension,
+  SeasonalityBucket,
+  SeasonalityGranularity,
   TrendEntityType,
   TrendGranularity,
   AnalyticsComparisonResponse,
@@ -135,6 +138,16 @@ type DistributionFilters = {
   startDate?: string
   endDate?: string
   distanceStep?: number
+}
+
+type SeasonalityFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  granularity: SeasonalityGranularity
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  minRaces: number
 }
 
 type CalendarFilters = {
@@ -1067,6 +1080,100 @@ function DistributionPanel({ data }: { data: PerformanceDistributionResponse }) 
       </div>
 
       <DistributionTable buckets={data.buckets} />
+    </div>
+  )
+}
+
+
+function SeasonalityTable({ buckets }: { buckets: SeasonalityBucket[] }) {
+  if (!buckets.length) {
+    return <p className="text-sm text-gray-500">Aucune période ne respecte vos critères.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Période
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Courses
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Victoires
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Podiums
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Taux victoire
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Taux podium
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Arrivée moy.
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote moy.
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {buckets.map((bucket) => (
+            <tr key={bucket.key}>
+              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.races)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_odds)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+function SeasonalityPanel({ data }: { data: AnalyticsSeasonalityResponse }) {
+  // Vue agrégée pour repérer les périodes les plus rentables.
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const granularityLabel = data.granularity === 'month' ? 'Mois du calendrier' : 'Jour de semaine'
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Granularité" value={granularityLabel} />
+        <SummaryStats label="Total courses" value={formatNumber(data.total_races)} />
+        <SummaryStats
+          label="Victoires / Podiums"
+          value={`${formatNumber(data.total_wins)} / ${formatNumber(data.total_podiums)}`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+        <SummaryStats
+          label="Périodes couvertes"
+          value={formatNumber(data.buckets.length)}
+        />
+      </div>
+
+      <SeasonalityTable buckets={data.buckets} />
     </div>
   )
 }
@@ -2047,6 +2154,17 @@ export default function AnalyticsPage() {
   const [distributionError, setDistributionError] = useState<string | null>(null)
   const [distributionFilters, setDistributionFilters] = useState<DistributionFilters | null>(null)
 
+  const [seasonalityTypeInput, setSeasonalityTypeInput] = useState<TrendEntityType>('horse')
+  const [seasonalityIdInput, setSeasonalityIdInput] = useState('')
+  const [seasonalityGranularityInput, setSeasonalityGranularityInput] =
+    useState<SeasonalityGranularity>('month')
+  const [seasonalityHippoInput, setSeasonalityHippoInput] = useState('')
+  const [seasonalityStartInput, setSeasonalityStartInput] = useState('')
+  const [seasonalityEndInput, setSeasonalityEndInput] = useState('')
+  const [seasonalityMinRacesInput, setSeasonalityMinRacesInput] = useState('1')
+  const [seasonalityError, setSeasonalityError] = useState<string | null>(null)
+  const [seasonalityFilters, setSeasonalityFilters] = useState<SeasonalityFilters | null>(null)
+
   const [calendarTypeInput, setCalendarTypeInput] = useState<TrendEntityType>('horse')
   const [calendarIdInput, setCalendarIdInput] = useState('')
   const [calendarHippoInput, setCalendarHippoInput] = useState('')
@@ -2301,6 +2419,39 @@ export default function AnalyticsPage() {
         distanceStep: distributionFilters?.distanceStep,
       }),
     enabled: Boolean(distributionFilters?.entityId),
+  })
+
+  const seasonalityQueryKey = useMemo(
+    () =>
+      seasonalityFilters
+        ? [
+            'analytics',
+            'seasonality',
+            seasonalityFilters.entityType,
+            seasonalityFilters.entityId,
+            seasonalityFilters.granularity,
+            seasonalityFilters.hippodrome ?? '',
+            seasonalityFilters.startDate ?? '',
+            seasonalityFilters.endDate ?? '',
+            seasonalityFilters.minRaces,
+          ]
+        : ['analytics', 'seasonality', 'idle'],
+    [seasonalityFilters],
+  )
+
+  const seasonalityQuery = useQuery({
+    queryKey: seasonalityQueryKey,
+    queryFn: () =>
+      analyticsService.getSeasonality({
+        entityType: seasonalityFilters!.entityType,
+        entityId: seasonalityFilters!.entityId,
+        granularity: seasonalityFilters!.granularity,
+        hippodrome: seasonalityFilters?.hippodrome,
+        startDate: seasonalityFilters?.startDate,
+        endDate: seasonalityFilters?.endDate,
+        minRaces: seasonalityFilters?.minRaces,
+      }),
+    enabled: Boolean(seasonalityFilters?.entityId),
   })
 
   const calendarQueryKey = useMemo(
@@ -3005,6 +3156,41 @@ export default function AnalyticsPage() {
       startDate: distributionStartInput || undefined,
       endDate: distributionEndInput || undefined,
       distanceStep: parsedStep,
+    })
+  }
+
+  const handleSeasonalitySubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = seasonalityIdInput.trim()
+    const minRacesValue = Number(seasonalityMinRacesInput.trim() || '1')
+
+    if (!id) {
+      setSeasonalityError("Veuillez saisir un identifiant Aspiturf valide.")
+      setSeasonalityFilters(null)
+      return
+    }
+
+    if (Number.isNaN(minRacesValue) || minRacesValue < 1 || minRacesValue > 50) {
+      setSeasonalityError('Le minimum de courses doit être compris entre 1 et 50.')
+      setSeasonalityFilters(null)
+      return
+    }
+
+    if (seasonalityStartInput && seasonalityEndInput && seasonalityStartInput > seasonalityEndInput) {
+      setSeasonalityError('La date de début doit précéder la date de fin.')
+      setSeasonalityFilters(null)
+      return
+    }
+
+    setSeasonalityError(null)
+    setSeasonalityFilters({
+      entityType: seasonalityTypeInput,
+      entityId: id,
+      granularity: seasonalityGranularityInput,
+      hippodrome: seasonalityHippoInput.trim() || undefined,
+      startDate: seasonalityStartInput || undefined,
+      endDate: seasonalityEndInput || undefined,
+      minRaces: minRacesValue,
     })
   }
 
@@ -4038,13 +4224,85 @@ export default function AnalyticsPage() {
         {distributionQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(distributionQuery.error as Error).message}</p>
         )}
-      {distributionQuery.data && <DistributionPanel data={distributionQuery.data} />}
-    </SectionCard>
+    {distributionQuery.data && <DistributionPanel data={distributionQuery.data} />}
+  </SectionCard>
 
-    <SectionCard
-      title="Calendrier des performances"
-      description="Visualisez l'enchaînement des résultats jour par jour pour un cheval, un jockey ou un entraîneur."
+  <SectionCard
+    title="Saisonnalité des performances"
+    description="Détectez les mois ou jours les plus favorables pour une entité Aspiturf."
+  >
+    <form
+      onSubmit={handleSeasonalitySubmit}
+      className="grid gap-4 md:grid-cols-[repeat(7,minmax(0,1fr)),auto]"
     >
+      <select
+        value={seasonalityTypeInput}
+        onChange={(event) => setSeasonalityTypeInput(event.target.value as TrendEntityType)}
+        className="input"
+      >
+        <option value="horse">Cheval</option>
+        <option value="jockey">Jockey</option>
+        <option value="trainer">Entraîneur</option>
+      </select>
+      <input
+        value={seasonalityIdInput}
+        onChange={(event) => setSeasonalityIdInput(event.target.value)}
+        placeholder="Identifiant Aspiturf (id)"
+        className="input"
+      />
+      <select
+        value={seasonalityGranularityInput}
+        onChange={(event) => setSeasonalityGranularityInput(event.target.value as SeasonalityGranularity)}
+        className="input"
+      >
+        <option value="month">Par mois</option>
+        <option value="weekday">Par jour de semaine</option>
+      </select>
+      <input
+        value={seasonalityHippoInput}
+        onChange={(event) => setSeasonalityHippoInput(event.target.value)}
+        placeholder="Filtrer par hippodrome (optionnel)"
+        className="input"
+      />
+      <input
+        type="date"
+        value={seasonalityStartInput}
+        onChange={(event) => setSeasonalityStartInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="date"
+        value={seasonalityEndInput}
+        onChange={(event) => setSeasonalityEndInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="number"
+        min={1}
+        max={50}
+        value={seasonalityMinRacesInput}
+        onChange={(event) => setSeasonalityMinRacesInput(event.target.value)}
+        placeholder="Courses min"
+        className="input"
+      />
+      <button type="submit" className="btn btn-primary">
+        Explorer
+      </button>
+    </form>
+    {seasonalityError && <p className="text-sm text-red-600">{seasonalityError}</p>}
+    {seasonalityQuery.isPending && (
+      <p className="text-sm text-gray-500">Analyse des rythmes saisonniers en cours…</p>
+    )}
+    {seasonalityQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(seasonalityQuery.error as Error).message}</p>
+    )}
+    {seasonalityQuery.data && <SeasonalityPanel data={seasonalityQuery.data} />}
+  </SectionCard>
+
+  <SectionCard
+    title="Calendrier des performances"
+    description="Visualisez l'enchaînement des résultats jour par jour pour un cheval, un jockey ou un entraîneur."
+  >
       <form
         onSubmit={handleCalendarSubmit}
         className="grid gap-4 md:grid-cols-[repeat(5,minmax(0,1fr)),auto]"

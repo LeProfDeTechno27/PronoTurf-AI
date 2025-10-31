@@ -1031,6 +1031,179 @@ class StubAspiturfClient:
             "dimension": dimension,
             "buckets": formatted,
         }
+
+    async def seasonality(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        granularity: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        min_races: int = 1,
+    ) -> Dict[str, Any]:
+        key_field = {
+            "horse": "idChe",
+            "jockey": "idJockey",
+            "trainer": "idEntraineur",
+        }.get(entity_type)
+
+        label_field = {
+            "horse": "nom_cheval",
+            "jockey": "jockey",
+            "trainer": "entraineur",
+        }.get(entity_type)
+
+        if not key_field:
+            return {"entity_id": entity_id, "entity_label": None, "buckets": []}
+
+        month_labels = [
+            "Janvier",
+            "Février",
+            "Mars",
+            "Avril",
+            "Mai",
+            "Juin",
+            "Juillet",
+            "Août",
+            "Septembre",
+            "Octobre",
+            "Novembre",
+            "Décembre",
+        ]
+        weekday_labels = [
+            "Lundi",
+            "Mardi",
+            "Mercredi",
+            "Jeudi",
+            "Vendredi",
+            "Samedi",
+            "Dimanche",
+        ]
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        def resolve_bucket(race_date: date) -> Tuple[str, str]:
+            if granularity == "weekday":
+                weekday = race_date.weekday()
+                label = weekday_labels[weekday]
+                return (str(weekday), label)
+
+            month = race_date.month
+            label = month_labels[month - 1]
+            return (f"{month:02d}", label)
+
+        buckets: Dict[str, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+
+        for row in self._rows:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None and label_field:
+                raw_label = row.get(label_field)
+                if isinstance(raw_label, str) and raw_label.strip():
+                    entity_label = raw_label.strip()
+
+            first_date = race_date if first_date is None else min(first_date, race_date)
+            last_date = race_date if last_date is None else max(last_date, race_date)
+
+            bucket_key, bucket_label = resolve_bucket(race_date)
+            bucket = buckets.setdefault(
+                bucket_key,
+                {
+                    "label": bucket_label,
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["label"] = bucket_label
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds_value = row.get("cotedirect") or row.get("coteprob")
+            if isinstance(odds_value, (int, float)):
+                bucket["odds"].append(float(odds_value))
+
+        filtered: List[Dict[str, Any]] = []
+        total_races = 0
+        total_wins = 0
+        total_podiums = 0
+
+        for key, bucket in buckets.items():
+            races = bucket["races"]
+            if races < max(1, min_races):
+                continue
+
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+
+            positions = bucket["positions"]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            odds_values = bucket["odds"]
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            filtered.append(
+                {
+                    "key": key,
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+            total_races += races
+            total_wins += wins
+            total_podiums += podiums
+
+        filtered.sort(key=lambda item: int(item["key"]))
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "granularity": granularity,
+            "date_start": first_date,
+            "date_end": last_date,
+            "total_races": total_races,
+            "total_wins": total_wins,
+            "total_podiums": total_podiums,
+            "buckets": filtered,
+        }
+
     async def search_entities(
         self,
         entity_type: str,
@@ -2298,6 +2471,69 @@ async def test_distributions_endpoint_returns_404_on_empty_result(analytics_clie
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_seasonality_endpoint_returns_monthly_buckets(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/seasonality",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+            "granularity": "month",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["total_races"] == 6
+    assert payload["granularity"] == "month"
+
+    labels = {bucket["label"]: bucket for bucket in payload["buckets"]}
+    assert {"Mars", "Avril", "Juillet"}.issubset(labels.keys())
+
+    march_bucket = labels["Mars"]
+    assert march_bucket["races"] == 2
+    assert march_bucket["wins"] == 1
+    assert march_bucket["podiums"] == 1
+
+    july_bucket = labels["Juillet"]
+    assert july_bucket["races"] == 2
+    assert july_bucket["wins"] == 0
+    assert july_bucket["podiums"] == 0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_seasonality_endpoint_respects_min_races_filter(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/seasonality",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+            "granularity": "month",
+            "min_races": 3,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_seasonality_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/seasonality",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-06-01",
+            "end_date": "2024-05-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
 
 
 @pytest.mark.anyio("asyncio")

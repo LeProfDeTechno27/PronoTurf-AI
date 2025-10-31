@@ -24,6 +24,8 @@ import type {
   AnalyticsWorkloadResponse,
   AnalyticsProgressionResponse,
   AnalyticsMomentumResponse,
+  AnalyticsSeasonalityResponse,
+  SeasonalityGranularity,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -171,6 +173,30 @@ export const analyticsService = {
         ...(params.startDate ? { start_date: params.startDate } : {}),
         ...(params.endDate ? { end_date: params.endDate } : {}),
         ...(params.distanceStep ? { distance_step: params.distanceStep } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getSeasonality(params: {
+    entityType: TrendEntityType
+    entityId: string
+    granularity?: SeasonalityGranularity
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+    minRaces?: number
+  }) {
+    const response = await apiClient.get<AnalyticsSeasonalityResponse>('/analytics/seasonality', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.granularity ? { granularity: params.granularity } : {}),
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+        ...(params.minRaces ? { min_races: params.minRaces } : {}),
       },
     })
 

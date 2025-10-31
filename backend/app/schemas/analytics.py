@@ -562,6 +562,67 @@ class PerformanceDistributionResponse(BaseModel):
     )
 
 
+class SeasonalityGranularity(str, Enum):
+    """Granularité disponible pour l'analyse de saisonnalité."""
+
+    MONTH = "month"
+    WEEKDAY = "weekday"
+
+
+class SeasonalityBucket(BaseModel):
+    """Statistiques agrégées pour une période saisonnière (mois ou jour)."""
+
+    key: str = Field(..., description="Identifiant technique du seau de saisonnalité")
+    label: str = Field(..., description="Libellé lisible par un humain (ex: 'Mars')")
+    races: int = Field(..., ge=0, description="Nombre de courses observées")
+    wins: int = Field(..., ge=0, description="Nombre de victoires dans la période")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums dans la période")
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire calculé sur le seau",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium calculé sur le seau",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne à l'arrivée sur la période",
+    )
+    average_odds: Optional[float] = Field(
+        default=None,
+        description="Cote moyenne observée sur la période",
+    )
+
+
+class AnalyticsSeasonalityResponse(BaseModel):
+    """Réponse de l'endpoint /analytics/seasonality."""
+
+    entity_type: TrendEntityType = Field(..., description="Type d'entité analysée")
+    entity_id: str = Field(..., description="Identifiant unique de l'entité analysée")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé lisible de l'entité s'il est disponible"
+    )
+    granularity: SeasonalityGranularity = Field(
+        ..., description="Granularité temporelle choisie (mois ou jour de semaine)"
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées associées aux filtres et à la période analysée",
+    )
+    total_races: int = Field(..., ge=0, description="Nombre total de courses étudiées")
+    total_wins: int = Field(..., ge=0, description="Nombre total de victoires enregistrées")
+    total_podiums: int = Field(..., ge=0, description="Nombre total de podiums enregistrés")
+    buckets: List[SeasonalityBucket] = Field(
+        default_factory=list,
+        description="Détail des performances par période de saisonnalité",
+    )
+
+
 class CalendarRaceDetail(BaseModel):
     """Détail d'une course utilisée dans le calendrier de performances."""
 

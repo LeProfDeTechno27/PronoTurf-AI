@@ -1097,6 +1097,223 @@ class AspiturfClient:
             "buckets": formatted,
         }
 
+    async def seasonality(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        granularity: str = "month",
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        min_races: int = 1,
+    ) -> Dict[str, Any]:
+        """Calcule la saisonnalité des performances pour une entité donnée."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not entity_id:
+            raise ValueError("entity_id est requis pour analyser la saisonnalité")
+
+        if granularity not in {"month", "weekday"}:
+            raise ValueError("granularity doit être 'month' ou 'weekday'")
+
+        if min_races <= 0:
+            raise ValueError("min_races doit être strictement positif")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        if entity_type == "horse":
+            key_field = "idChe"
+            label_fields = ("nom_cheval", "cheval")
+        elif entity_type == "jockey":
+            key_field = "idJockey"
+            label_fields = ("jockey",)
+        else:
+            key_field = "idEntraineur"
+            label_fields = ("entraineur",)
+
+        month_labels = {
+            1: "Janvier",
+            2: "Février",
+            3: "Mars",
+            4: "Avril",
+            5: "Mai",
+            6: "Juin",
+            7: "Juillet",
+            8: "Août",
+            9: "Septembre",
+            10: "Octobre",
+            11: "Novembre",
+            12: "Décembre",
+        }
+        weekday_labels = {
+            0: "Lundi",
+            1: "Mardi",
+            2: "Mercredi",
+            3: "Jeudi",
+            4: "Vendredi",
+            5: "Samedi",
+            6: "Dimanche",
+        }
+
+        def resolve_bucket_key(race_date: date) -> Tuple[str, str]:
+            """Retourne la clé d'agrégation et le libellé pour la date fournie."""
+
+            if granularity == "weekday":
+                weekday = race_date.weekday()
+                label = weekday_labels.get(weekday, f"Jour {weekday}")
+                return (str(weekday), label)
+
+            month = race_date.month
+            label = month_labels.get(month, f"Mois {month}")
+            return (f"{month:02d}", label)
+
+        def parse_odds(value: Any) -> Optional[float]:
+            """Convertit une cote Aspiturf en flottant lorsque possible."""
+
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.replace(",", "."))
+                except ValueError:
+                    return None
+            return None
+
+        buckets: Dict[str, Dict[str, Any]] = {}
+        entity_label: Optional[str] = None
+        first_date: Optional[date] = None
+        last_date: Optional[date] = None
+        hippodromes: Set[str] = set()
+
+        for row in self._data:
+            if row.get(key_field) != entity_id:
+                continue
+
+            race_date = row.get("jour")
+            if not isinstance(race_date, date):
+                # Sans date fiable il est impossible d'établir une saisonnalité cohérente.
+                continue
+
+            if start_date and race_date < start_date:
+                continue
+            if end_date and race_date > end_date:
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_label is None:
+                for field in label_fields:
+                    raw_value = row.get(field)
+                    if isinstance(raw_value, str) and raw_value.strip():
+                        entity_label = raw_value.strip()
+                        break
+
+            if first_date is None or race_date < first_date:
+                first_date = race_date
+            if last_date is None or race_date > last_date:
+                last_date = race_date
+
+            hippo_value = row.get("hippo")
+            if isinstance(hippo_value, str) and hippo_value.strip():
+                hippodromes.add(hippo_value.strip().upper())
+
+            bucket_key, bucket_label = resolve_bucket_key(race_date)
+            bucket = buckets.setdefault(
+                bucket_key,
+                {
+                    "label": bucket_label,
+                    "races": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "odds": [],
+                },
+            )
+
+            bucket["label"] = bucket_label
+            bucket["races"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                bucket["positions"].append(position)
+                if position == 1:
+                    bucket["wins"] += 1
+                if 1 <= position <= 3:
+                    bucket["podiums"] += 1
+
+            odds_value = parse_odds(
+                row.get("cotedirect")
+                or row.get("coteprob")
+                or row.get("rapport_direct")
+                or row.get("rapport_probable")
+            )
+            if odds_value is not None:
+                bucket["odds"].append(odds_value)
+
+        filtered_buckets: List[Dict[str, Any]] = []
+        total_races = 0
+        total_wins = 0
+        total_podiums = 0
+
+        for key, bucket in buckets.items():
+            races = bucket["races"]
+            if races < min_races:
+                continue
+
+            wins = bucket["wins"]
+            podiums = bucket["podiums"]
+
+            positions = [pos for pos in bucket["positions"] if isinstance(pos, (int, float))]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            odds_values = bucket["odds"]
+            average_odds = sum(odds_values) / len(odds_values) if odds_values else None
+
+            filtered_buckets.append(
+                {
+                    "key": key,
+                    "label": bucket["label"],
+                    "races": races,
+                    "wins": wins,
+                    "podiums": podiums,
+                    "win_rate": round(wins / races, 4) if races else None,
+                    "podium_rate": round(podiums / races, 4) if races else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "average_odds": round(average_odds, 2) if average_odds is not None else None,
+                }
+            )
+
+            total_races += races
+            total_wins += wins
+            total_podiums += podiums
+
+        if granularity == "weekday":
+            filtered_buckets.sort(key=lambda item: int(item["key"]))
+        else:
+            filtered_buckets.sort(key=lambda item: int(item["key"]))
+
+        return {
+            "entity_id": entity_id,
+            "entity_label": entity_label,
+            "granularity": granularity,
+            "date_start": first_date,
+            "date_end": last_date,
+            "hippodromes": sorted(hippodromes),
+            "total_races": total_races,
+            "total_wins": total_wins,
+            "total_podiums": total_podiums,
+            "buckets": filtered_buckets,
+        }
+
     async def value_opportunities(
         self,
         *,
