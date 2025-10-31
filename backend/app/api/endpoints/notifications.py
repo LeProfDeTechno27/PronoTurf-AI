@@ -12,12 +12,13 @@ Routes disponibles:
 """
 
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc, func, or_
 
+from app.core.config import settings
 from app.core.database import get_async_db
 from app.api.deps import get_current_user
 from app.models.user import User
@@ -30,8 +31,12 @@ from app.models.notification import (
 from app.schemas.notification import (
     NotificationResponse,
     NotificationStatsResponse,
-    NotificationMarkReadRequest
+    NotificationMarkReadRequest,
+    TelegramLinkRequest,
+    TelegramLinkResponse,
+    TelegramStatusResponse,
 )
+from app.services.telegram_service import telegram_service
 
 router = APIRouter()
 
@@ -456,3 +461,68 @@ async def get_recent_notifications(
         )
         for notif in notifications
     ]
+@router.get("/telegram/status", response_model=TelegramStatusResponse)
+async def get_telegram_status(current_user: User = Depends(get_current_user)) -> TelegramStatusResponse:
+    """Retourne l'état courant de la liaison Telegram pour l'utilisateur."""
+    return TelegramStatusResponse(
+        chat_id=current_user.telegram_chat_id,
+        telegram_enabled=current_user.has_telegram_notifications,
+        bot_configured=bool(settings.TELEGRAM_ENABLED and telegram_service.is_configured),
+    )
+
+
+@router.post("/telegram/register", response_model=TelegramLinkResponse)
+async def register_telegram_chat(
+    payload: TelegramLinkRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> TelegramLinkResponse:
+    """Associe un identifiant de chat Telegram à l'utilisateur connecté."""
+
+    if not settings.TELEGRAM_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Les notifications Telegram sont désactivées sur le serveur.",
+        )
+
+    chat_id = payload.chat_id.strip()
+    if not chat_id.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le chat_id Telegram doit être numérique.",
+        )
+
+    current_user.telegram_chat_id = chat_id
+    current_user.telegram_notifications_enabled = True
+    current_user.telegram_linked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    await db.commit()
+    await db.refresh(current_user)
+
+    test_sent: Optional[bool] = None
+    if telegram_service.is_configured:
+        user_label = current_user.full_name if hasattr(current_user, "full_name") else current_user.email
+        test_sent = await telegram_service.send_link_confirmation(chat_id=chat_id, user_label=user_label or "client")
+
+    return TelegramLinkResponse(
+        chat_id=current_user.telegram_chat_id,
+        telegram_enabled=current_user.has_telegram_notifications,
+        test_message_sent=test_sent,
+    )
+
+
+@router.delete("/telegram/unlink", response_model=TelegramLinkResponse)
+async def unlink_telegram_chat(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> TelegramLinkResponse:
+    """Désactive les notifications Telegram pour l'utilisateur et supprime l'association."""
+
+    current_user.telegram_notifications_enabled = False
+    current_user.telegram_chat_id = None
+    current_user.telegram_linked_at = None
+
+    await db.commit()
+    await db.refresh(current_user)
+
+    return TelegramLinkResponse(chat_id=None, telegram_enabled=False, test_message_sent=None)

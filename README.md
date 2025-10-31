@@ -318,6 +318,7 @@ TURFINFO_ENDPOINT_TYPE=online  # online ou offline
 
 # Telegram
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_ENABLED=true
 
 # Environment
 ENVIRONMENT=development
@@ -466,6 +467,8 @@ L'application dispose de 3 rôles utilisateurs :
 - Rappels avant départ
 - Résultats courses
 - Bilans quotidiens/hebdomadaires
+- Liaison directe via `POST /api/v1/notifications/telegram/register` (message de bienvenue automatique)
+- Consultation du statut (`GET /api/v1/notifications/telegram/status`) et désactivation instantanée (`DELETE /api/v1/notifications/telegram/unlink`)
 
 ## Tâches Planifiées
 
@@ -518,6 +521,14 @@ Documentation complète disponible via Swagger UI :
 - `POST /` : Placer pari simulé (validation bankroll)
 - `GET /` : Historique paris (pagination, filtres)
 - `GET /stats/summary` : Statistiques (ROI, win rate)
+
+#### Notifications (`/api/v1/notifications`)
+- `GET /` : Notifications paginées de l'utilisateur
+- `GET /unread` : Liste des alertes non lues
+- `PATCH /{notification_id}/read` : Marquer une notification comme lue
+- `POST /telegram/register` : Enregistrer un chat Telegram et envoyer un message test
+- `GET /telegram/status` : Vérifier l'état de la liaison Telegram
+- `DELETE /telegram/unlink` : Désactiver les notifications Telegram
 - `POST /kelly-criterion` : Calculer mise optimale Kelly
 - `DELETE /{pari_id}` : Annuler pari (avant départ)
 
@@ -865,8 +876,8 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
 - [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/odds`, `/momentum`, `/workload`, `/progression` et `/seasonality` avec UI dédiée (value bets, dispersion, efficacité vs cotes, segments de cotes, momentum, charge de travail, suivi des variations, saisonnalité)
 
-### Sprint 7 (Planifié)
-- [ ] Service Telegram pour notifications
+### Sprint 7 (En cours)
+- [x] Service Telegram pour notifications (API de liaison, statut et message test)
 - [ ] Service Email pour notifications
 - [ ] Tâches Celery de notifications
 - [ ] Dashboard Streamlit avancé
