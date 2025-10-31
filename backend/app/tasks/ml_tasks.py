@@ -4,6 +4,7 @@ import json
 import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
+from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -204,6 +205,54 @@ def _build_calibration_table(
         )
 
     return calibration_rows
+
+
+def _build_gain_curve(
+    scores: List[float],
+    truths: List[int],
+    *,
+    steps: int = 5,
+) -> List[Dict[str, Optional[float]]]:
+    """Construit une courbe de gain cumulative sur plusieurs paliers.
+
+    L'objectif est de mesurer la capacité du modèle à concentrer rapidement
+    les bons partants (top 3) lorsqu'on ne retient que les meilleures
+    probabilités. Chaque ligne représente la performance cumulée après avoir
+    couvert ``coverage`` pourcent des partants.
+    """
+
+    if not scores or not truths or len(scores) != len(truths):
+        return []
+
+    combined = sorted(zip(scores, truths), key=lambda item: item[0], reverse=True)
+    total = len(combined)
+    total_positive = sum(truths)
+
+    gain_curve: List[Dict[str, Optional[float]]] = []
+    cumulative_hits = 0
+
+    for step in range(1, steps + 1):
+        cutoff = max(1, ceil(total * (step / steps)))
+        selection = combined[:cutoff]
+        cumulative_hits = sum(truth for _, truth in selection)
+
+        coverage = cutoff / total
+        cumulative_hit_rate = cumulative_hits / cutoff if cutoff else None
+        capture_rate: Optional[float] = None
+        if total_positive:
+            capture_rate = cumulative_hits / total_positive
+
+        gain_curve.append(
+            {
+                "step": step,
+                "coverage": coverage,
+                "observations": cutoff,
+                "cumulative_hit_rate": cumulative_hit_rate,
+                "capture_rate": capture_rate,
+            }
+        )
+
+    return gain_curve
 
 
 def _evaluate_threshold_grid(
@@ -466,6 +515,16 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             thresholds=[0.2, probability_threshold, 0.4, 0.5],
         )
 
+        # Fournit une vision cumulative du gain : en ne conservant que les
+        # meilleures probabilités, quelle part des arrivées dans les 3 est
+        # capturée ? Cette courbe complète la calibration en évaluant la
+        # puissance de tri du modèle.
+        gain_curve = _build_gain_curve(
+            y_scores,
+            y_true,
+            steps=5,
+        )
+
         # Consolide un tableau de bord par niveau de confiance afin d'inspecter
         # rapidement la fiabilité réelle de chaque segment (utile pour piloter
         # alertes ou limites d'enjeux par exemple).
@@ -501,6 +560,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_top3_probability": _safe_average(top3_probabilities),
             "calibration_table": calibration_table,
             "threshold_sensitivity": threshold_grid,
+            "gain_curve": gain_curve,
             "confidence_level_metrics": confidence_level_metrics,
         }
 

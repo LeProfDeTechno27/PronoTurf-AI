@@ -39,6 +39,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Table de calibration automatique** : chaque exécution de la tâche Celery `update_model_performance` construit désormais des quantiles de probabilité (5 tranches) afin de comparer probabilité moyenne et taux de réussite observé. Cela permet d'identifier immédiatement les sur/sous-estimations du modèle.
 - **Analyse multi-seuils prête à l'emploi** : les métriques clés (accuracy, précision, rappel, F1, taux de positifs) sont recalculées pour un jeu de seuils standards (`0.20`, `0.30`, `0.40`, `0.50`). Les résultats sont historisés dans la table `ml_model` pour suivre la sensibilité de la stratégie de coupure.
 - **Lecture par niveau de confiance** : en parallèle des quantiles, un tableau de bord consolide précision, rappel et taux de positifs pour chaque niveau de confiance (« high », « medium », « low »). Cette vue directe permet d'ajuster les règles métiers (notifications, exposition financière) selon la fiabilité réelle de chaque segment.
+- **Courbe de gain cumulative** : la même tâche produit désormais une "gain curve" qui mesure, palier par palier, la part des arrivées dans les trois premiers capturée lorsque l'on ne conserve que les meilleures probabilités. Idéal pour optimiser une stratégie de filtrage ou de paris progressifs.
 
 ## Technologies
 
