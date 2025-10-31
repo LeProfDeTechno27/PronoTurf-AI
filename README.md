@@ -45,6 +45,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Courbe précision-rappel synthétique** : une table compacte présente, seuil par seuil, le compromis précision/rappel et le score F1 associé pour piloter finement la stratégie de sélection selon l'appétence au risque.
 - **Courbe ROC échantillonnée** : la tâche extrait désormais quelques points clés (taux de faux positifs, rappel, spécificité et indice de Youden) afin d'identifier rapidement le seuil qui maximise la détection tout en contrôlant les erreurs.
 - **Diagnostic Kolmogorov-Smirnov** : la séparation entre gagnants et perdants est suivie via la statistique KS et une courbe cumulative compacte, idéale pour identifier un seuil discriminant même lorsque les métriques globales paraissent stables.
+- **Chronologie quotidienne des performances** : un tableau `daily_performance` récapitule chaque journée analysée (volumétrie, précision, rappel, part de paris à valeur) pour repérer d'éventuelles dérives temporelles ou effets de calendrier sans quitter le tableau de bord.
 
 ## Technologies
 

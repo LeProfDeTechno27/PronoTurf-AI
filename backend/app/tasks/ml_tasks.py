@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from math import ceil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -632,6 +632,58 @@ def _summarise_group_performance(
     return summary
 
 
+def _summarise_daily_performance(
+    daily_breakdown: Dict[str, Dict[str, object]]
+) -> List[Dict[str, Optional[float]]]:
+    """Agrège les performances jour par jour pour suivre les dérives temporelles."""
+
+    if not daily_breakdown:
+        return []
+
+    timeline: List[Dict[str, Optional[float]]] = []
+
+    for day in sorted(daily_breakdown.keys()):
+        payload = daily_breakdown[day]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        value_bet_courses: Set[int] = set(payload.get("value_bet_courses", set()))
+
+        sample_count = len(truths)
+        positive_rate = (
+            sum(predicted) / sample_count if sample_count else None
+        )
+        observed_positive_rate = (
+            sum(truths) / sample_count if sample_count else None
+        )
+
+        accuracy = precision = recall = f1 = None
+        if accuracy_score and sample_count:
+            accuracy = accuracy_score(truths, predicted)
+            precision = precision_score(truths, predicted, zero_division=0)
+            recall = recall_score(truths, predicted, zero_division=0)
+            f1 = f1_score(truths, predicted, zero_division=0)
+
+        timeline.append(
+            {
+                "day": day,
+                "samples": sample_count,
+                "courses": len(courses),
+                "value_bet_courses": len(value_bet_courses),
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "positive_rate": positive_rate,
+                "observed_positive_rate": observed_positive_rate,
+                "average_probability": _safe_average(scores),
+            }
+        )
+
+    return timeline
+
+
 def _coerce_metrics(payload: Optional[object]) -> Dict[str, object]:
     """Convertit un champ JSON éventuel en dictionnaire python."""
 
@@ -712,6 +764,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
         model_versions: Counter[str] = Counter()
         course_stats: Dict[int, Dict[str, object]] = {}
+        daily_breakdown: Dict[str, Dict[str, object]] = {}
 
         # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
         # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
@@ -750,6 +803,35 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "is_top3": bool(is_top3),
                 }
             )
+
+            # On conserve également une vue chronologique afin d'identifier les
+            # journées où le modèle surperforme ou décroche brutalement.
+            generation_day = (
+                (pronostic.generated_at.date() if pronostic.generated_at else None)
+                or (
+                    course.reunion.reunion_date
+                    if hasattr(course, "reunion") and course.reunion
+                    else None
+                )
+                or cutoff_date
+            )
+            day_key = generation_day.isoformat()
+            day_bucket = daily_breakdown.setdefault(
+                day_key,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "value_bet_courses": set(),
+                },
+            )
+            day_bucket["truths"].append(is_top3)
+            day_bucket["predictions"].append(predicted_label)
+            day_bucket["scores"].append(probability)
+            day_bucket["courses"].add(course.course_id)
+            if pronostic.value_bet_detected:
+                day_bucket["value_bet_courses"].add(course.course_id)
 
         evaluation_timestamp = datetime.now().isoformat()
 
@@ -884,6 +966,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             for level, data in sorted(confidence_breakdown.items())
         }
 
+        daily_performance = _summarise_daily_performance(daily_breakdown)
+
         metrics = {
             "accuracy": accuracy,
             "precision": precision,
@@ -915,6 +999,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_curve": roc_curve_points,
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
+            "daily_performance": daily_performance,
         }
 
         confidence_distribution = {
@@ -936,6 +1021,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
+            "daily_performance": daily_performance,
         }
 
         active_model = (
@@ -977,6 +1063,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "calibration_diagnostics": calibration_diagnostics,
             "lift_analysis": lift_analysis,
+            "daily_performance": daily_performance,
             "model_version_breakdown": dict(model_versions),
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,

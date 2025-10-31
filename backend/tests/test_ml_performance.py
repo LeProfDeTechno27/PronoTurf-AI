@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -143,6 +143,7 @@ def _seed_reference_data(db: Session) -> None:
         quinte_predicted=None,
         confidence_score=Decimal("0.55"),
         value_bet_detected=True,
+        generated_at=datetime.combine(date.today() - timedelta(days=1), time(11, 0)),
     )
     pronostic2 = Pronostic(
         course_id=course2.course_id,
@@ -154,6 +155,7 @@ def _seed_reference_data(db: Session) -> None:
         quinte_predicted=None,
         confidence_score=Decimal("0.40"),
         value_bet_detected=False,
+        generated_at=datetime.combine(date.today(), time(10, 30)),
     )
     db.add_all([pronostic1, pronostic2])
     db.flush()
@@ -366,6 +368,30 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert level_metrics["low"]["precision"] == pytest.approx(0.0, abs=1e-6)
     assert level_metrics["low"]["positive_rate"] == pytest.approx(0.0, abs=1e-6)
 
+    daily_performance = metrics["daily_performance"]
+    assert len(daily_performance) == 2
+
+    day_minus_one = (date.today() - timedelta(days=1)).isoformat()
+    today = date.today().isoformat()
+
+    assert daily_performance[0]["day"] == day_minus_one
+    assert daily_performance[0]["samples"] == 3
+    assert daily_performance[0]["courses"] == 1
+    assert daily_performance[0]["value_bet_courses"] == 1
+    assert daily_performance[0]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert daily_performance[0]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert daily_performance[0]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    assert daily_performance[1]["day"] == today
+    assert daily_performance[1]["samples"] == 3
+    assert daily_performance[1]["courses"] == 1
+    assert daily_performance[1]["value_bet_courses"] == 0
+    assert daily_performance[1]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert daily_performance[1]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert daily_performance[1]["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert daily_performance[1]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert daily_performance[1]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -383,6 +409,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
         assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
+        assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
