@@ -15,6 +15,7 @@ import type {
   AnalyticsOddsResponse,
   AnalyticsEfficiencyResponse,
   AnalyticsWorkloadResponse,
+  AnalyticsProgressionResponse,
   AnalyticsMomentumResponse,
   LeaderboardEntry,
   PerformanceBreakdown,
@@ -41,6 +42,7 @@ import type {
   EfficiencySample,
   WorkloadTimelineEntry,
   MomentumSlice,
+  ProgressionRace,
 } from '../types/analytics'
 
 const formatPercent = (value?: number | null, digits = 1) =>
@@ -178,6 +180,14 @@ type OddsFilters = {
 }
 
 type WorkloadFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+}
+
+type ProgressionFilters = {
   entityType: TrendEntityType
   entityId: string
   hippodrome?: string
@@ -1744,6 +1754,123 @@ function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
   )
 }
 
+function ProgressionPanel({ data }: { data: AnalyticsProgressionResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const { summary, races } = data
+
+  const formatChange = (value?: number | null) => {
+    if (value == null) {
+      return '—'
+    }
+    return value > 0 ? `+${value}` : value.toString()
+  }
+
+  const trendLabel = (trend: ProgressionRace['trend']) => {
+    switch (trend) {
+      case 'improvement':
+        return 'Amélioration'
+      case 'decline':
+        return 'Régression'
+      case 'stable':
+        return 'Stable'
+      case 'initial':
+        return 'Point de départ'
+      default:
+        return 'Indéterminé'
+    }
+  }
+
+  const trendBadgeClass = (trend: ProgressionRace['trend']) => {
+    switch (trend) {
+      case 'improvement':
+        return 'bg-emerald-100 text-emerald-700'
+      case 'decline':
+        return 'bg-rose-100 text-rose-700'
+      case 'stable':
+        return 'bg-amber-100 text-amber-700'
+      case 'initial':
+        return 'bg-slate-100 text-slate-700'
+      default:
+        return 'bg-gray-100 text-gray-600'
+    }
+  }
+
+  const netProgress = summary.net_progress ?? 0
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats
+          label="Plage des données"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats label="Courses analysées" value={formatNumber(summary.races)} />
+        <SummaryStats
+          label="Progression nette"
+          value={summary.net_progress != null ? formatChange(netProgress) : '—'}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats
+          label="Améliorations"
+          value={`${formatNumber(summary.improvements)} (${formatAverage(summary.average_change, 3)})`}
+        />
+        <SummaryStats label="Régressions" value={formatNumber(summary.declines)} />
+        <SummaryStats label="Positions stables" value={formatNumber(summary.stable)} />
+        <SummaryStats
+          label="Séries max"
+          value={`+${summary.longest_improvement_streak} / -${summary.longest_decline_streak}`}
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-gray-200">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Date
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Hippodrome
+              </th>
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Arrivée
+              </th>
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Précédente
+              </th>
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Variation
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Tendance
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 bg-white">
+            {races.map((race, index) => (
+              <tr key={`${race.date ?? 'unknown'}-${index}`}>
+                <td className="px-4 py-2 text-sm text-gray-700">{formatDate(race.date)}</td>
+                <td className="px-4 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
+                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
+                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.previous_position)}</td>
+                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatChange(race.change)}</td>
+                <td className="px-4 py-2 text-sm text-gray-700">
+                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${trendBadgeClass(race.trend)}`}>
+                    {trendLabel(race.trend)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function MomentumSliceTable({ title, slice }: { title: string; slice: MomentumSlice }) {
   return (
     <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -1969,6 +2096,14 @@ export default function AnalyticsPage() {
   const [workloadEndInput, setWorkloadEndInput] = useState('')
   const [workloadError, setWorkloadError] = useState<string | null>(null)
   const [workloadFilters, setWorkloadFilters] = useState<WorkloadFilters | null>(null)
+
+  const [progressionTypeInput, setProgressionTypeInput] = useState<TrendEntityType>('horse')
+  const [progressionIdInput, setProgressionIdInput] = useState('')
+  const [progressionHippoInput, setProgressionHippoInput] = useState('')
+  const [progressionStartInput, setProgressionStartInput] = useState('')
+  const [progressionEndInput, setProgressionEndInput] = useState('')
+  const [progressionError, setProgressionError] = useState<string | null>(null)
+  const [progressionFilters, setProgressionFilters] = useState<ProgressionFilters | null>(null)
 
   const [momentumTypeInput, setMomentumTypeInput] = useState<TrendEntityType>('horse')
   const [momentumIdInput, setMomentumIdInput] = useState('')
@@ -2344,6 +2479,35 @@ export default function AnalyticsPage() {
         endDate: workloadFilters?.endDate,
       }),
     enabled: Boolean(workloadFilters?.entityId),
+  })
+
+  const progressionQueryKey = useMemo(
+    () =>
+      progressionFilters
+        ? [
+            'analytics',
+            'progression',
+            progressionFilters.entityType,
+            progressionFilters.entityId,
+            progressionFilters.hippodrome ?? '',
+            progressionFilters.startDate ?? '',
+            progressionFilters.endDate ?? '',
+          ]
+        : ['analytics', 'progression', 'idle'],
+    [progressionFilters],
+  )
+
+  const progressionQuery = useQuery({
+    queryKey: progressionQueryKey,
+    queryFn: () =>
+      analyticsService.getProgression({
+        entityType: progressionFilters!.entityType,
+        entityId: progressionFilters!.entityId,
+        hippodrome: progressionFilters?.hippodrome,
+        startDate: progressionFilters?.startDate,
+        endDate: progressionFilters?.endDate,
+      }),
+    enabled: Boolean(progressionFilters?.entityId),
   })
 
   const momentumQueryKey = useMemo(
@@ -2734,6 +2898,32 @@ export default function AnalyticsPage() {
       hippodrome: workloadHippoInput.trim() || undefined,
       startDate: workloadStartInput || undefined,
       endDate: workloadEndInput || undefined,
+    })
+  }
+
+  const handleProgressionSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = progressionIdInput.trim()
+
+    if (!id) {
+      setProgressionError("Veuillez saisir un identifiant Aspiturf valide.")
+      setProgressionFilters(null)
+      return
+    }
+
+    if (progressionStartInput && progressionEndInput && progressionStartInput > progressionEndInput) {
+      setProgressionError('La date de début doit précéder la date de fin.')
+      setProgressionFilters(null)
+      return
+    }
+
+    setProgressionError(null)
+    setProgressionFilters({
+      entityType: progressionTypeInput,
+      entityId: id,
+      hippodrome: progressionHippoInput.trim() || undefined,
+      startDate: progressionStartInput || undefined,
+      endDate: progressionEndInput || undefined,
     })
   }
 
@@ -3457,6 +3647,61 @@ export default function AnalyticsPage() {
       <p className="text-sm text-red-600">Erreur: {(workloadQuery.error as Error).message}</p>
     )}
     {workloadQuery.data && <WorkloadPanel data={workloadQuery.data} />}
+  </SectionCard>
+
+  <SectionCard
+    title="Progression course par course"
+    description="Visualisez l'évolution des classements pour détecter les phases de progression ou de creux."
+  >
+    <form
+      onSubmit={handleProgressionSubmit}
+      className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
+    >
+      <select
+        value={progressionTypeInput}
+        onChange={(event) => setProgressionTypeInput(event.target.value as TrendEntityType)}
+        className="input"
+      >
+        <option value="horse">Cheval</option>
+        <option value="jockey">Jockey</option>
+        <option value="trainer">Entraîneur</option>
+      </select>
+      <input
+        value={progressionIdInput}
+        onChange={(event) => setProgressionIdInput(event.target.value)}
+        placeholder="Identifiant Aspiturf (id)"
+        className="input"
+      />
+      <input
+        value={progressionHippoInput}
+        onChange={(event) => setProgressionHippoInput(event.target.value)}
+        placeholder="Filtrer par hippodrome (optionnel)"
+        className="input"
+      />
+      <input
+        type="date"
+        value={progressionStartInput}
+        onChange={(event) => setProgressionStartInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="date"
+        value={progressionEndInput}
+        onChange={(event) => setProgressionEndInput(event.target.value)}
+        className="input"
+      />
+      <button type="submit" className="btn btn-primary">
+        Analyser
+      </button>
+    </form>
+    {progressionError && <p className="text-sm text-red-600">{progressionError}</p>}
+    {progressionQuery.isPending && (
+      <p className="text-sm text-gray-500">Analyse de la progression en cours…</p>
+    )}
+    {progressionQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(progressionQuery.error as Error).message}</p>
+    )}
+    {progressionQuery.data && <ProgressionPanel data={progressionQuery.data} />}
   </SectionCard>
 
   <SectionCard

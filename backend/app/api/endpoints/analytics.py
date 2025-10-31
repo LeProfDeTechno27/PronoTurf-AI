@@ -16,6 +16,7 @@ from app.schemas.analytics import (
     ComparisonEntitySummary,
     HeadToHeadBreakdown,
     AnalyticsMomentumResponse,
+    AnalyticsProgressionResponse,
     AnalyticsFormResponse,
     AnalyticsSearchResult,
     AnalyticsSearchType,
@@ -45,6 +46,8 @@ from app.schemas.analytics import (
     PerformanceBreakdown,
     MomentumSlice,
     MomentumShift,
+    ProgressionRace,
+    ProgressionSummary,
     OddsBucketMetrics,
     PerformanceSummary,
     RecentRace,
@@ -334,6 +337,108 @@ def _consistency_index(positions: List[int]) -> Optional[float]:
     deviation = pstdev(cleaned)
     # Plus l'écart-type est faible, plus l'indice tend vers 1.
     return round(1 / (1 + deviation), 3)
+
+
+def _progression_trend(change: Optional[int], has_reference: bool) -> str:
+    """Associe un libellé simple à la variation observée."""
+
+    if change is None:
+        return "initial" if not has_reference else "unknown"
+    if change > 0:
+        return "improvement"
+    if change < 0:
+        return "decline"
+    return "stable"
+
+
+def _progression_analysis(rows: List[Dict[str, Any]]) -> Tuple[List[ProgressionRace], ProgressionSummary]:
+    """Analyse la séquence chronologique de courses pour produire les variations."""
+
+    chronological = list(reversed(_sorted_races(rows)))
+
+    entries: List[ProgressionRace] = []
+    changes: List[int] = []
+
+    improvements = 0
+    declines = 0
+    stable = 0
+    longest_improvement_streak = 0
+    longest_decline_streak = 0
+    current_improvement_streak = 0
+    current_decline_streak = 0
+
+    previous_position: Optional[int] = None
+    reference_defined = False
+
+    for row in chronological:
+        position = row.get("cl") if isinstance(row.get("cl"), int) else None
+        if position is not None and not reference_defined:
+            # La première position rencontrée sert de base de comparaison.
+            reference_defined = True
+
+        change_value: Optional[int] = None
+        if previous_position is not None and position is not None:
+            change_value = previous_position - position
+            changes.append(change_value)
+
+            if change_value > 0:
+                improvements += 1
+                current_improvement_streak += 1
+                current_decline_streak = 0
+                longest_improvement_streak = max(longest_improvement_streak, current_improvement_streak)
+            elif change_value < 0:
+                declines += 1
+                current_decline_streak += 1
+                current_improvement_streak = 0
+                longest_decline_streak = max(longest_decline_streak, current_decline_streak)
+            else:
+                stable += 1
+                current_improvement_streak = 0
+                current_decline_streak = 0
+        else:
+            current_improvement_streak = 0
+            current_decline_streak = 0
+
+        entries.append(
+            ProgressionRace(
+                date=row.get("jour") if isinstance(row.get("jour"), date) else None,
+                hippodrome=row.get("hippo"),
+                course_number=row.get("prix") if isinstance(row.get("prix"), int) else None,
+                distance=row.get("dist") if isinstance(row.get("dist"), int) else None,
+                final_position=position,
+                previous_position=previous_position if previous_position is not None else None,
+                change=change_value,
+                trend=_progression_trend(change_value, previous_position is not None),
+            )
+        )
+
+        if position is not None:
+            previous_position = position
+
+    races_with_position = [entry for entry in entries if entry.final_position is not None]
+
+    average_change: Optional[float] = None
+    if changes:
+        average_change = round(sum(changes) / len(changes), 3)
+
+    best_change = max(changes) if changes else None
+    worst_change = min(changes) if changes else None
+    net_progress = sum(changes) if changes else None
+
+    summary = ProgressionSummary(
+        races=len(races_with_position),
+        improvements=improvements,
+        declines=declines,
+        stable=stable,
+        average_change=average_change,
+        best_change=best_change,
+        worst_change=worst_change,
+        longest_improvement_streak=longest_improvement_streak,
+        longest_decline_streak=longest_decline_streak,
+        net_progress=net_progress,
+    )
+
+    return entries, summary
 
 
 def _momentum_slice(label: str, rows: List[Dict[str, Any]]) -> MomentumSlice:
@@ -1954,6 +2059,102 @@ async def get_workload_profile(
         metadata=metadata,
         summary=summary,
         timeline=timeline_entries,
+    )
+
+
+@router.get(
+    "/progression",
+    response_model=AnalyticsProgressionResponse,
+    summary="Mesurer la progression course par course",
+    description=(
+        "Analyse les variations de classement d'un cheval, jockey ou entraîneur sur ses courses "
+        "successives afin d'identifier les phases d'amélioration ou de creux."
+    ),
+)
+async def get_progression_analysis(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)"
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité"
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date"
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date"
+    ),
+) -> AnalyticsProgressionResponse:
+    """Retourne une analyse des variations de position d'arrivée d'une entité."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    entries, summary = _progression_analysis(rows)
+    meaningful_entries = [entry for entry in entries if entry.change is not None]
+
+    if summary.races < 2 or not meaningful_entries:
+        raise HTTPException(
+            status_code=404,
+            detail="Au moins deux courses avec position valide sont nécessaires pour analyser la progression",
+        )
+
+    if entity_type == TrendEntityType.HORSE:
+        label_fields: Tuple[str, ...] = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(rows, label_fields)
+
+    dates = [entry.date for entry in entries if isinstance(entry.date, date)]
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=min(dates) if dates else None,
+        date_end=max(dates) if dates else None,
+    )
+
+    ordered_entries = sorted(
+        entries,
+        key=lambda item: (
+            item.date if isinstance(item.date, date) else date.min,
+            item.course_number or -1,
+        ),
+        reverse=True,
+    )
+
+    return AnalyticsProgressionResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        summary=summary,
+        races=ordered_entries,
     )
 
 

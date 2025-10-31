@@ -22,6 +22,7 @@ import type {
   AnalyticsOddsResponse,
   AnalyticsEfficiencyResponse,
   AnalyticsWorkloadResponse,
+  AnalyticsProgressionResponse,
   AnalyticsMomentumResponse,
 } from '../types/analytics'
 
@@ -297,6 +298,26 @@ export const analyticsService = {
     endDate?: Nullable<string>
   }) {
     const response = await apiClient.get<AnalyticsWorkloadResponse>('/analytics/workload', {
+      params: {
+        entity_type: params.entityType,
+        entity_id: params.entityId,
+        ...(params.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params.startDate ? { start_date: params.startDate } : {}),
+        ...(params.endDate ? { end_date: params.endDate } : {}),
+      },
+    })
+
+    return response.data
+  },
+
+  async getProgression(params: {
+    entityType: TrendEntityType
+    entityId: string
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+  }) {
+    const response = await apiClient.get<AnalyticsProgressionResponse>('/analytics/progression', {
       params: {
         entity_type: params.entityType,
         entity_id: params.entityId,

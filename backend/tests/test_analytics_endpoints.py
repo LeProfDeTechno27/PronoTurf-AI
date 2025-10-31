@@ -1858,6 +1858,72 @@ async def test_workload_endpoint_returns_404_on_missing_data(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_progression_endpoint_returns_expected_summary(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/progression",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    summary = payload["summary"]
+
+    assert payload["entity_id"] == "H-3"
+    assert summary["races"] == 6
+    assert summary["improvements"] == 2
+    assert summary["declines"] == 3
+    assert summary["stable"] == 0
+    assert summary["best_change"] == 3
+    assert summary["worst_change"] == -5
+    assert summary["net_progress"] == -7
+    assert summary["longest_improvement_streak"] == 2
+    assert summary["longest_decline_streak"] == 2
+
+    races = payload["races"]
+    assert races[0]["trend"] == "decline"
+    assert races[0]["change"] == -4
+    assert any(race["trend"] == "initial" for race in races)
+
+
+@pytest.mark.anyio("asyncio")
+async def test_progression_endpoint_validates_dates(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/progression",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-07-01",
+            "end_date": "2024-06-01",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio("asyncio")
+async def test_progression_endpoint_requires_two_races(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/progression",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-1",
+            "start_date": "2024-05-18",
+            "end_date": "2024-05-18",
+        },
+    )
+
+    assert response.status_code == 404
+    assert (
+        response.json()["detail"]
+        == "Au moins deux courses avec position valide sont nécessaires pour analyser la progression"
+    )
+
+
+@pytest.mark.anyio("asyncio")
 async def test_momentum_endpoint_returns_comparative_windows(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/momentum",

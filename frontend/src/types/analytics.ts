@@ -344,6 +344,46 @@ export interface AnalyticsWorkloadResponse {
   timeline: WorkloadTimelineEntry[]
 }
 
+export type ProgressionTrend =
+  | 'improvement'
+  | 'decline'
+  | 'stable'
+  | 'initial'
+  | 'unknown'
+
+export interface ProgressionRace {
+  date?: string | null
+  hippodrome?: string | null
+  course_number?: number | null
+  distance?: number | null
+  final_position?: number | null
+  previous_position?: number | null
+  change?: number | null
+  trend: ProgressionTrend
+}
+
+export interface ProgressionSummary {
+  races: number
+  improvements: number
+  declines: number
+  stable: number
+  average_change?: number | null
+  best_change?: number | null
+  worst_change?: number | null
+  longest_improvement_streak: number
+  longest_decline_streak: number
+  net_progress?: number | null
+}
+
+export interface AnalyticsProgressionResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  summary: ProgressionSummary
+  races: ProgressionRace[]
+}
+
 export interface MomentumSlice {
   label: string
   start_date?: string | null

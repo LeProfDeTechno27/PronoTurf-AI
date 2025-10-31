@@ -1210,6 +1210,125 @@ class AnalyticsWorkloadResponse(BaseModel):
     )
 
 
+ProgressionTrend = Literal["improvement", "decline", "stable", "initial", "unknown"]
+
+
+class ProgressionRace(BaseModel):
+    """Course successive utilisée pour mesurer l'évolution d'une entité."""
+
+    date: Optional[date_type] = Field(
+        default=None,
+        description="Date de la course considérée",
+    )
+    hippodrome: Optional[str] = Field(
+        default=None,
+        description="Hippodrome où la course s'est disputée",
+    )
+    course_number: Optional[int] = Field(
+        default=None,
+        description="Numéro de course Aspiturf (prix)",
+    )
+    distance: Optional[int] = Field(
+        default=None,
+        description="Distance officielle de la course",
+    )
+    final_position: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Position finale (1 = victoire)",
+    )
+    previous_position: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Position lors de la course précédente considérée",
+    )
+    change: Optional[int] = Field(
+        default=None,
+        description="Différence de rang vs la course précédente (positive = amélioration)",
+    )
+    trend: ProgressionTrend = Field(
+        default="unknown",
+        description="Type d'évolution constatée sur cette course",
+    )
+
+
+class ProgressionSummary(BaseModel):
+    """Synthèse statistique des variations de résultats dans le temps."""
+
+    races: int = Field(
+        0,
+        ge=0,
+        description="Nombre total de courses prises en compte",
+    )
+    improvements: int = Field(
+        0,
+        ge=0,
+        description="Nombre de courses avec amélioration de la position finale",
+    )
+    declines: int = Field(
+        0,
+        ge=0,
+        description="Nombre de courses avec régression",
+    )
+    stable: int = Field(
+        0,
+        ge=0,
+        description="Nombre de courses avec position identique à la précédente",
+    )
+    average_change: Optional[float] = Field(
+        default=None,
+        description="Variation moyenne (positive = tendance à progresser)",
+    )
+    best_change: Optional[int] = Field(
+        default=None,
+        description="Plus forte amélioration constatée",
+    )
+    worst_change: Optional[int] = Field(
+        default=None,
+        description="Plus forte régression constatée",
+    )
+    longest_improvement_streak: int = Field(
+        0,
+        ge=0,
+        description="Série consécutive maximale d'améliorations",
+    )
+    longest_decline_streak: int = Field(
+        0,
+        ge=0,
+        description="Série consécutive maximale de régressions",
+    )
+    net_progress: Optional[int] = Field(
+        default=None,
+        description="Somme algébrique des variations (positive = progression globale)",
+    )
+
+
+class AnalyticsProgressionResponse(BaseModel):
+    """Réponse détaillant la dynamique course par course d'une entité."""
+
+    entity_type: TrendEntityType = Field(
+        ...,
+        description="Type d'entité analysée (cheval, jockey, entraîneur)",
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None,
+        description="Libellé de l'entité si disponible",
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées issues du filtre (dates, hippodrome)",
+    )
+    summary: ProgressionSummary = Field(
+        default_factory=ProgressionSummary,
+        description="Synthèse chiffrée de l'évolution",
+    )
+    races: List[ProgressionRace] = Field(
+        default_factory=list,
+        description="Liste des courses chronologiques avec les variations observées",
+    )
+
+
 class MomentumSlice(BaseModel):
     """Vue consolidée d'une période d'observation pour le momentum."""
 
