@@ -12,6 +12,7 @@ import type {
   AnalyticsFormResponse,
   AnalyticsValueResponse,
   AnalyticsVolatilityResponse,
+  AnalyticsEfficiencyResponse,
   AnalyticsWorkloadResponse,
   AnalyticsMomentumResponse,
   LeaderboardEntry,
@@ -35,6 +36,7 @@ import type {
   CalendarRaceDetail,
   ValueOpportunitySample,
   VolatilityRaceSample,
+  EfficiencySample,
   WorkloadTimelineEntry,
   MomentumSlice,
 } from '../types/analytics'
@@ -150,6 +152,14 @@ type ValueFilters = {
 }
 
 type VolatilityFilters = {
+  entityType: TrendEntityType
+  entityId: string
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+}
+
+type EfficiencyFilters = {
   entityType: TrendEntityType
   entityId: string
   hippodrome?: string
@@ -1374,6 +1384,137 @@ function VolatilityPanel({ data }: { data: AnalyticsVolatilityResponse }) {
   )
 }
 
+function EfficiencyTable({ samples }: { samples: EfficiencySample[] }) {
+  if (!samples.length) {
+    return <p className="text-sm text-gray-500">Aucune course disposant d'une cote exploitable.</p>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Date
+            </th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Hippodrome
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Course
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Cote
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Proba victoire
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Proba podium
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Arrivée
+            </th>
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Victoire
+            </th>
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Podium
+            </th>
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Edge
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {samples.map((sample, index) => (
+            <tr key={`${sample.date}-${sample.course_number}-${index}`}>
+              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(sample.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-gray-700">{sample.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">
+                {formatPercent(sample.expected_win_probability, 1)}
+              </td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">
+                {formatPercent(sample.expected_podium_probability, 1)}
+              </td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.finish_position)}</td>
+              <td className="px-4 py-2 text-sm text-center text-gray-700">{sample.is_win ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-center text-gray-700">{sample.is_podium ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.edge, 3)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function EfficiencyPanel({ data }: { data: AnalyticsEfficiencyResponse }) {
+  const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
+  const winDelta = data.metrics.win_delta ?? null
+  const podiumDelta = data.metrics.podium_delta ?? null
+  const formatDelta = (value: number | null) => {
+    if (value == null) {
+      return '—'
+    }
+    const prefix = value > 0 ? '+' : ''
+    return `${prefix}${value.toFixed(2)}`
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Cartouche synthétique pour visualiser d'un coup d'œil les écarts attendus/observés. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Entité analysée" value={entityDisplay} />
+        <SummaryStats label="Courses analysées" value={formatNumber(data.metrics.sample_size)} />
+        <SummaryStats
+          label="Victoires observées"
+          value={`${formatNumber(data.metrics.wins)} (Δ ${formatDelta(winDelta)})`}
+        />
+        <SummaryStats
+          label="Podiums observés"
+          value={`${formatNumber(data.metrics.podiums)} (Δ ${formatDelta(podiumDelta)})`}
+        />
+      </div>
+
+      {/* Indicateurs probabilistes et financiers pour qualifier l'efficacité du profil. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Victoires attendues" value={formatAverage(data.metrics.expected_wins)} />
+        <SummaryStats label="Podiums attendus" value={formatAverage(data.metrics.expected_podiums)} />
+        <SummaryStats label="Cote moyenne" value={formatAverage(data.metrics.average_odds)} />
+        <SummaryStats
+          label="Probabilité implicite"
+          value={formatPercent(data.metrics.average_expected_win_probability, 1)}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SummaryStats label="Courses avec cote" value={formatNumber(data.metrics.stake_count)} />
+        <SummaryStats label="Profit théorique" value={formatAverage(data.metrics.profit)} />
+        <SummaryStats label="ROI théorique" value={formatAverage(data.metrics.roi)} />
+        <SummaryStats
+          label="Filtre hippodrome"
+          value={data.metadata.hippodrome_filter ? data.metadata.hippodrome_filter.toUpperCase() : 'Tous'}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Plage de dates"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats label="Identifiant" value={data.entity_id} />
+        <SummaryStats label="Libellé" value={data.entity_label ?? '—'} />
+      </div>
+
+      {/* Tableau détaillé pour identifier les courses responsables des écarts majeurs. */}
+      <EfficiencyTable samples={data.samples} />
+    </div>
+  )
+}
+
 function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
   const entityDisplay = data.entity_label ? `${data.entity_label} (${data.entity_id})` : data.entity_id
   const { summary, timeline } = data
@@ -1690,6 +1831,14 @@ export default function AnalyticsPage() {
   const [volatilityError, setVolatilityError] = useState<string | null>(null)
   const [volatilityFilters, setVolatilityFilters] = useState<VolatilityFilters | null>(null)
 
+  const [efficiencyTypeInput, setEfficiencyTypeInput] = useState<TrendEntityType>('horse')
+  const [efficiencyIdInput, setEfficiencyIdInput] = useState('')
+  const [efficiencyHippoInput, setEfficiencyHippoInput] = useState('')
+  const [efficiencyStartInput, setEfficiencyStartInput] = useState('')
+  const [efficiencyEndInput, setEfficiencyEndInput] = useState('')
+  const [efficiencyError, setEfficiencyError] = useState<string | null>(null)
+  const [efficiencyFilters, setEfficiencyFilters] = useState<EfficiencyFilters | null>(null)
+
   const [workloadTypeInput, setWorkloadTypeInput] = useState<TrendEntityType>('horse')
   const [workloadIdInput, setWorkloadIdInput] = useState('')
   const [workloadHippoInput, setWorkloadHippoInput] = useState('')
@@ -1985,6 +2134,35 @@ export default function AnalyticsPage() {
         endDate: volatilityFilters?.endDate,
       }),
     enabled: Boolean(volatilityFilters?.entityId),
+  })
+
+  const efficiencyQueryKey = useMemo(
+    () =>
+      efficiencyFilters
+        ? [
+            'analytics',
+            'efficiency',
+            efficiencyFilters.entityType,
+            efficiencyFilters.entityId,
+            efficiencyFilters.hippodrome ?? '',
+            efficiencyFilters.startDate ?? '',
+            efficiencyFilters.endDate ?? '',
+          ]
+        : ['analytics', 'efficiency', 'idle'],
+    [efficiencyFilters],
+  )
+
+  const efficiencyQuery = useQuery({
+    queryKey: efficiencyQueryKey,
+    queryFn: () =>
+      analyticsService.getEfficiencyProfile({
+        entityType: efficiencyFilters!.entityType,
+        entityId: efficiencyFilters!.entityId,
+        hippodrome: efficiencyFilters?.hippodrome,
+        startDate: efficiencyFilters?.startDate,
+        endDate: efficiencyFilters?.endDate,
+      }),
+    enabled: Boolean(efficiencyFilters?.entityId),
   })
 
   const workloadQueryKey = useMemo(
@@ -2326,6 +2504,32 @@ export default function AnalyticsPage() {
       hippodrome: volatilityHippoInput.trim() || undefined,
       startDate: volatilityStartInput || undefined,
       endDate: volatilityEndInput || undefined,
+    })
+  }
+
+  const handleEfficiencySubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const id = efficiencyIdInput.trim()
+
+    if (!id) {
+      setEfficiencyError("Veuillez saisir un identifiant Aspiturf valide.")
+      setEfficiencyFilters(null)
+      return
+    }
+
+    if (efficiencyStartInput && efficiencyEndInput && efficiencyStartInput > efficiencyEndInput) {
+      setEfficiencyError('La date de début doit précéder la date de fin.')
+      setEfficiencyFilters(null)
+      return
+    }
+
+    setEfficiencyError(null)
+    setEfficiencyFilters({
+      entityType: efficiencyTypeInput,
+      entityId: id,
+      hippodrome: efficiencyHippoInput.trim() || undefined,
+      startDate: efficiencyStartInput || undefined,
+      endDate: efficiencyEndInput || undefined,
     })
   }
 
@@ -2906,10 +3110,65 @@ export default function AnalyticsPage() {
       {volatilityQuery.isPending && (
         <p className="text-sm text-gray-500">Calcul de la volatilité en cours…</p>
       )}
-      {volatilityQuery.isError && (
-        <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
-      )}
+    {volatilityQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
+    )}
     {volatilityQuery.data && <VolatilityPanel data={volatilityQuery.data} />}
+  </SectionCard>
+
+  <SectionCard
+    title="Efficacité des résultats"
+    description="Mesurez l'écart entre les probabilités implicites des cotes et les performances réelles d'une entité."
+  >
+    <form
+      onSubmit={handleEfficiencySubmit}
+      className="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr)),auto]"
+    >
+      <select
+        value={efficiencyTypeInput}
+        onChange={(event) => setEfficiencyTypeInput(event.target.value as TrendEntityType)}
+        className="input"
+      >
+        <option value="horse">Cheval</option>
+        <option value="jockey">Jockey</option>
+        <option value="trainer">Entraîneur</option>
+      </select>
+      <input
+        value={efficiencyIdInput}
+        onChange={(event) => setEfficiencyIdInput(event.target.value)}
+        placeholder="Identifiant Aspiturf (id)"
+        className="input"
+      />
+      <input
+        value={efficiencyHippoInput}
+        onChange={(event) => setEfficiencyHippoInput(event.target.value)}
+        placeholder="Filtrer par hippodrome (optionnel)"
+        className="input"
+      />
+      <input
+        type="date"
+        value={efficiencyStartInput}
+        onChange={(event) => setEfficiencyStartInput(event.target.value)}
+        className="input"
+      />
+      <input
+        type="date"
+        value={efficiencyEndInput}
+        onChange={(event) => setEfficiencyEndInput(event.target.value)}
+        className="input"
+      />
+      <button type="submit" className="btn btn-primary">
+        Comparer
+      </button>
+    </form>
+    {efficiencyError && <p className="text-sm text-red-600">{efficiencyError}</p>}
+    {efficiencyQuery.isPending && (
+      <p className="text-sm text-gray-500">Calcul du différentiel attendu/observé…</p>
+    )}
+    {efficiencyQuery.isError && (
+      <p className="text-sm text-red-600">Erreur: {(efficiencyQuery.error as Error).message}</p>
+    )}
+    {efficiencyQuery.data && <EfficiencyPanel data={efficiencyQuery.data} />}
   </SectionCard>
 
   <SectionCard

@@ -909,6 +909,118 @@ class AnalyticsVolatilityResponse(BaseModel):
     )
 
 
+class EfficiencySample(BaseModel):
+    """Course annotée avec les probabilités implicites d'un engagement."""
+
+    date: Optional[date_type] = Field(
+        default=None, description="Date de la course associée à l'entité",
+    )
+    hippodrome: Optional[str] = Field(
+        default=None, description="Hippodrome où la course s'est disputée",
+    )
+    course_number: Optional[int] = Field(
+        default=None, description="Numéro de la course dans la réunion",
+    )
+    odds: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Cote directe observée au départ de la course",
+    )
+    expected_win_probability: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Probabilité implicite de victoire dérivée de la cote",
+    )
+    expected_podium_probability: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Approximation de la probabilité de podium",
+    )
+    finish_position: Optional[int] = Field(
+        default=None, description="Classement final de l'entité",
+    )
+    is_win: bool = Field(..., description="Indique si l'entité a remporté la course")
+    is_podium: bool = Field(
+        ..., description="Indique si l'entité a terminé sur le podium",
+    )
+    edge: Optional[float] = Field(
+        default=None,
+        description="Différence entre le résultat observé (0/1) et la probabilité de victoire",
+    )
+
+
+class EfficiencyMetrics(BaseModel):
+    """Synthèse des gains attendus et observés d'une entité."""
+
+    sample_size: int = Field(
+        ..., ge=0, description="Nombre total de courses retenues",
+    )
+    wins: int = Field(..., ge=0, description="Nombre de victoires observées")
+    expected_wins: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Somme des probabilités de victoire implicites",
+    )
+    win_delta: Optional[float] = Field(
+        default=None,
+        description="Différence entre victoires observées et attendues",
+    )
+    podiums: int = Field(..., ge=0, description="Nombre de podiums observés")
+    expected_podiums: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Somme des probabilités approximatives de podium",
+    )
+    podium_delta: Optional[float] = Field(
+        default=None,
+        description="Différence entre podiums observés et attendus",
+    )
+    average_odds: Optional[float] = Field(
+        default=None, description="Cote moyenne calculée sur les courses renseignées",
+    )
+    average_expected_win_probability: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Probabilité implicite moyenne de victoire",
+    )
+    stake_count: int = Field(
+        ..., ge=0, description="Nombre de courses avec une cote exploitable",
+    )
+    profit: Optional[float] = Field(
+        default=None, description="Profit théorique pour une mise unitaire",
+    )
+    roi: Optional[float] = Field(
+        default=None,
+        description="Retour sur investissement théorique (profit / mises)",
+    )
+
+
+class AnalyticsEfficiencyResponse(BaseModel):
+    """Réponse structurée de l'endpoint `/analytics/efficiency`."""
+
+    entity_type: TrendEntityType = Field(
+        ..., description="Type d'entité analysée (cheval, jockey ou entraîneur)",
+    )
+    entity_id: str = Field(..., description="Identifiant Aspiturf de l'entité")
+    entity_label: Optional[str] = Field(
+        default=None, description="Libellé humain de l'entité analysée",
+    )
+    metadata: AnalyticsMetadata = Field(
+        default_factory=AnalyticsMetadata,
+        description="Métadonnées décrivant les filtres appliqués",
+    )
+    metrics: EfficiencyMetrics = Field(
+        ..., description="Synthèse des performances attendues vs observées",
+    )
+    samples: List[EfficiencySample] = Field(
+        default_factory=list,
+        description="Détails course par course avec probabilités implicites",
+    )
+
+
 class WorkloadTimelineEntry(BaseModel):
     """Course annotée du repos observé avant l'engagement."""
 

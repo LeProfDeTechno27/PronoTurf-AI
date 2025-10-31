@@ -1653,6 +1653,79 @@ async def test_volatility_endpoint_returns_404_on_missing_data(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_efficiency_endpoint_returns_expected_summary(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/efficiency",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    metrics = payload["metrics"]
+
+    assert payload["entity_type"] == "horse"
+    assert payload["entity_id"] == "H-3"
+    assert metrics["sample_size"] == 6
+    assert metrics["wins"] == 2
+    assert metrics["expected_wins"] == pytest.approx(1.06, rel=1e-2)
+    assert metrics["win_delta"] == pytest.approx(0.94, rel=1e-2)
+    assert metrics["podiums"] == 3
+    assert metrics["expected_podiums"] == pytest.approx(3.11, rel=1e-2)
+    assert metrics["podium_delta"] == pytest.approx(-0.11, rel=1e-2)
+    assert metrics["average_odds"] == pytest.approx(7.783, rel=1e-3)
+    assert metrics["average_expected_win_probability"] == pytest.approx(0.177, rel=1e-3)
+    assert metrics["stake_count"] == 6
+    assert metrics["profit"] == pytest.approx(1.2, rel=1e-3)
+    assert metrics["roi"] == pytest.approx(0.2, rel=1e-3)
+
+    samples = payload["samples"]
+    assert len(samples) == 6
+    assert samples[0]["date"] == "2024-07-20"
+    assert samples[0]["edge"] == pytest.approx(-0.0667, rel=1e-3)
+    assert samples[-1]["date"] == "2024-03-05"
+
+    metadata = payload["metadata"]
+    assert metadata["date_start"] == "2024-03-05"
+    assert metadata["date_end"] == "2024-07-20"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_efficiency_endpoint_validates_dates(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/efficiency",
+        params={
+            "entity_type": "horse",
+            "entity_id": "H-3",
+            "start_date": "2024-08-01",
+            "end_date": "2024-07-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_efficiency_endpoint_returns_404_on_unknown_entity(
+    analytics_client: AsyncClient,
+):
+    response = await analytics_client.get(
+        "/api/v1/analytics/efficiency",
+        params={
+            "entity_type": "horse",
+            "entity_id": "UNKNOWN",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Aucune course trouvée pour cette entité et cette période"
+
+
+@pytest.mark.anyio("asyncio")
 async def test_workload_endpoint_returns_activity_metrics(analytics_client: AsyncClient):
     response = await analytics_client.get(
         "/api/v1/analytics/workload",

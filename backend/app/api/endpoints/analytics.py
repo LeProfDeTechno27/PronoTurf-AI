@@ -25,6 +25,7 @@ from app.schemas.analytics import (
     AnalyticsValueResponse,
     AnalyticsVolatilityResponse,
     AnalyticsWorkloadResponse,
+    AnalyticsEfficiencyResponse,
     DistributionBucket,
     DistributionDimension,
     FormRace,
@@ -50,6 +51,8 @@ from app.schemas.analytics import (
     VolatilityRaceSample,
     WorkloadSummary,
     WorkloadTimelineEntry,
+    EfficiencyMetrics,
+    EfficiencySample,
     TrainerAnalyticsResponse,
     TrendEntityType,
     TrendGranularity,
@@ -195,6 +198,30 @@ def _extract_name(rows: Iterable[Dict[str, Any]], keys: Iterable[str]) -> Option
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
+
+
+def _round_optional(value: Optional[float], digits: int = 3) -> Optional[float]:
+    """Arrondit prudemment une valeur flottante si elle est définie."""
+
+    if value is None:
+        return None
+    return round(value, digits)
+
+
+def _implied_probability(odds: Optional[float]) -> Optional[float]:
+    """Transforme une cote décimale en probabilité implicite bornée."""
+
+    if odds is None or odds <= 0:
+        return None
+    return min(round(1.0 / odds, 4), 1.0)
+
+
+def _podium_probability(probability: Optional[float]) -> Optional[float]:
+    """Approxime une probabilité de podium à partir d'une probabilité de victoire."""
+
+    if probability is None:
+        return None
+    return min(round(probability * 3, 4), 1.0)
 
 
 def _form_points(position: Optional[int]) -> int:
@@ -1342,6 +1369,180 @@ async def get_volatility_profile(
         metadata=metadata,
         metrics=metrics,
         races=race_samples,
+    )
+
+
+@router.get(
+    "/efficiency",
+    response_model=AnalyticsEfficiencyResponse,
+    summary="Comparer victoires attendues et observées d'une entité",
+    description=(
+        "Met en regard les probabilités implicites issues des cotes et les résultats concrets pour "
+        "identifier les profils surperformants ou sous-performants."
+    ),
+)
+async def get_efficiency_profile(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    entity_type: TrendEntityType = Query(
+        ..., description="Type d'entité à analyser (cheval, jockey ou entraîneur)",
+    ),
+    entity_id: str = Query(
+        ..., min_length=1, description="Identifiant Aspiturf de l'entité",
+    ),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer uniquement les courses disputées dans un hippodrome",
+    ),
+    start_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None, description="Inclure uniquement les courses jusqu'à cette date",
+    ),
+) -> AnalyticsEfficiencyResponse:
+    """Mesure l'écart entre attentes de marché et réalisations sportives."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    rows = await client.get_races(
+        horse_id=entity_id if entity_type == TrendEntityType.HORSE else None,
+        jockey_id=entity_id if entity_type == TrendEntityType.JOCKEY else None,
+        trainer_id=entity_id if entity_type == TrendEntityType.TRAINER else None,
+        hippodrome=hippodrome,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucune course trouvée pour cette entité et cette période",
+        )
+
+    sorted_rows = _sorted_races(rows)
+
+    label_fields: Tuple[str, ...]
+    if entity_type == TrendEntityType.HORSE:
+        label_fields = ("nom_cheval", "cheval")
+    elif entity_type == TrendEntityType.JOCKEY:
+        label_fields = ("jockey",)
+    else:
+        label_fields = ("entraineur",)
+
+    entity_label = _extract_name(rows, label_fields)
+
+    sample_size = len(rows)
+    wins = sum(1 for row in rows if _is_win(row))
+    podiums = sum(1 for row in rows if _is_podium(row))
+
+    race_dates: List[date] = []
+    odds_values: List[float] = []
+    probability_values: List[float] = []
+    expected_wins_total = 0.0
+    expected_podiums_total = 0.0
+    expected_observations = 0
+    podium_observations = 0
+    stake_count = 0
+    profit = 0.0
+    samples: List[EfficiencySample] = []
+
+    for row in sorted_rows:
+        race_date_value = row.get("jour")
+        race_date = race_date_value if isinstance(race_date_value, date) else None
+        if race_date is not None:
+            race_dates.append(race_date)
+
+        odds = _parse_float(row.get("cotedirect") or row.get("cote_direct"))
+        win_probability = _implied_probability(odds)
+        podium_probability = _podium_probability(win_probability)
+        is_win = _is_win(row)
+        is_podium = _is_podium(row)
+
+        if odds is not None:
+            odds_values.append(odds)
+            stake_count += 1
+            profit += (odds - 1.0) if is_win else -1.0
+
+        if win_probability is not None:
+            expected_observations += 1
+            expected_wins_total += win_probability
+            probability_values.append(win_probability)
+
+        if podium_probability is not None:
+            podium_observations += 1
+            expected_podiums_total += podium_probability
+
+        edge = None
+        if win_probability is not None:
+            edge = round((1.0 if is_win else 0.0) - win_probability, 4)
+
+        samples.append(
+            EfficiencySample(
+                date=race_date,
+                hippodrome=row.get("hippo"),
+                course_number=row.get("prix") if isinstance(row.get("prix"), int) else None,
+                odds=_round_optional(odds, 2),
+                expected_win_probability=win_probability,
+                expected_podium_probability=podium_probability,
+                finish_position=row.get("cl") if isinstance(row.get("cl"), int) else None,
+                is_win=is_win,
+                is_podium=is_podium,
+                edge=edge,
+            )
+        )
+
+    expected_wins_value = (
+        round(expected_wins_total, 2) if expected_observations else None
+    )
+    expected_podiums_value = (
+        round(expected_podiums_total, 2) if podium_observations else None
+    )
+
+    win_delta = (
+        round(wins - expected_wins_total, 2) if expected_observations else None
+    )
+    podium_delta = (
+        round(podiums - expected_podiums_total, 2) if podium_observations else None
+    )
+
+    average_odds = _safe_mean(odds_values)
+    average_win_probability = _safe_mean(probability_values)
+
+    roi = round(profit / stake_count, 3) if stake_count else None
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=min(race_dates) if race_dates else None,
+        date_end=max(race_dates) if race_dates else None,
+    )
+
+    metrics = EfficiencyMetrics(
+        sample_size=sample_size,
+        wins=wins,
+        expected_wins=expected_wins_value,
+        win_delta=win_delta,
+        podiums=podiums,
+        expected_podiums=expected_podiums_value,
+        podium_delta=podium_delta,
+        average_odds=average_odds,
+        average_expected_win_probability=average_win_probability,
+        stake_count=stake_count,
+        profit=round(profit, 2) if stake_count else None,
+        roi=roi,
+    )
+
+    return AnalyticsEfficiencyResponse(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        metadata=metadata,
+        metrics=metrics,
+        samples=samples,
     )
 
 

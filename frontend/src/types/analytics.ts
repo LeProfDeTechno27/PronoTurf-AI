@@ -245,6 +245,43 @@ export interface AnalyticsVolatilityResponse {
   races: VolatilityRaceSample[]
 }
 
+export interface EfficiencySample {
+  date?: string | null
+  hippodrome?: string | null
+  course_number?: number | null
+  odds?: number | null
+  expected_win_probability?: number | null
+  expected_podium_probability?: number | null
+  finish_position?: number | null
+  is_win: boolean
+  is_podium: boolean
+  edge?: number | null
+}
+
+export interface EfficiencyMetrics {
+  sample_size: number
+  wins: number
+  expected_wins?: number | null
+  win_delta?: number | null
+  podiums: number
+  expected_podiums?: number | null
+  podium_delta?: number | null
+  average_odds?: number | null
+  average_expected_win_probability?: number | null
+  stake_count: number
+  profit?: number | null
+  roi?: number | null
+}
+
+export interface AnalyticsEfficiencyResponse {
+  entity_type: TrendEntityType
+  entity_id: string
+  entity_label?: string | null
+  metadata: AnalyticsMetadata
+  metrics: EfficiencyMetrics
+  samples: EfficiencySample[]
+}
+
 export interface WorkloadTimelineEntry {
   date?: string | null
   hippodrome?: string | null
