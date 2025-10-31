@@ -207,6 +207,65 @@ def _build_calibration_table(
     return calibration_rows
 
 
+def _describe_calibration_quality(
+    calibration_rows: List[Dict[str, object]]
+) -> Dict[str, Optional[float]]:
+    """Synthétise les écarts de calibration observés sur les quantiles."""
+
+    if not calibration_rows:
+        return {
+            "expected_calibration_error": None,
+            "maximum_calibration_gap": None,
+            "weighted_bias": None,
+            "bins": [],
+        }
+
+    total = sum(int(row.get("count", 0) or 0) for row in calibration_rows)
+    if not total:
+        return {
+            "expected_calibration_error": None,
+            "maximum_calibration_gap": None,
+            "weighted_bias": None,
+            "bins": [],
+        }
+
+    expected_error = 0.0
+    weighted_bias = 0.0
+    max_gap = 0.0
+    enriched_bins: List[Dict[str, object]] = []
+
+    for row in calibration_rows:
+        count = int(row.get("count", 0) or 0)
+        weight = count / total if total else 0.0
+        average_probability = row.get("average_probability")
+        empirical_rate = row.get("empirical_rate")
+
+        # Le « gap » correspond à la différence entre probabilité estimée et fréquence
+        # observée : une valeur positive indique que le modèle est trop conservateur,
+        # une valeur négative qu'il est trop confiant.
+        gap: Optional[float] = None
+        if average_probability is not None and empirical_rate is not None:
+            gap = empirical_rate - average_probability
+            expected_error += weight * abs(gap)
+            weighted_bias += weight * gap
+            max_gap = max(max_gap, abs(gap))
+
+        enriched_bins.append(
+            {
+                **row,
+                "weight": weight,
+                "calibration_gap": gap,
+            }
+        )
+
+    return {
+        "expected_calibration_error": expected_error,
+        "maximum_calibration_gap": max_gap,
+        "weighted_bias": weighted_bias,
+        "bins": enriched_bins,
+    }
+
+
 def _build_gain_curve(
     scores: List[float],
     truths: List[int],
@@ -577,6 +636,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     top3_probabilities.append(float(item["probability"]))
 
         calibration_table = _build_calibration_table(y_scores, y_true, bins=5)
+        # Résume l'ampleur des écarts de calibration pour suivre un indicateur
+        # synthétique (ECE, biais signé, écart maximal) en plus du tableau brut.
+        calibration_diagnostics = _describe_calibration_quality(calibration_table)
         threshold_grid = _evaluate_threshold_grid(
             y_scores,
             y_true,
@@ -636,6 +698,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_winner_probability": _safe_average(winner_probabilities),
             "average_top3_probability": _safe_average(top3_probabilities),
             "calibration_table": calibration_table,
+            "calibration_diagnostics": calibration_diagnostics,
             "threshold_sensitivity": threshold_grid,
             "gain_curve": gain_curve,
             "ks_analysis": ks_analysis,
@@ -657,6 +720,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "model_version_breakdown": dict(model_versions),
             "confidence_level_metrics": confidence_level_metrics,
+            "calibration_diagnostics": calibration_diagnostics,
         }
 
         active_model = (
@@ -696,6 +760,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "metrics": metrics,
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
+            "calibration_diagnostics": calibration_diagnostics,
             "model_version_breakdown": dict(model_versions),
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,

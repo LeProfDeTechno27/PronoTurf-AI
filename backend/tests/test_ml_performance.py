@@ -292,6 +292,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert calibration_table[-1]["count"] == 2
     assert calibration_table[-1]["empirical_rate"] == pytest.approx(0.5, rel=1e-3)
 
+    calibration_diagnostics = metrics["calibration_diagnostics"]
+    assert calibration_diagnostics["expected_calibration_error"] == pytest.approx(0.38333, rel=1e-3)
+    assert calibration_diagnostics["maximum_calibration_gap"] == pytest.approx(0.75, rel=1e-3)
+    assert calibration_diagnostics["weighted_bias"] == pytest.approx(1 / 3, rel=1e-3)
+    assert len(calibration_diagnostics["bins"]) == len(calibration_table)
+    assert calibration_diagnostics["bins"][0]["calibration_gap"] == pytest.approx(-0.15, rel=1e-3)
+    assert calibration_diagnostics["bins"][1]["weight"] == pytest.approx(1 / 6, rel=1e-3)
+
     threshold_grid = metrics["threshold_sensitivity"]
     assert threshold_grid["0.20"]["recall"] == pytest.approx(1.0, rel=1e-3)
     assert threshold_grid["0.20"]["precision"] == pytest.approx(0.8, rel=1e-3)
@@ -343,6 +351,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
+        assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
