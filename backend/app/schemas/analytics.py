@@ -1,8 +1,6 @@
 """Schémas Pydantic pour les endpoints d'analytics Aspiturf."""
 
-from __future__ import annotations
-
-from datetime import date
+from datetime import date as date_type
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -15,11 +13,11 @@ class AnalyticsMetadata(BaseModel):
         default=None,
         description="Filtre d'hippodrome appliqué sur les données"
     )
-    date_start: Optional[date] = Field(
+    date_start: Optional[date_type] = Field(
         default=None,
         description="Première date trouvée dans l'échantillon"
     )
-    date_end: Optional[date] = Field(
+    date_end: Optional[date_type] = Field(
         default=None,
         description="Dernière date trouvée dans l'échantillon"
     )
@@ -49,7 +47,7 @@ class PerformanceBreakdown(BaseModel):
 class RecentRace(BaseModel):
     """Informations synthétiques sur une course récente."""
 
-    date: Optional[date] = Field(default=None, description="Date de la course")
+    date: Optional[date_type] = Field(default=None, description="Date de la course")
     hippodrome: Optional[str] = Field(default=None, description="Nom de l'hippodrome")
     course_number: Optional[int] = Field(default=None, description="Numéro de la course")
     distance: Optional[int] = Field(default=None, description="Distance en mètres")
@@ -165,7 +163,7 @@ class PartantInsight(BaseModel):
 class CourseAnalyticsResponse(BaseModel):
     """Réponse détaillée pour une course Aspiturf spécifique."""
 
-    date: date = Field(..., description="Date de la course")
+    date: date_type = Field(..., description="Date de la course")
     hippodrome: str = Field(..., description="Nom de l'hippodrome")
     course_number: int = Field(..., ge=1, description="Numéro de la course")
     distance: Optional[int] = Field(default=None, description="Distance en mètres")
