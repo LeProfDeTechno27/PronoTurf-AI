@@ -125,7 +125,7 @@ def _seed_reference_data(db: Session) -> None:
         race_category="Classe",
         race_class="B",
         surface_type=SurfaceType.SABLE,
-        start_type=StartType.STALLE,
+        start_type=StartType.AUTOSTART,
         scheduled_time=time(15, 0),
         status=CourseStatus.FINISHED,
         number_of_runners=14,
@@ -496,6 +496,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surface_performance["sable"]["samples"] == 3
     assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
 
+    start_type_performance = metrics["start_type_performance"]
+    assert set(start_type_performance.keys()) == {"autostart", "stalle"}
+    assert start_type_performance["stalle"]["samples"] == 3
+    assert start_type_performance["stalle"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert start_type_performance["stalle"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert start_type_performance["autostart"]["samples"] == 3
+    assert start_type_performance["autostart"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert start_type_performance["autostart"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert start_type_performance["autostart"]["courses"] == 1
+
     value_bet_performance = metrics["value_bet_performance"]
     assert set(value_bet_performance.keys()) == {"standard", "value_bet"}
     assert value_bet_performance["value_bet"]["samples"] == 3
@@ -615,6 +625,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "start_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]

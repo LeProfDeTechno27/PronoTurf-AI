@@ -14,7 +14,7 @@ from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.ml.predictor import RacePredictionService
 from app.ml.training import ModelTrainer
-from app.models.course import Course, CourseStatus
+from app.models.course import Course, CourseStatus, StartType
 from app.models.reunion import Reunion
 from app.models.pronostic import Pronostic
 from app.models.partant_prediction import PartantPrediction
@@ -1225,6 +1225,34 @@ def _categorise_draw_position(
     return "middle"
 
 
+def _categorise_start_type(start_type: Optional[object]) -> str:
+    """Regroupe les modes de départ en familles exploitables côté monitoring."""
+
+    if not start_type:
+        return "unknown"
+
+    # Les valeurs issues de SQLAlchemy sont déjà des chaînes ``str`` (l'enum
+    # hérite de ``str``). On tolère cependant un objet ``StartType`` pour
+    # conserver une fonction purement utilitaire.
+    if isinstance(start_type, StartType):
+        value = start_type.value
+    else:
+        value = str(start_type)
+
+    label = value.lower()
+
+    # On conserve une distinction explicite entre les départs mécanisés
+    # (« stalle », « autostart ») et les départs manuels qui sont regroupés
+    # sous un même segment pour disposer d'assez d'échantillons.
+    if label in {"stalle", "autostart"}:
+        return label
+
+    if label in {"volte", "elastique", "corde"}:
+        return "manual_start"
+
+    return label or "unknown"
+
+
 def _categorise_rest_period(rest_days: Optional[int]) -> str:
     """Segmente les jours de repos pour analyser l'effet de la fraîcheur."""
 
@@ -1343,6 +1371,34 @@ def _summarise_draw_performance(
     return draw_metrics
 
 
+def _summarise_start_type_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Compare la stabilité du modèle en fonction des procédures de départ."""
+
+    if not breakdown:
+        return {}
+
+    start_type_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+
+        start_type_metrics[segment] = summary
+
+    return start_type_metrics
+
+
 def _summarise_rest_period_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -1459,6 +1515,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
         draw_breakdown: Dict[str, Dict[str, object]] = {}
+        start_type_breakdown: Dict[str, Dict[str, object]] = {}
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1654,6 +1711,25 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 draw_bucket.setdefault("draws", []).append(int(draw_value))
             if field_size:
                 draw_bucket.setdefault("field_sizes", []).append(int(field_size))
+
+            # Suivi spécifique des modes de départ (stalle, autostart, volte...)
+            # afin d'identifier si le modèle décroche sur un protocole précis.
+            start_segment = _categorise_start_type(
+                getattr(course, "start_type", None)
+            )
+            start_bucket = start_type_breakdown.setdefault(
+                start_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                },
+            )
+            start_bucket["truths"].append(is_top3)
+            start_bucket["predictions"].append(predicted_label)
+            start_bucket["scores"].append(probability)
+            start_bucket.setdefault("courses", set()).add(course.course_id)
 
             rest_segment = _categorise_rest_period(
                 getattr(partant, "days_since_last_race", None)
@@ -1910,6 +1986,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
+        start_type_performance = _summarise_start_type_performance(start_type_breakdown)
         rest_period_performance = _summarise_rest_period_performance(
             rest_period_breakdown
         )
@@ -1961,6 +2038,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
+            "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,
@@ -1996,6 +2074,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
+            "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,

@@ -15,7 +15,7 @@ PronoTurf est une plateforme moderne qui combine :
 
 ## Avancement du projet
 
-- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit la ventilation des performances par numéro de corde (inside/middle/outside) afin de mesurer l'impact de la position au départ.
+- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit la ventilation des performances par numéro de corde (inside/middle/outside) et par type de départ (stalle, autostart, départ manuel regroupé) afin de mesurer l'impact de la configuration initiale.
 - 🚧 **Version 1 en préparation** : la V1 n'est pas encore finalisée ; une notification sera partagée dès la clôture de l'ensemble des sprints.
 
 ## Nouveautés Analytics Aspiturf
@@ -61,6 +61,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Baromètre par version du modèle** : la vue `model_version_performance` compare précision, rappel, part de trafic et distribution des niveaux de confiance pour chaque version active afin de détecter immédiatement une régression localisée.
 - **Alignement aux cotes publiques** : l'analyse `odds_alignment` mesure la corrélation avec les cotes, l'écart moyen modèle/marché et l'overround par course afin de détecter les segments où le modèle s'écarte significativement du marché PMU.
 - **Analyse par numéro de corde** : le tableau `draw_performance` regroupe les prédictions selon les positions inside/middle/outside pour vérifier l'influence des stalles de départ sur la précision observée.
+- **Analyse par mode de départ** : le tableau `start_type_performance` compare les résultats entre départs mécanisés (stalle, autostart) et départs manuels afin d'identifier un éventuel biais lié au protocole de lancement.
 
 ## Technologies
 
