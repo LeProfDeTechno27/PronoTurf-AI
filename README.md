@@ -34,6 +34,21 @@ PronoTurf est une plateforme moderne qui combine :
 - **Charge de travail & repos** : l'endpoint `/api/v1/analytics/workload` analyse les jours de repos entre chaque participation, synthétise les rythmes d'engagement et fournit un tableau chronologique détaillé côté frontend.
 - **Progression chronologique** : l'endpoint `/api/v1/analytics/progression` calcule les variations de classement course par course, détecte les séries d'amélioration/régression et alimente un tableau interactif de suivi dans l'interface analytics.
 
+## Suivi de la performance du modèle ML
+
+- **Table de calibration automatique** : chaque exécution de la tâche Celery `update_model_performance` construit désormais des quantiles de probabilité (5 tranches) afin de comparer probabilité moyenne et taux de réussite observé. Cela permet d'identifier immédiatement les sur/sous-estimations du modèle.
+- **Indicateurs de calibration synthétiques** : l'Expected Calibration Error (ECE), le biais signé et l'écart maximal sont calculés pour suivre d'un coup d'œil l'ampleur des écarts entre probabilités projetées et réalité terrain.
+- **Analyse multi-seuils prête à l'emploi** : les métriques clés (accuracy, précision, rappel, F1, taux de positifs) sont recalculées pour un jeu de seuils standards (`0.20`, `0.30`, `0.40`, `0.50`). Les résultats sont historisés dans la table `ml_model` pour suivre la sensibilité de la stratégie de coupure.
+- **Recommandations automatiques de seuil** : en complément de la grille multi-seuils, la tâche met désormais en évidence le meilleur seuil F1 ainsi que les seuils maximisant précision ou rappel. Les métriques associées sont stockées pour guider rapidement le pilotage des alertes et de l'exposition financière.
+- **Lecture par niveau de confiance** : en parallèle des quantiles, un tableau de bord consolide précision, rappel et taux de positifs pour chaque niveau de confiance (« high », « medium », « low »). Cette vue directe permet d'ajuster les règles métiers (notifications, exposition financière) selon la fiabilité réelle de chaque segment.
+- **Courbe de gain cumulative** : la même tâche produit désormais une "gain curve" qui mesure, palier par palier, la part des arrivées dans les trois premiers capturée lorsque l'on ne conserve que les meilleures probabilités. Idéal pour optimiser une stratégie de filtrage ou de paris progressifs.
+- **Tableau de lift par quantile** : en complément de la courbe de gain, chaque tranche de probabilité est comparée au taux de réussite moyen du lot afin de repérer les segments qui surperforment (ou sous-performent) réellement et d'ajuster la sélection des paris.
+- **Courbe précision-rappel synthétique** : une table compacte présente, seuil par seuil, le compromis précision/rappel et le score F1 associé pour piloter finement la stratégie de sélection selon l'appétence au risque.
+- **Courbe ROC échantillonnée** : la tâche extrait désormais quelques points clés (taux de faux positifs, rappel, spécificité et indice de Youden) afin d'identifier rapidement le seuil qui maximise la détection tout en contrôlant les erreurs.
+- **Diagnostic Kolmogorov-Smirnov** : la séparation entre gagnants et perdants est suivie via la statistique KS et une courbe cumulative compacte, idéale pour identifier un seuil discriminant même lorsque les métriques globales paraissent stables.
+- **Chronologie quotidienne des performances** : un tableau `daily_performance` récapitule chaque journée analysée (volumétrie, précision, rappel, part de paris à valeur) pour repérer d'éventuelles dérives temporelles ou effets de calendrier sans quitter le tableau de bord.
+- **Vue segmentée par discipline/surface/value bet** : les métriques clés sont désormais ventilées par discipline hippique, type de surface et présence d'un pari de valeur détecté pour cibler immédiatement les contextes où le modèle décroche.
+
 ## Technologies
 
 ### Backend
