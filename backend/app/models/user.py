@@ -9,7 +9,7 @@ import enum
 
 from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, Enum as SQLEnum, DECIMAL
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 
 from app.core.database import Base
 
@@ -45,7 +45,14 @@ class User(Base):
         nullable=False,
         index=True
     )
+    # Informations Telegram
     telegram_id = Column(String(100), unique=True, nullable=True, index=True)
+    telegram_chat_id = synonym("telegram_id")
+    telegram_notifications_enabled = Column(Boolean, default=False)
+    telegram_linked_at = Column(TIMESTAMP, nullable=True)
+
+    # Notifications Email
+    email_notifications_enabled = Column(Boolean, default=True)
     profile_picture_url = Column(String(500), nullable=True)
     initial_bankroll = Column(DECIMAL(10, 2), default=1000.00)
     current_bankroll = Column(DECIMAL(10, 2), default=1000.00)
@@ -87,6 +94,11 @@ class User(Base):
     def is_guest(self) -> bool:
         """Vérifie si l'utilisateur est invité"""
         return self.role == UserRole.GUEST
+
+    @property
+    def has_telegram_notifications(self) -> bool:
+        """Indique si l'utilisateur a correctement lié Telegram."""
+        return bool(self.telegram_notifications_enabled and self.telegram_chat_id)
 
     @property
     def bankroll_percentage(self) -> float:

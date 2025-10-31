@@ -10,8 +10,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from decimal import Decimal
 
-from telegram import Bot, ParseMode
-from telegram.error import TelegramError, Unauthorized, BadRequest
+from telegram import Bot
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
 from app.core.config import settings
 
@@ -48,6 +49,11 @@ class TelegramNotificationService:
         else:
             self.bot = Bot(token=self.bot_token)
 
+    @property
+    def is_configured(self) -> bool:
+        """Indique si le bot Telegram est correctement initialisé."""
+        return self.bot is not None
+
     async def send_message(
         self,
         chat_id: str,
@@ -83,17 +89,6 @@ class TelegramNotificationService:
             logger.info(f"Telegram message sent to {chat_id}")
             return True
 
-        except Unauthorized:
-            logger.error(
-                f"Unauthorized: Bot blocked by user {chat_id}. "
-                "User should be marked as inactive."
-            )
-            return False
-
-        except BadRequest as e:
-            logger.error(f"Bad request sending to {chat_id}: {str(e)}")
-            return False
-
         except TelegramError as e:
             logger.error(f"Telegram error sending to {chat_id}: {str(e)}")
             return False
@@ -101,6 +96,16 @@ class TelegramNotificationService:
         except Exception as e:
             logger.error(f"Unexpected error sending to {chat_id}: {str(e)}")
             return False
+
+    async def send_link_confirmation(self, chat_id: str, user_label: str) -> bool:
+        """Envoie un message de bienvenue lors de la liaison du compte Telegram."""
+        message = (
+            "🤖 <b>PronoTurf</b>\n\n"
+            f"Bonjour {user_label}! Votre compte est désormais lié à notre bot Telegram.\n"
+            "Vous recevrez ici vos pronostics, alertes value bets et rappels personnalisés.\n\n"
+            "Vous pouvez à tout moment répondre /stop pour désactiver les notifications."
+        )
+        return await self.send_message(chat_id=chat_id, message=message)
 
     async def send_pronostic_notification(
         self,

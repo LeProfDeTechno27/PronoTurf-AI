@@ -76,10 +76,51 @@ class BulkNotificationRequest(BaseModel):
     related_pronostic_id: Optional[int] = None
 
 
-class NotificationStats(BaseModel):
-    """Statistiques de notifications pour un utilisateur"""
-    total_notifications: int
-    unread_count: int
-    by_type: dict[str, int] = Field(..., description="Nombre par type")
-    by_channel: dict[str, int] = Field(..., description="Nombre par canal")
-    recent_notifications: list[NotificationResponse] = Field(default_factory=list, description="Notifications récentes")
+class NotificationMarkReadRequest(BaseModel):
+    """Requête pour marquer plusieurs notifications comme lues."""
+
+    notification_ids: list[int] = Field(
+        ..., min_length=1, description="Identifiants des notifications à marquer comme lues"
+    )
+
+
+class NotificationStatsResponse(BaseModel):
+    """Statistiques agrégées des notifications utilisateur."""
+
+    total_notifications: int = Field(..., description="Nombre total de notifications envoyées")
+    unread_count: int = Field(..., description="Nombre de notifications non lues")
+    read_count: int = Field(..., description="Nombre de notifications lues")
+    by_type: dict[str, int] = Field(default_factory=dict, description="Répartition par type")
+    by_channel: dict[str, int] = Field(default_factory=dict, description="Répartition par canal")
+    by_status: dict[str, int] = Field(default_factory=dict, description="Répartition par statut")
+    last_24h_count: int = Field(..., description="Notifications envoyées sur les 24 dernières heures")
+
+
+class TelegramLinkRequest(BaseModel):
+    """Requête de liaison du bot Telegram."""
+
+    chat_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Identifiant du chat Telegram (numérique)",
+    )
+
+
+class TelegramLinkResponse(BaseModel):
+    """Réponse lors de la liaison ou déliaison d'un chat Telegram."""
+
+    chat_id: Optional[str] = Field(None, description="Identifiant du chat Telegram enregistré")
+    telegram_enabled: bool = Field(..., description="Telegram actif pour l'utilisateur")
+    test_message_sent: Optional[bool] = Field(
+        None,
+        description="Indique si le message de confirmation a été envoyé avec succès",
+    )
+
+
+class TelegramStatusResponse(BaseModel):
+    """État courant de la configuration Telegram pour l'utilisateur."""
+
+    chat_id: Optional[str] = Field(None, description="Identifiant de chat associé")
+    telegram_enabled: bool = Field(..., description="Notifications Telegram activées")
+    bot_configured: bool = Field(..., description="Statut global du bot Telegram")

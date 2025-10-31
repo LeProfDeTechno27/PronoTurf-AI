@@ -44,6 +44,13 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+    """Alias conservé pour compatibilité avec les endpoints asynchrones."""
+
+    async for session in get_db():
+        yield session
+
+
 async def init_db() -> None:
     """
     Initialize database (create tables if they don't exist)
