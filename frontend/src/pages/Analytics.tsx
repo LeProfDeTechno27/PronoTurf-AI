@@ -7,6 +7,8 @@ import type {
   CoupleAnalyticsResponse,
   HorseAnalyticsResponse,
   JockeyAnalyticsResponse,
+  AnalyticsInsightsResponse,
+  LeaderboardEntry,
   PerformanceBreakdown,
   RecentRace,
   TrainerAnalyticsResponse,
@@ -43,6 +45,12 @@ type HorseSearch = { id: string; hippodrome?: string }
 type PersonSearch = { id: string; hippodrome?: string }
 type CoupleSearch = { horseId: string; jockeyId: string; hippodrome?: string }
 type CourseSearch = { date: string; hippodrome: string; courseNumber: number }
+type InsightsFilters = {
+  hippodrome?: string
+  startDate?: string
+  endDate?: string
+  limit: number
+}
 
 const isJockeyResponse = (
   data: JockeyAnalyticsResponse | TrainerAnalyticsResponse,
@@ -163,6 +171,54 @@ function BreakdownTable({ data, emptyLabel }: { data: PerformanceBreakdown[]; em
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.podiums)}</td>
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.win_rate)}</td>
               <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.podium_rate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function LeaderboardTable({
+  entries,
+  emptyLabel,
+}: {
+  entries: LeaderboardEntry[]
+  emptyLabel: string
+}) {
+  // Simplifie l'affichage des classements trans-entités pour l'explorateur analytics.
+  if (!entries.length) {
+    return <p className="text-gray-500">{emptyLabel}</p>
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">#</th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Entité</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Courses</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Victoires</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Podiums</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux V</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux P</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Moy. place</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Dernière course</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {entries.map((item, index) => (
+            <tr key={item.entity_id}>
+              <td className="px-4 py-2 text-sm text-gray-700">#{index + 1}</td>
+              <td className="px-4 py-2 text-sm font-medium text-gray-900">{item.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.sample_size)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(item.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatDate(item.last_seen)}</td>
             </tr>
           ))}
         </tbody>
@@ -356,7 +412,52 @@ function CourseAnalyticsPanel({ data }: { data: CourseAnalyticsResponse }) {
   )
 }
 
+function InsightsPanel({ data }: { data: AnalyticsInsightsResponse }) {
+  // Offre une vue synthétique sur les entités dominantes de la période choisie.
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryStats
+          label="Hippodrome filtré"
+          value={data.metadata.hippodrome_filter ?? 'Tous'}
+        />
+        <SummaryStats
+          label="Période analysée"
+          value={`${formatDate(data.metadata.date_start)} → ${formatDate(data.metadata.date_end)}`}
+        />
+        <SummaryStats
+          label="Total classements"
+          value={`${formatNumber(data.top_horses.length)} chevaux / ${formatNumber(data.top_jockeys.length)} jockeys / ${formatNumber(data.top_trainers.length)} entraîneurs`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-gray-900">Top Chevaux</h3>
+          <LeaderboardTable entries={data.top_horses} emptyLabel="Aucun cheval identifié sur la période." />
+        </div>
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-gray-900">Top Jockeys</h3>
+          <LeaderboardTable entries={data.top_jockeys} emptyLabel="Aucun jockey identifié sur la période." />
+        </div>
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-gray-900">Top Entraîneurs</h3>
+          <LeaderboardTable entries={data.top_trainers} emptyLabel="Aucun entraîneur identifié sur la période." />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
+  // États dédiés aux classements transverses.
+  const [insightHippoInput, setInsightHippoInput] = useState('')
+  const [insightStartInput, setInsightStartInput] = useState('')
+  const [insightEndInput, setInsightEndInput] = useState('')
+  const [insightLimitInput, setInsightLimitInput] = useState('5')
+  const [insightError, setInsightError] = useState<string | null>(null)
+  const [insightFilters, setInsightFilters] = useState<InsightsFilters>({ limit: 5 })
+
   const [horseIdInput, setHorseIdInput] = useState('')
   const [horseHippoInput, setHorseHippoInput] = useState('')
   const [horseSearch, setHorseSearch] = useState<HorseSearch | null>(null)
@@ -387,6 +488,29 @@ export default function AnalyticsPage() {
   const [courseSearch, setCourseSearch] = useState<CourseSearch | null>(null)
   const [courseError, setCourseError] = useState<string | null>(null)
   const [courseHippoQuery, setCourseHippoQuery] = useState('')
+
+  const insightsQueryKey = useMemo(
+    () => [
+      'analytics',
+      'insights',
+      insightFilters.hippodrome ?? '',
+      insightFilters.startDate ?? '',
+      insightFilters.endDate ?? '',
+      insightFilters.limit,
+    ],
+    [insightFilters],
+  )
+
+  const insightsQuery = useQuery({
+    queryKey: insightsQueryKey,
+    queryFn: () =>
+      analyticsService.getInsights({
+        hippodrome: insightFilters.hippodrome,
+        startDate: insightFilters.startDate,
+        endDate: insightFilters.endDate,
+        limit: insightFilters.limit,
+      }),
+  })
 
   const horseQueryKey = useMemo(() => (
     horseSearch ? ['analytics', 'horse', horseSearch.id, horseSearch.hippodrome ?? ''] : ['analytics', 'horse', 'idle']
@@ -477,6 +601,31 @@ export default function AnalyticsPage() {
     enabled: courseHippoQuery.trim().length >= 2,
     staleTime: 60_000,
   })
+
+  const handleInsightsSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const limitValue = Number(insightLimitInput.trim() || '5')
+
+    if (Number.isNaN(limitValue) || limitValue < 1 || limitValue > 20) {
+      setInsightError('Le nombre d\'entrées doit être compris entre 1 et 20.')
+      return
+    }
+
+    if (insightStartInput && insightEndInput && insightStartInput > insightEndInput) {
+      setInsightError('La date de début doit précéder la date de fin.')
+      return
+    }
+
+    setInsightError(null)
+    const nextFilters: InsightsFilters = {
+      hippodrome: insightHippoInput.trim() || undefined,
+      startDate: insightStartInput || undefined,
+      endDate: insightEndInput || undefined,
+      limit: limitValue,
+    }
+
+    setInsightFilters(nextFilters)
+  }
 
   const handleHorseSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -590,6 +739,57 @@ export default function AnalyticsPage() {
             Explorez les statistiques avancées issues des fichiers Aspiturf pour éclairer vos décisions avant-course.
           </p>
         </header>
+
+        <SectionCard
+          title="Classements express"
+          description="Identifiez en un clin d'œil les chevaux, jockeys et entraîneurs les plus performants sur une période donnée."
+        >
+          <form
+            onSubmit={handleInsightsSubmit}
+            className="grid gap-4 md:grid-cols-[repeat(4,minmax(0,1fr)),auto]"
+          >
+            <input
+              value={insightHippoInput}
+              onChange={(event) => setInsightHippoInput(event.target.value)}
+              placeholder="Filtrer par hippodrome (optionnel)"
+              className="input"
+            />
+            <input
+              type="date"
+              value={insightStartInput}
+              onChange={(event) => setInsightStartInput(event.target.value)}
+              placeholder="Date de début"
+              className="input"
+            />
+            <input
+              type="date"
+              value={insightEndInput}
+              onChange={(event) => setInsightEndInput(event.target.value)}
+              placeholder="Date de fin"
+              className="input"
+            />
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={insightLimitInput}
+              onChange={(event) => setInsightLimitInput(event.target.value)}
+              placeholder="Nombre d'entrées"
+              className="input"
+            />
+            <button type="submit" className="btn btn-primary">
+              Actualiser
+            </button>
+          </form>
+          {insightError && <p className="text-sm text-red-600">{insightError}</p>}
+          {insightsQuery.isLoading && (
+            <p className="text-sm text-gray-500">Calcul des classements en cours…</p>
+          )}
+          {insightsQuery.isError && (
+            <p className="text-sm text-red-600">Erreur: {(insightsQuery.error as Error).message}</p>
+          )}
+          {insightsQuery.data && <InsightsPanel data={insightsQuery.data} />}
+        </SectionCard>
 
         <SectionCard
           title="Cheval"

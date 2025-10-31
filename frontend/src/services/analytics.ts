@@ -7,6 +7,7 @@ import type {
   CourseAnalyticsResponse,
   AnalyticsSearchResult,
   AnalyticsSearchType,
+  AnalyticsInsightsResponse,
 } from '../types/analytics'
 
 type Nullable<T> = T | null | undefined
@@ -71,6 +72,24 @@ export const analyticsService = {
   async searchEntities(type: AnalyticsSearchType, query: string, limit = 10) {
     const response = await apiClient.get<AnalyticsSearchResult[]>('/analytics/search', {
       params: { type, query, limit },
+    })
+
+    return response.data
+  },
+
+  async getInsights(params?: {
+    hippodrome?: Nullable<string>
+    startDate?: Nullable<string>
+    endDate?: Nullable<string>
+    limit?: number
+  }) {
+    const response = await apiClient.get<AnalyticsInsightsResponse>('/analytics/insights', {
+      params: {
+        ...(params?.hippodrome ? { hippodrome: params.hippodrome } : {}),
+        ...(params?.startDate ? { start_date: params.startDate } : {}),
+        ...(params?.endDate ? { end_date: params.endDate } : {}),
+        ...(params?.limit ? { limit: params.limit } : {}),
+      },
     })
 
     return response.data

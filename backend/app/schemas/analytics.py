@@ -120,6 +120,39 @@ class PerformanceSummary(BaseModel):
     place_rate: Optional[float] = Field(default=None, ge=0, le=1, description="Taux de place")
 
 
+class LeaderboardEntry(BaseModel):
+    """Entrée de classement synthétique pour une entité Aspiturf."""
+
+    entity_id: str = Field(
+        ...,
+        description="Identifiant unique de l'entité (cheval, jockey ou entraineur)",
+    )
+    label: str = Field(..., description="Nom lisible de l'entité")
+    sample_size: int = Field(..., ge=0, description="Nombre de courses étudiées")
+    wins: int = Field(..., ge=0, description="Nombre de victoires dans l'échantillon")
+    podiums: int = Field(..., ge=0, description="Nombre de podiums dans l'échantillon")
+    win_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de victoire (0-1) calculé sur l'échantillon",
+    )
+    podium_rate: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Taux de podium (0-1) calculé sur l'échantillon",
+    )
+    average_finish: Optional[float] = Field(
+        default=None,
+        description="Position moyenne à l'arrivée sur la période",
+    )
+    last_seen: Optional[date_type] = Field(
+        default=None,
+        description="Dernière date observée pour l'entité dans la période analysée",
+    )
+
+
 class HorseAnalyticsResponse(BaseModel):
     """Réponse analytics pour un cheval."""
 
@@ -225,4 +258,22 @@ class CourseAnalyticsResponse(BaseModel):
     currency: Optional[str] = Field(default=None, description="Devise de l'allocation")
     partants: List[PartantInsight] = Field(default_factory=list)
     metadata: AnalyticsMetadata = Field(default_factory=AnalyticsMetadata)
+
+
+class AnalyticsInsightsResponse(BaseModel):
+    """Réponse agrégée pour les classements trans-entités."""
+
+    metadata: AnalyticsMetadata = Field(default_factory=AnalyticsMetadata)
+    top_horses: List[LeaderboardEntry] = Field(
+        default_factory=list,
+        description="Classement des chevaux les plus performants",
+    )
+    top_jockeys: List[LeaderboardEntry] = Field(
+        default_factory=list,
+        description="Classement des jockeys les plus performants",
+    )
+    top_trainers: List[LeaderboardEntry] = Field(
+        default_factory=list,
+        description="Classement des entraineurs les plus performants",
+    )
 

@@ -600,6 +600,126 @@ class AspiturfClient:
 
         return races
 
+    async def leaderboard(
+        self,
+        entity_type: str,
+        *,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Construit un classement agrégé par type d'entité."""
+
+        if entity_type not in {"horse", "jockey", "trainer"}:
+            raise ValueError(f"Type d'entité non supporté: {entity_type}")
+
+        if not self._data_loaded:
+            await self._load_data()
+
+        hippo_upper = hippodrome.upper() if hippodrome else None
+
+        aggregations: Dict[str, Dict[str, Any]] = {}
+
+        for row in self._data:
+            race_date = row.get("jour")
+
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                # Sans information de date fiable on ignore la ligne si un filtre est demandé.
+                continue
+
+            if hippo_upper:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippo_upper:
+                    continue
+
+            if entity_type == "horse":
+                entity_id = row.get("idChe")
+                label = row.get("nom_cheval") or row.get("cheval")
+            elif entity_type == "jockey":
+                entity_id = row.get("idJockey")
+                label = row.get("jockey")
+            else:
+                entity_id = row.get("idEntraineur")
+                label = row.get("entraineur")
+
+            if not entity_id:
+                continue
+
+            entry = aggregations.setdefault(
+                str(entity_id),
+                {
+                    "entity_id": str(entity_id),
+                    "label": label or str(entity_id),
+                    "sample_size": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "last_seen": None,
+                },
+            )
+
+            if label:
+                entry["label"] = label
+
+            entry["sample_size"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                entry["positions"].append(position)
+                if position == 1:
+                    entry["wins"] += 1
+                if 1 <= position <= 3:
+                    entry["podiums"] += 1
+
+            if isinstance(race_date, date):
+                current_last_seen = entry.get("last_seen")
+                if current_last_seen is None or race_date > current_last_seen:
+                    entry["last_seen"] = race_date
+
+        leaderboard: List[Dict[str, Any]] = []
+
+        for value in aggregations.values():
+            sample_size = value["sample_size"] or 0
+            if not sample_size:
+                continue
+
+            win_rate = value["wins"] / sample_size if sample_size else None
+            podium_rate = value["podiums"] / sample_size if sample_size else None
+
+            positions = [pos for pos in value.get("positions", []) if isinstance(pos, int)]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            leaderboard.append(
+                {
+                    "entity_id": value["entity_id"],
+                    "label": value["label"],
+                    "sample_size": sample_size,
+                    "wins": value["wins"],
+                    "podiums": value["podiums"],
+                    "win_rate": round(win_rate, 4) if win_rate is not None else None,
+                    "podium_rate": round(podium_rate, 4) if podium_rate is not None else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "last_seen": value.get("last_seen"),
+                }
+            )
+
+        leaderboard.sort(
+            key=lambda item: (
+                -(item["win_rate"] or 0),
+                -(item["podium_rate"] or 0),
+                -item["sample_size"],
+                item["label"],
+            )
+        )
+
+        return leaderboard[: max(1, limit)]
+
     async def search_entities(
         self,
         entity_type: str,

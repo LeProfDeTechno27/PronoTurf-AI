@@ -13,10 +13,12 @@ from app.schemas.analytics import (
     AnalyticsMetadata,
     AnalyticsSearchResult,
     AnalyticsSearchType,
+    AnalyticsInsightsResponse,
     CourseAnalyticsResponse,
     CoupleAnalyticsResponse,
     HorseAnalyticsResponse,
     JockeyAnalyticsResponse,
+    LeaderboardEntry,
     PartantInsight,
     PerformanceBreakdown,
     PerformanceSummary,
@@ -170,6 +172,90 @@ def _recent_results(rows: List[Dict[str, Any]], limit: int = 5) -> List[RecentRa
         )
 
     return results
+
+
+def _to_leaderboard_entries(rows: List[Dict[str, Any]]) -> List[LeaderboardEntry]:
+    """Convertit les dictionnaires issus du client en objets de classement typés."""
+
+    entries: List[LeaderboardEntry] = []
+
+    for row in rows:
+        entries.append(
+            LeaderboardEntry(
+                entity_id=str(row.get("entity_id")),
+                label=str(row.get("label")),
+                sample_size=int(row.get("sample_size", 0)),
+                wins=int(row.get("wins", 0)),
+                podiums=int(row.get("podiums", 0)),
+                win_rate=row.get("win_rate"),
+                podium_rate=row.get("podium_rate"),
+                average_finish=row.get("average_finish"),
+                last_seen=row.get("last_seen"),
+            )
+        )
+
+    return entries
+
+
+@router.get(
+    "/insights",
+    response_model=AnalyticsInsightsResponse,
+    summary="Obtenir les classements multi-entités",
+    description="Agrège les meilleures performances chevaux, jockeys et entraineurs sur une période.",
+)
+async def get_analytics_insights(
+    *,
+    client: AspiturfClient = Depends(get_aspiturf_client),
+    hippodrome: Optional[str] = Query(
+        default=None,
+        description="Filtrer sur un hippodrome spécifique (code Aspiturf)",
+    ),
+    start_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses disputées à partir de cette date",
+    ),
+    end_date: Optional[date] = Query(
+        default=None,
+        description="Inclure uniquement les courses disputées jusqu'à cette date",
+    ),
+    limit: int = Query(
+        default=5,
+        ge=1,
+        le=20,
+        description="Nombre maximal d'entrées par classement",
+    ),
+) -> AnalyticsInsightsResponse:
+    """Retourne les classements consolidés pour chaque entité majeure."""
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date doit être antérieure ou égale à end_date",
+        )
+
+    leaderboard_kwargs = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "hippodrome": hippodrome,
+        "limit": limit,
+    }
+
+    horse_rows = await client.leaderboard("horse", **leaderboard_kwargs)
+    jockey_rows = await client.leaderboard("jockey", **leaderboard_kwargs)
+    trainer_rows = await client.leaderboard("trainer", **leaderboard_kwargs)
+
+    metadata = AnalyticsMetadata(
+        hippodrome_filter=hippodrome,
+        date_start=start_date,
+        date_end=end_date,
+    )
+
+    return AnalyticsInsightsResponse(
+        metadata=metadata,
+        top_horses=_to_leaderboard_entries(horse_rows),
+        top_jockeys=_to_leaderboard_entries(jockey_rows),
+        top_trainers=_to_leaderboard_entries(trainer_rows),
+    )
 
 
 def _compute_breakdown(

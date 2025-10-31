@@ -89,6 +89,124 @@ class StubAspiturfClient:
         key = (course_date, hippodrome.upper(), course_number)
         return [dict(item) for item in self._partants.get(key, [])]
 
+    async def leaderboard(
+        self,
+        entity_type: str,
+        *,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        hippodrome: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        filtered: List[Dict[str, Any]] = []
+
+        for row in self._rows:
+            race_date = row.get("jour")
+
+            if isinstance(race_date, date):
+                if start_date and race_date < start_date:
+                    continue
+                if end_date and race_date > end_date:
+                    continue
+            elif start_date or end_date:
+                continue
+
+            if hippodrome is not None:
+                hippo_value = row.get("hippo")
+                if not hippo_value or hippo_value.upper() != hippodrome.upper():
+                    continue
+
+            filtered.append(dict(row))
+
+        key_field = {
+            "horse": "idChe",
+            "jockey": "idJockey",
+            "trainer": "idEntraineur",
+        }.get(entity_type)
+
+        label_field = {
+            "horse": "nom_cheval",
+            "jockey": "jockey",
+            "trainer": "entraineur",
+        }.get(entity_type)
+
+        if not key_field or not label_field:
+            return []
+
+        aggregations: Dict[str, Dict[str, Any]] = {}
+
+        for row in filtered:
+            identifier = row.get(key_field)
+            if not identifier:
+                continue
+
+            label = row.get(label_field) or str(identifier)
+            entry = aggregations.setdefault(
+                str(identifier),
+                {
+                    "entity_id": str(identifier),
+                    "label": label,
+                    "sample_size": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "positions": [],
+                    "last_seen": None,
+                },
+            )
+
+            entry["label"] = label
+            entry["sample_size"] += 1
+
+            position = row.get("cl")
+            if isinstance(position, int):
+                entry["positions"].append(position)
+                if position == 1:
+                    entry["wins"] += 1
+                if 1 <= position <= 3:
+                    entry["podiums"] += 1
+
+            race_date = row.get("jour")
+            if isinstance(race_date, date):
+                last_seen = entry.get("last_seen")
+                if last_seen is None or race_date > last_seen:
+                    entry["last_seen"] = race_date
+
+        leaderboard: List[Dict[str, Any]] = []
+        for entry in aggregations.values():
+            sample_size = entry["sample_size"]
+            if not sample_size:
+                continue
+
+            win_rate = entry["wins"] / sample_size if sample_size else None
+            podium_rate = entry["podiums"] / sample_size if sample_size else None
+
+            positions = [pos for pos in entry["positions"] if isinstance(pos, int)]
+            average_finish = sum(positions) / len(positions) if positions else None
+
+            leaderboard.append(
+                {
+                    "entity_id": entry["entity_id"],
+                    "label": entry["label"],
+                    "sample_size": sample_size,
+                    "wins": entry["wins"],
+                    "podiums": entry["podiums"],
+                    "win_rate": round(win_rate, 4) if win_rate is not None else None,
+                    "podium_rate": round(podium_rate, 4) if podium_rate is not None else None,
+                    "average_finish": round(average_finish, 2) if average_finish is not None else None,
+                    "last_seen": entry.get("last_seen"),
+                }
+            )
+
+        leaderboard.sort(
+            key=lambda item: (
+                -(item["win_rate"] or 0),
+                -(item["podium_rate"] or 0),
+                -item["sample_size"],
+                item["label"],
+            )
+        )
+
+        return leaderboard[: max(1, limit)]
     async def search_entities(
         self,
         entity_type: str,
@@ -392,6 +510,50 @@ async def test_course_analytics_exposes_partant_statistics(analytics_client: Asy
     metadata = payload["metadata"]
     assert metadata["date_start"] == "2024-06-10"
     assert metadata["hippodrome_filter"] == "Paris"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_insights_endpoint_builds_leaderboards(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/insights",
+        params={
+            "start_date": "2024-05-01",
+            "end_date": "2024-06-30",
+            "limit": 3,
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["metadata"]["date_start"] == "2024-05-01"
+    assert payload["metadata"]["date_end"] == "2024-06-30"
+
+    horses = payload["top_horses"]
+    assert [item["entity_id"] for item in horses] == ["H-1", "H-2"]
+    assert horses[0]["wins"] == 1
+    assert horses[0]["podiums"] == 2
+
+    jockeys = payload["top_jockeys"]
+    assert jockeys[0]["entity_id"] == "J-77"
+    assert jockeys[0]["win_rate"] == 0.5
+
+    trainers = payload["top_trainers"]
+    assert trainers[0]["entity_id"] == "T-42"
+    assert trainers[0]["podium_rate"] == 1.0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_insights_endpoint_validates_date_range(analytics_client: AsyncClient):
+    response = await analytics_client.get(
+        "/api/v1/analytics/insights",
+        params={
+            "start_date": "2024-06-30",
+            "end_date": "2024-05-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date doit être antérieure ou égale à end_date"
 
 
 @pytest.mark.anyio("asyncio")

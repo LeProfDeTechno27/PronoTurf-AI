@@ -32,6 +32,18 @@ export interface PerformanceSummary {
   place_rate?: number | null
 }
 
+export interface LeaderboardEntry {
+  entity_id: string
+  label: string
+  sample_size: number
+  wins: number
+  podiums: number
+  win_rate?: number | null
+  podium_rate?: number | null
+  average_finish?: number | null
+  last_seen?: string | null
+}
+
 export interface HorseAnalyticsResponse {
   horse_id: string
   horse_name?: string | null
@@ -122,6 +134,13 @@ export interface CourseAnalyticsResponse {
   currency?: string | null
   partants: PartantInsight[]
   metadata: AnalyticsMetadata
+}
+
+export interface AnalyticsInsightsResponse {
+  metadata: AnalyticsMetadata
+  top_horses: LeaderboardEntry[]
+  top_jockeys: LeaderboardEntry[]
+  top_trainers: LeaderboardEntry[]
 }
 
 export type AnalyticsSearchType = 'horse' | 'jockey' | 'trainer' | 'hippodrome'
