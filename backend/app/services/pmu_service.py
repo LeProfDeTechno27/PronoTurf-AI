@@ -844,6 +844,8 @@ class PMUService:
             partant.equipment = partant_data.get("equipement")
             partant.odds_pmu = partant_data.get("cote")
             partant.recent_form = partant_data.get("musique")
+            partant.days_since_last_race = partant_data.get("jours_depuis_derniere_course")
+            partant.aspiturf_stats = partant_data.get("aspiturf_data")
         else:
             # Créer
             partant = Partant(
@@ -858,6 +860,7 @@ class PMUService:
                 days_since_last_race=partant_data.get("jours_depuis_derniere_course"),
                 recent_form=partant_data.get("musique"),
                 odds_pmu=partant_data.get("cote"),
+                aspiturf_stats=partant_data.get("aspiturf_data"),
             )
             self.db.add(partant)
             stats["partants_created"] += 1

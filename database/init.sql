@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS partants (
     poids_porte DECIMAL(4, 1),
     handicap_value INT,
     equipment JSON,
+    aspiturf_stats JSON,
     days_since_last_race INT UNSIGNED,
     recent_form VARCHAR(50),
     odds_pmu DECIMAL(6, 2),

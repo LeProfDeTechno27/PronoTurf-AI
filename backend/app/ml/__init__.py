@@ -1,12 +1,11 @@
-"""
-Machine Learning Package pour PronoTurf
+"""Machine Learning package for PronoTurf.
 
-Ce package contient tous les modules nécessaires pour:
-- Feature engineering (extraction de features)
-- Modèle de prédiction (Gradient Boosting)
-- Explicabilité (SHAP values)
-- Service de prédiction complet
-- Entraînement du modèle
+This package groups all modules required for:
+* feature engineering,
+* prediction model training (Gradient Boosting),
+* explainability tooling (SHAP values),
+* the complete prediction service,
+* initial model training helpers.
 """
 
 from app.ml.features import FeatureEngineer
