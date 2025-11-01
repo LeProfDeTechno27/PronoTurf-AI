@@ -185,7 +185,6 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("3.0"),
             days_since_last_race=10,
             handicap_value=8,
-            equipment={"items": ["Oeillères"]},
         ),
         Partant(
             course_id=course1.course_id,
@@ -198,7 +197,6 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("4.0"),
             days_since_last_race=25,
             handicap_value=16,
-            equipment={"items": ["Licol"]},
         ),
         Partant(
             course_id=course1.course_id,
@@ -211,7 +209,6 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("12.0"),
             days_since_last_race=75,
             handicap_value=26,
-            equipment={"items": ["Bonnet", "Mors"]},
         ),
         Partant(
             course_id=course2.course_id,
@@ -224,7 +221,6 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("5.5"),
             days_since_last_race=45,
             handicap_value=34,
-            equipment={"items": []},
         ),
         Partant(
             course_id=course2.course_id,
@@ -237,7 +233,6 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("7.0"),
             days_since_last_race=210,
             handicap_value=12,
-            equipment=None,
         ),
         Partant(
             course_id=course2.course_id,
@@ -247,7 +242,6 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=13,
             final_position=2,
             odds_pmu=Decimal("6.0"),
-            equipment={"items": ["Œillères australiennes"]},
         ),
     ]
     db.add_all(partants)
@@ -815,54 +809,6 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_weight_segment["samples"] == 1
     assert unknown_weight_segment["average_weight"] is None
 
-    equipment_performance = metrics["equipment_performance"]
-    assert set(equipment_performance.keys()) == {
-        "blinkers",
-        "multi_gear",
-        "no_equipment",
-        "single_gear",
-        "unknown",
-    }
-
-    blinkers_segment = equipment_performance["blinkers"]
-    assert blinkers_segment["label"] == "Œillères déclarées"
-    assert blinkers_segment["samples"] == 2
-    assert blinkers_segment["courses"] == 2
-    assert blinkers_segment["horses"] == 2
-    assert blinkers_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
-    assert blinkers_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
-    assert blinkers_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
-    assert blinkers_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
-    assert blinkers_segment["blinkers_rate"] == pytest.approx(1.0, rel=1e-3)
-
-    single_gear_segment = equipment_performance["single_gear"]
-    assert single_gear_segment["label"] == "Équipement isolé"
-    assert single_gear_segment["samples"] == 1
-    assert single_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
-    assert single_gear_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
-    assert single_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
-
-    multi_gear_segment = equipment_performance["multi_gear"]
-    assert multi_gear_segment["label"] == "Équipement combiné (≥2)"
-    assert multi_gear_segment["samples"] == 1
-    assert multi_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
-    assert multi_gear_segment["average_equipment_items"] == pytest.approx(2.0, rel=1e-3)
-    assert multi_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
-
-    no_equipment_segment = equipment_performance["no_equipment"]
-    assert no_equipment_segment["label"] == "Aucun équipement déclaré"
-    assert no_equipment_segment["samples"] == 1
-    assert no_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
-    assert no_equipment_segment["average_equipment_items"] == pytest.approx(0.0, abs=1e-6)
-    assert no_equipment_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
-
-    unknown_equipment_segment = equipment_performance["unknown"]
-    assert unknown_equipment_segment["label"] == "Équipement inconnu"
-    assert unknown_equipment_segment["samples"] == 1
-    assert unknown_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
-    assert unknown_equipment_segment["average_equipment_items"] is None
-    assert unknown_equipment_segment["blinkers_rate"] is None
-
     odds_band_performance = metrics["odds_band_performance"]
     assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
 
@@ -1072,7 +1018,6 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
-    assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
@@ -1114,7 +1059,6 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
-        assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
