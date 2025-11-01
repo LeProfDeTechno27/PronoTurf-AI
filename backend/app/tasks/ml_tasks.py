@@ -1353,6 +1353,65 @@ def _summarise_city_performance(
     return city_metrics
 
 
+def _normalise_owner_label(owner: Optional[object]) -> Tuple[str, str]:
+    """Normalise un propriétaire pour stabiliser les ventilations dédiées."""
+
+    if owner is None:
+        return "unknown", "Propriétaire inconnu"
+
+    raw_value = str(owner).strip()
+
+    if not raw_value:
+        return "unknown", "Propriétaire inconnu"
+
+    slug = "".join(char if char.isalnum() else "_" for char in raw_value)
+    slug = slug.strip("_").lower() or "unknown"
+
+    return slug, raw_value
+
+
+def _summarise_owner_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble un tableau de bord des performances agrégées par propriétaire."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    owner_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        trainers: Set[int] = set(payload.get("trainers", set()))
+        jockeys: Set[int] = set(payload.get("jockeys", set()))
+        hippodromes: Set[int] = set(payload.get("hippodromes", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        if trainers:
+            summary["trainers"] = len(trainers)
+        if jockeys:
+            summary["jockeys"] = len(jockeys)
+        if hippodromes:
+            summary["hippodromes"] = len(hippodromes)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        owner_metrics[segment] = summary
+
+    return owner_metrics
+
+
 def _normalise_nationality_label(
     nationality: Optional[object]
 ) -> Tuple[str, str]:
@@ -3001,6 +3060,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
+        owner_breakdown: Dict[str, Dict[str, object]] = {}
         recent_form_breakdown: Dict[str, Dict[str, object]] = {}
         equipment_breakdown: Dict[str, Dict[str, object]] = {}
         weather_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3507,6 +3567,41 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             gender_bucket.setdefault("courses", set()).add(course.course_id)
             if partant.horse_id:
                 gender_bucket.setdefault("horses", set()).add(partant.horse_id)
+
+            owner_key, owner_label = _normalise_owner_label(
+                getattr(horse_entity, "owner", None) if horse_entity else None
+            )
+            owner_bucket = owner_breakdown.setdefault(
+                owner_key,
+                {
+                    "label": owner_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "trainers": set(),
+                    "jockeys": set(),
+                    "hippodromes": set(),
+                },
+            )
+            owner_bucket["label"] = owner_label
+            owner_bucket["truths"].append(is_top3)
+            owner_bucket["predictions"].append(predicted_label)
+            owner_bucket["scores"].append(probability)
+            owner_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                owner_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if partant.trainer_id:
+                owner_bucket.setdefault("trainers", set()).add(partant.trainer_id)
+            if partant.jockey_id:
+                owner_bucket.setdefault("jockeys", set()).add(partant.jockey_id)
+            reunion_for_owner = getattr(course, "reunion", None)
+            owner_hippodrome_id = None
+            if reunion_for_owner is not None:
+                owner_hippodrome_id = getattr(reunion_for_owner, "hippodrome_id", None)
+            if owner_hippodrome_id is not None:
+                owner_bucket.setdefault("hippodromes", set()).add(int(owner_hippodrome_id))
 
             category_key, category_label = _normalise_race_category_label(
                 getattr(course, "race_category", None)
@@ -4136,6 +4231,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_gender_performance = _summarise_horse_gender_performance(
             horse_gender_breakdown
         )
+        owner_performance = _summarise_owner_performance(owner_breakdown)
         recent_form_performance = _summarise_recent_form_performance(
             recent_form_breakdown
         )
@@ -4220,6 +4316,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "owner_performance": owner_performance,
             "recent_form_performance": recent_form_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
@@ -4277,6 +4374,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "owner_performance": owner_performance,
             "recent_form_performance": recent_form_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
@@ -4354,6 +4452,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "owner_performance": owner_performance,
             "recent_form_performance": recent_form_performance,
             "track_type_performance": track_type_performance,
             "city_performance": city_performance,

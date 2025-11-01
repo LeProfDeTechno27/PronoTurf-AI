@@ -111,11 +111,36 @@ def _seed_reference_data(db: Session) -> None:
 
     current_year = date.today().year
     horses = [
-        Horse(name="Cheval A", gender=Gender.MALE, birth_year=current_year - 4),
-        Horse(name="Cheval B", gender=Gender.FEMALE, birth_year=current_year - 3),
-        Horse(name="Cheval C", gender=Gender.MALE, birth_year=current_year - 5),
-        Horse(name="Cheval D", gender=Gender.MALE, birth_year=current_year - 7),
-        Horse(name="Cheval E", gender=Gender.FEMALE, birth_year=current_year - 9),
+        Horse(
+            name="Cheval A",
+            gender=Gender.MALE,
+            birth_year=current_year - 4,
+            owner="Ecurie Horizon",
+        ),
+        Horse(
+            name="Cheval B",
+            gender=Gender.FEMALE,
+            birth_year=current_year - 3,
+            owner="Ecurie Horizon",
+        ),
+        Horse(
+            name="Cheval C",
+            gender=Gender.MALE,
+            birth_year=current_year - 5,
+            owner="Ecurie Equinoxe",
+        ),
+        Horse(
+            name="Cheval D",
+            gender=Gender.MALE,
+            birth_year=current_year - 7,
+            owner="Ecurie Equinoxe",
+        ),
+        Horse(
+            name="Cheval E",
+            gender=Gender.FEMALE,
+            birth_year=current_year - 9,
+            owner="Ecurie Boreale",
+        ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
     db.add_all(horses)
@@ -1026,6 +1051,50 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert horse_gender_performance["female"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
     assert horse_gender_performance["female"]["share"] == pytest.approx(2 / 6, rel=1e-3)
 
+    owner_performance = metrics["owner_performance"]
+    assert set(owner_performance.keys()) == {
+        "ecurie_boreale",
+        "ecurie_equinoxe",
+        "ecurie_horizon",
+        "unknown",
+    }
+
+    horizon_segment = owner_performance["ecurie_horizon"]
+    assert horizon_segment["label"] == "Ecurie Horizon"
+    assert horizon_segment["samples"] == 2
+    assert horizon_segment["courses"] == 1
+    assert horizon_segment["horses"] == 2
+    assert horizon_segment["trainers"] == 1
+    assert horizon_segment["jockeys"] == 1
+    assert horizon_segment["hippodromes"] == 1
+    assert horizon_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horizon_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    equinoxe_segment = owner_performance["ecurie_equinoxe"]
+    assert equinoxe_segment["label"] == "Ecurie Equinoxe"
+    assert equinoxe_segment["samples"] == 2
+    assert equinoxe_segment["courses"] == 2
+    assert equinoxe_segment["horses"] == 2
+    assert equinoxe_segment["trainers"] == 2
+    assert equinoxe_segment["jockeys"] == 2
+    assert equinoxe_segment["hippodromes"] == 2
+    assert equinoxe_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert equinoxe_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    boreale_segment = owner_performance["ecurie_boreale"]
+    assert boreale_segment["label"] == "Ecurie Boreale"
+    assert boreale_segment["samples"] == 1
+    assert boreale_segment["courses"] == 1
+    assert boreale_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert boreale_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    unknown_segment = owner_performance["unknown"]
+    assert unknown_segment["label"] == "Propriétaire inconnu"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["courses"] == 1
+    assert unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
     race_category_performance = metrics["race_category_performance"]
     assert set(race_category_performance.keys()) == {"classe", "groupe"}
     assert race_category_performance["groupe"]["samples"] == 3
@@ -1183,6 +1252,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["recent_form_performance"]["recent_winner"]["label"] == "Gagnant récent"
     assert result["recent_form_performance"]["recent_winner"]["samples"] == 1
+    assert result["owner_performance"]["ecurie_horizon"]["samples"] == 2
     recent_form_performance = metrics["recent_form_performance"]
     assert set(recent_form_performance.keys()) == {
         "recent_winner",
@@ -1258,6 +1328,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
