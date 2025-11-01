@@ -1188,6 +1188,34 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         "medium": 2,
     }
 
+    rank_performance = metrics["prediction_rank_performance"]
+    assert set(rank_performance.keys()) == {"rank_1", "rank_2", "rank_3"}
+
+    top_rank_segment = rank_performance["rank_1"]
+    assert top_rank_segment["label"] == "Sélection prioritaire (rang 1)"
+    assert top_rank_segment["samples"] == 2
+    assert top_rank_segment["courses"] == 2
+    assert top_rank_segment["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert top_rank_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert top_rank_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert top_rank_segment["average_final_position"] == pytest.approx(2.5, rel=1e-3)
+    assert top_rank_segment["average_rank"] == pytest.approx(1.0, rel=1e-3)
+
+    second_rank_segment = rank_performance["rank_2"]
+    assert second_rank_segment["samples"] == 2
+    assert second_rank_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert second_rank_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert second_rank_segment["average_final_position"] == pytest.approx(2.0, rel=1e-3)
+    assert second_rank_segment["average_rank"] == pytest.approx(2.0, rel=1e-3)
+
+    third_rank_segment = rank_performance["rank_3"]
+    assert third_rank_segment["samples"] == 2
+    assert third_rank_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert third_rank_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert third_rank_segment["average_rank"] == pytest.approx(3.0, rel=1e-3)
+    assert third_rank_segment["best_final_position"] == 1
+    assert third_rank_segment["worst_final_position"] == 4
+
     jockey_leaderboard = metrics["jockey_performance"]
     assert len(jockey_leaderboard) == 2
     assert {entry["label"] for entry in jockey_leaderboard} == {
@@ -1231,6 +1259,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert second_trainer["horses"] == 3
     assert second_trainer["share"] == pytest.approx(0.5, rel=1e-3)
     assert second_trainer["recall"] == pytest.approx(0.5, rel=1e-3)
+
+    assert set(result["prediction_rank_performance"].keys()) == {"rank_1", "rank_2", "rank_3"}
+    assert result["prediction_rank_performance"]["rank_2"]["average_rank"] == pytest.approx(2.0, rel=1e-3)
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["jockey_performance"][1]["label"] == "Noah Verbeeck"
@@ -1368,6 +1399,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "start_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prediction_rank_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -1412,6 +1412,68 @@ def _summarise_owner_performance(
     return owner_metrics
 
 
+def _categorise_prediction_rank(rank: Optional[int]) -> Tuple[str, str]:
+    """Convertit un rang prédit en couple (clé technique, libellé lisible)."""
+
+    if rank is None or rank <= 0:
+        return "unknown", "Rang inconnu"
+    if rank == 1:
+        return "rank_1", "Sélection prioritaire (rang 1)"
+    if rank == 2:
+        return "rank_2", "Deuxième choix (rang 2)"
+    if rank == 3:
+        return "rank_3", "Troisième choix (rang 3)"
+    if rank <= 5:
+        return "rank_4_5", "Sélections intermédiaires (rangs 4-5)"
+    return "rank_6_plus", "Sélections élargies (rang 6 et +)"
+
+
+def _summarise_prediction_rank_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise les performances selon la hiérarchie des partants sélectionnés par le modèle."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    rank_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = [int(value) for value in payload.get("truths", [])]
+        predicted = [int(value) for value in payload.get("predictions", [])]
+        scores = [float(score) for score in payload.get("scores", [])]
+        final_positions = [int(pos) for pos in payload.get("final_positions", [])]
+        ranks = [int(value) for value in payload.get("ranks", [])]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        if horses:
+            summary["horses"] = len(horses)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["average_rank"] = _safe_average(ranks)
+
+        if final_positions:
+            summary["average_final_position"] = _safe_average(final_positions)
+            summary["best_final_position"] = min(final_positions)
+            summary["worst_final_position"] = max(final_positions)
+        else:
+            summary["average_final_position"] = None
+            summary["best_final_position"] = None
+            summary["worst_final_position"] = None
+
+        rank_metrics[segment] = summary
+
+    return rank_metrics
+
+
 def _normalise_nationality_label(
     nationality: Optional[object]
 ) -> Tuple[str, str]:
@@ -3088,6 +3150,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_versions: Counter[str] = Counter()
         model_version_breakdown: Dict[str, Dict[str, object]] = {}
         course_stats: Dict[int, Dict[str, object]] = {}
+        prediction_rank_breakdown: Dict[str, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
 
@@ -3164,6 +3227,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "probability": probability,
                     "final_position": partant.final_position,
                     "is_top3": bool(is_top3),
+                    "truth": int(is_top3),
+                    "predicted_label": int(predicted_label),
+                    "horse_id": partant.horse_id,
                 }
             )
             # Stocke le nombre de partants observés afin de catégoriser ensuite
@@ -4055,6 +4121,52 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if pronostic.value_bet_detected:
                 day_bucket["value_bet_courses"].add(course.course_id)
 
+        for course_id, course_payload in course_stats.items():
+            predictions_payload = list(course_payload.get("predictions", []))
+            if not predictions_payload:
+                continue
+
+            sorted_predictions = sorted(
+                predictions_payload,
+                key=lambda item: float(item.get("probability", 0.0)),
+                reverse=True,
+            )
+
+            for rank, sample in enumerate(sorted_predictions, start=1):
+                segment_key, segment_label = _categorise_prediction_rank(rank)
+                bucket = prediction_rank_breakdown.setdefault(
+                    segment_key,
+                    {
+                        "label": segment_label,
+                        "truths": [],
+                        "predictions": [],
+                        "scores": [],
+                        "final_positions": [],
+                        "ranks": [],
+                        "courses": set(),
+                        "horses": set(),
+                    },
+                )
+
+                bucket["label"] = segment_label
+                bucket.setdefault("truths", []).append(int(sample.get("truth", 0)))
+                bucket.setdefault("predictions", []).append(
+                    int(sample.get("predicted_label", 0))
+                )
+                bucket.setdefault("scores", []).append(
+                    float(sample.get("probability", 0.0))
+                )
+                bucket.setdefault("ranks", []).append(rank)
+                bucket.setdefault("courses", set()).add(int(course_id))
+
+                final_position = sample.get("final_position")
+                if final_position is not None:
+                    bucket.setdefault("final_positions", []).append(int(final_position))
+
+                horse_id = sample.get("horse_id")
+                if horse_id:
+                    bucket.setdefault("horses", set()).add(int(horse_id))
+
         evaluation_timestamp = datetime.now().isoformat()
 
         accuracy = precision = recall = f1 = roc_auc = logloss = None
@@ -4252,6 +4364,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             model_version_breakdown,
             len(y_true),
         )
+        prediction_rank_performance = _summarise_prediction_rank_performance(
+            prediction_rank_breakdown
+        )
         jockey_performance = _summarise_actor_performance(jockey_breakdown)
         trainer_performance = _summarise_actor_performance(trainer_breakdown)
         jockey_nationality_performance = _summarise_nationality_performance(
@@ -4326,6 +4441,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
+            "prediction_rank_performance": prediction_rank_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
@@ -4384,6 +4500,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
+            "prediction_rank_performance": prediction_rank_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
@@ -4466,6 +4583,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
             "country_performance": country_performance,
+            "prediction_rank_performance": prediction_rank_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,
