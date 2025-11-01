@@ -2382,6 +2382,82 @@ def _summarise_reunion_number_performance(
     return reunion_metrics
 
 
+def _categorise_value_bet_flag(
+    value_bet_detected: Optional[object],
+) -> Tuple[str, str, Optional[bool]]:
+    """Normalise le statut « value bet » d'un pronostic pour la segmentation."""
+
+    if isinstance(value_bet_detected, bool):
+        flag = value_bet_detected
+    elif isinstance(value_bet_detected, str):
+        normalised = value_bet_detected.strip().lower()
+        if normalised in {"true", "1", "yes", "oui", "on"}:
+            flag = True
+        elif normalised in {"false", "0", "no", "non", "off"}:
+            flag = False
+        else:
+            flag = None
+    else:
+        flag = None
+
+    if flag is True:
+        return "value_bet_detected", "Pronostic value bet détecté", True
+    if flag is False:
+        return "standard_pronostic", "Pronostic standard", False
+    return "unknown_status", "Statut de value bet inconnu", None
+
+
+def _summarise_value_bet_flag_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la précision selon que le pronostic est tagué value bet ou non."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    total_pronostics = sum(len(payload.get("pronostics", set())) for payload in breakdown.values())
+
+    order_priority = {
+        "value_bet_detected": 0,
+        "standard_pronostic": 1,
+        "unknown_status": 2,
+    }
+
+    flag_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(
+        breakdown.items(),
+        key=lambda item: (order_priority.get(item[0], 99), item[0]),
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+        flags = [bool(flag) for flag in payload.get("flags", [])]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["pronostics"] = len(pronostics)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["pronostic_share"] = (
+            len(pronostics) / total_pronostics if total_pronostics else None
+        )
+        summary["label"] = payload.get("label", segment)
+        summary["value_bet_flag"] = payload.get("flag")
+        summary["value_bet_flag_rate"] = (
+            sum(flags) / len(flags) if flags else None
+        )
+
+        flag_metrics[segment] = summary
+
+    return flag_metrics
+
+
 def _categorise_month(
     race_date: Optional[object],
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
@@ -3383,6 +3459,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
+        value_bet_flag_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
         draw_breakdown: Dict[str, Dict[str, object]] = {}
         start_type_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3513,6 +3590,34 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 getattr(course, "number_of_runners", None)
                 or len(course_entry["predictions"])
             )
+
+            # Segmente les performances selon que le pronostic a été marqué
+            # comme value bet. Cela permet de suivre si les pronostics mis en
+            # avant conservent un avantage réel sur les pronostics standards.
+            flag_segment, flag_label, flag_value = _categorise_value_bet_flag(
+                getattr(pronostic, "value_bet_detected", None)
+            )
+            flag_bucket = value_bet_flag_breakdown.setdefault(
+                flag_segment,
+                {
+                    "label": flag_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "pronostics": set(),
+                    "flags": [],
+                },
+            )
+            flag_bucket["label"] = flag_label
+            flag_bucket["truths"].append(is_top3)
+            flag_bucket["predictions"].append(predicted_label)
+            flag_bucket["scores"].append(probability)
+            flag_bucket.setdefault("courses", set()).add(course.course_id)
+            flag_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            if flag_value is not None:
+                flag_bucket.setdefault("flags", []).append(flag_value)
+                flag_bucket["flag"] = flag_value
 
             reunion_obj = getattr(course, "reunion", None)
 
@@ -4688,6 +4793,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             recent_form_breakdown
         )
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
+        value_bet_flag_performance = _summarise_value_bet_flag_performance(
+            value_bet_flag_breakdown
+        )
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
         race_category_performance = _summarise_race_profile_performance(
@@ -4779,6 +4887,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
+            "value_bet_flag_performance": value_bet_flag_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
             "start_type_performance": start_type_performance,
@@ -4841,6 +4950,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
+            "value_bet_flag_performance": value_bet_flag_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
             "start_type_performance": start_type_performance,
@@ -4923,6 +5033,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "track_type_performance": track_type_performance,
             "city_performance": city_performance,
             "odds_band_performance": odds_band_performance,
+            "value_bet_flag_performance": value_bet_flag_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,

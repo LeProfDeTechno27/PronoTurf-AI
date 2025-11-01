@@ -1198,6 +1198,34 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert value_bet_performance["standard"]["samples"] == 3
     assert value_bet_performance["standard"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    value_bet_flag_performance = metrics["value_bet_flag_performance"]
+    assert set(value_bet_flag_performance.keys()) == {
+        "value_bet_detected",
+        "standard_pronostic",
+    }
+
+    flagged_segment = value_bet_flag_performance["value_bet_detected"]
+    assert flagged_segment["label"] == "Pronostic value bet détecté"
+    assert flagged_segment["samples"] == 3
+    assert flagged_segment["courses"] == 1
+    assert flagged_segment["pronostics"] == 1
+    assert flagged_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert flagged_segment["pronostic_share"] == pytest.approx(0.5, rel=1e-3)
+    assert flagged_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert flagged_segment["value_bet_flag"] is True
+    assert flagged_segment["value_bet_flag_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    baseline_segment = value_bet_flag_performance["standard_pronostic"]
+    assert baseline_segment["label"] == "Pronostic standard"
+    assert baseline_segment["samples"] == 3
+    assert baseline_segment["courses"] == 1
+    assert baseline_segment["pronostics"] == 1
+    assert baseline_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert baseline_segment["pronostic_share"] == pytest.approx(0.5, rel=1e-3)
+    assert baseline_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert baseline_segment["value_bet_flag"] is False
+    assert baseline_segment["value_bet_flag_rate"] == pytest.approx(0.0, rel=1e-3)
+
     field_size_performance = metrics["field_size_performance"]
     assert set(field_size_performance.keys()) == {"large_field", "small_field"}
     assert field_size_performance["small_field"]["samples"] == 3
@@ -1354,6 +1382,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["recent_form_performance"]["recent_winner"]["label"] == "Gagnant récent"
     assert result["recent_form_performance"]["recent_winner"]["samples"] == 1
     assert result["owner_performance"]["ecurie_horizon"]["samples"] == 2
+    assert set(result["value_bet_flag_performance"].keys()) == {
+        "value_bet_detected",
+        "standard_pronostic",
+    }
+    assert result["value_bet_flag_performance"]["value_bet_detected"]["pronostics"] == 1
+    assert result["value_bet_flag_performance"]["standard_pronostic"]["pronostic_share"] == pytest.approx(
+        0.5, rel=1e-3
+    )
     recent_form_performance = metrics["recent_form_performance"]
     assert set(recent_form_performance.keys()) == {
         "recent_winner",
@@ -1467,6 +1503,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
