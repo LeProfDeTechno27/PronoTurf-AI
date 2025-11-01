@@ -1210,6 +1210,64 @@ def _summarise_actor_performance(
     return filtered[:top_n] if filtered else leaderboard[:top_n]
 
 
+def _summarise_jockey_trainer_performance(
+    breakdown: Dict[str, Dict[str, Any]],
+    *,
+    top_n: int = 8,
+    min_samples: int = 2,
+) -> List[Dict[str, Any]]:
+    """Analyse les binômes jockey/entraîneur pour détecter les synergies fortes."""
+
+    if not breakdown:
+        return []
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    leaderboard: List[Dict[str, Any]] = []
+
+    for identifier, payload in breakdown.items():
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        label = payload.get("label") or identifier
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        jockeys: Set[int] = set(payload.get("jockeys", set()))
+        trainers: Set[int] = set(payload.get("trainers", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "identifier": identifier,
+                "label": label,
+                "jockey_label": payload.get("jockey_label"),
+                "trainer_label": payload.get("trainer_label"),
+                "samples": len(truths),
+                "courses": len(courses),
+                "horses": len(horses),
+                "jockeys": len(jockeys),
+                "trainers": len(trainers),
+                "observed_positive_rate": (sum(truths) / len(truths)) if truths else None,
+                "share": (len(truths) / total_samples) if total_samples else None,
+            }
+        )
+
+        leaderboard.append(summary)
+
+    leaderboard.sort(
+        key=lambda item: (
+            -item["samples"],
+            -((item.get("f1") or 0.0)),
+            -((item.get("precision") or 0.0)),
+            item.get("label"),
+        )
+    )
+
+    threshold = min_samples if total_samples >= min_samples else 1
+    filtered = [item for item in leaderboard if item["samples"] >= threshold]
+
+    return filtered[:top_n] if filtered else leaderboard[:top_n]
+
+
 def _summarise_hippodrome_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> List[Dict[str, Any]]:
@@ -3510,6 +3568,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
+        jockey_trainer_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_nationality_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_nationality_breakdown: Dict[str, Dict[str, object]] = {}
         hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4441,6 +4500,36 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             trainer_bucket.setdefault("courses", set()).add(course.course_id)
             trainer_bucket.setdefault("horses", set()).add(partant.horse_id)
 
+            combo_identifier = f"{jockey_identifier}__{trainer_identifier}"
+            combo_label = f"{jockey_label} × {trainer_label}"
+            combo_bucket = jockey_trainer_breakdown.setdefault(
+                combo_identifier,
+                {
+                    "label": combo_label,
+                    "jockey_label": jockey_label,
+                    "trainer_label": trainer_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "jockeys": set(),
+                    "trainers": set(),
+                },
+            )
+            combo_bucket["label"] = combo_label
+            combo_bucket["jockey_label"] = jockey_label
+            combo_bucket["trainer_label"] = trainer_label
+            combo_bucket["truths"].append(is_top3)
+            combo_bucket["predictions"].append(predicted_label)
+            combo_bucket["scores"].append(probability)
+            combo_bucket.setdefault("courses", set()).add(course.course_id)
+            combo_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if partant.jockey_id is not None:
+                combo_bucket.setdefault("jockeys", set()).add(partant.jockey_id)
+            if partant.trainer_id is not None:
+                combo_bucket.setdefault("trainers", set()).add(partant.trainer_id)
+
             trainer_nat_key, trainer_nat_label = _normalise_nationality_label(
                 getattr(getattr(partant, "trainer", None), "nationality", None)
             )
@@ -4893,6 +4982,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         )
         jockey_performance = _summarise_actor_performance(jockey_breakdown)
         trainer_performance = _summarise_actor_performance(trainer_breakdown)
+        jockey_trainer_performance = _summarise_jockey_trainer_performance(
+            jockey_trainer_breakdown
+        )
         jockey_nationality_performance = _summarise_nationality_performance(
             jockey_nationality_breakdown
         )
@@ -4973,6 +5065,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "prediction_rank_performance": prediction_rank_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "jockey_trainer_performance": jockey_trainer_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
@@ -5037,6 +5130,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "prediction_rank_performance": prediction_rank_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "jockey_trainer_performance": jockey_trainer_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
@@ -5118,6 +5212,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "jockey_trainer_performance": jockey_trainer_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,

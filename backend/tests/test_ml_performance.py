@@ -1383,6 +1383,36 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert second_trainer["share"] == pytest.approx(0.5, rel=1e-3)
     assert second_trainer["recall"] == pytest.approx(0.5, rel=1e-3)
 
+    connection_leaderboard = metrics["jockey_trainer_performance"]
+    assert len(connection_leaderboard) == 2
+    assert {
+        entry["label"] for entry in connection_leaderboard
+    } == {
+        "Leo Martin × Anne Durand",
+        "Noah Verbeeck × Marc Dupont",
+    }
+
+    top_connection = connection_leaderboard[0]
+    assert top_connection["label"] == "Leo Martin × Anne Durand"
+    assert top_connection["samples"] == 3
+    assert top_connection["courses"] == 1
+    assert top_connection["horses"] == 3
+    assert top_connection["jockeys"] == 1
+    assert top_connection["trainers"] == 1
+    assert top_connection["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_connection["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert top_connection["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    second_connection = connection_leaderboard[1]
+    assert second_connection["label"] == "Noah Verbeeck × Marc Dupont"
+    assert second_connection["samples"] == 3
+    assert second_connection["courses"] == 1
+    assert second_connection["horses"] == 3
+    assert second_connection["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_connection["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert second_connection["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert second_connection["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
     assert set(result["prediction_rank_performance"].keys()) == {"rank_1", "rank_2", "rank_3"}
     assert result["prediction_rank_performance"]["rank_2"]["average_rank"] == pytest.approx(2.0, rel=1e-3)
 
@@ -1390,6 +1420,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["jockey_performance"][1]["label"] == "Noah Verbeeck"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
     assert result["trainer_performance"][1]["label"] == "Marc Dupont"
+    assert result["jockey_trainer_performance"][0]["label"] == "Leo Martin × Anne Durand"
+    assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
     assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
     assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
@@ -1552,6 +1584,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "prediction_rank_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
 
