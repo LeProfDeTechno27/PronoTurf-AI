@@ -102,9 +102,11 @@ def _seed_reference_data(db: Session) -> None:
     db.add_all([reunion, reunion_evening])
     db.flush()
 
-    trainer = Trainer(first_name="Anne", last_name="Durand")
-    jockey = Jockey(first_name="Leo", last_name="Martin")
-    db.add_all([trainer, jockey])
+    trainer_fr = Trainer(first_name="Anne", last_name="Durand", nationality="FR")
+    trainer_be = Trainer(first_name="Marc", last_name="Dupont", nationality="BE")
+    jockey_fr = Jockey(first_name="Leo", last_name="Martin", nationality="FR")
+    jockey_be = Jockey(first_name="Noah", last_name="Verbeeck", nationality="BE")
+    db.add_all([trainer_fr, trainer_be, jockey_fr, jockey_be])
     db.flush()
 
     current_year = date.today().year
@@ -183,8 +185,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course1.course_id,
             horse_id=horses[0].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
             numero_corde=1,
             poids_porte=Decimal("52.5"),
             final_position=1,
@@ -197,8 +199,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course1.course_id,
             horse_id=horses[1].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
             numero_corde=5,
             poids_porte=Decimal("55.0"),
             final_position=2,
@@ -211,8 +213,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course1.course_id,
             horse_id=horses[2].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
             numero_corde=8,
             poids_porte=Decimal("58.5"),
             final_position=4,
@@ -225,8 +227,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course2.course_id,
             horse_id=horses[3].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
             numero_corde=2,
             poids_porte=Decimal("60.0"),
             final_position=1,
@@ -239,8 +241,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course2.course_id,
             horse_id=horses[4].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
             numero_corde=8,
             poids_porte=Decimal("62.0"),
             final_position=4,
@@ -253,8 +255,8 @@ def _seed_reference_data(db: Session) -> None:
         Partant(
             course_id=course2.course_id,
             horse_id=horses[5].horse_id,
-            jockey_id=jockey.jockey_id,
-            trainer_id=trainer.trainer_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
             numero_corde=13,
             final_position=2,
             odds_pmu=Decimal("6.0"),
@@ -444,6 +446,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert len(odds_alignment["course_overrounds"]) == 2
     assert odds_alignment["course_overrounds"][0]["overround"] == pytest.approx(-1 / 3, rel=1e-3)
     assert odds_alignment["course_overrounds"][0]["runner_count"] == 3
+
+    jockey_nat_metrics = metrics["jockey_nationality_performance"]
+    assert set(jockey_nat_metrics.keys()) == {"france", "belgique"}
+    assert jockey_nat_metrics["france"]["actors"] == 1
+    assert jockey_nat_metrics["belgique"]["actors"] == 1
+
+    trainer_nat_metrics = metrics["trainer_nationality_performance"]
+    assert set(trainer_nat_metrics.keys()) == {"france", "belgique"}
+    assert trainer_nat_metrics["france"]["courses"] == 1
+    assert trainer_nat_metrics["belgique"]["courses"] == 1
 
     pr_curve = metrics["precision_recall_curve"]
     assert len(pr_curve) == 7
@@ -1108,28 +1120,55 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     }
 
     jockey_leaderboard = metrics["jockey_performance"]
-    assert len(jockey_leaderboard) == 1
+    assert len(jockey_leaderboard) == 2
+    assert {entry["label"] for entry in jockey_leaderboard} == {
+        "Leo Martin",
+        "Noah Verbeeck",
+    }
     top_jockey = jockey_leaderboard[0]
     assert top_jockey["label"] == "Leo Martin"
-    assert top_jockey["samples"] == 6
-    assert top_jockey["courses"] == 2
-    assert top_jockey["horses"] == 6
-    assert top_jockey["share"] == pytest.approx(1.0, rel=1e-3)
-    assert top_jockey["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
-    assert top_jockey["observed_positive_rate"] == pytest.approx(4 / 6, rel=1e-3)
+    assert top_jockey["samples"] == 3
+    assert top_jockey["courses"] == 1
+    assert top_jockey["horses"] == 3
+    assert top_jockey["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_jockey["accuracy"] == pytest.approx(1.0, rel=1e-3)
+
+    second_jockey = jockey_leaderboard[1]
+    assert second_jockey["label"] == "Noah Verbeeck"
+    assert second_jockey["samples"] == 3
+    assert second_jockey["courses"] == 1
+    assert second_jockey["horses"] == 3
+    assert second_jockey["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_jockey["precision"] == pytest.approx(0.5, rel=1e-3)
 
     trainer_leaderboard = metrics["trainer_performance"]
-    assert len(trainer_leaderboard) == 1
+    assert len(trainer_leaderboard) == 2
+    assert {entry["label"] for entry in trainer_leaderboard} == {
+        "Anne Durand",
+        "Marc Dupont",
+    }
     top_trainer = trainer_leaderboard[0]
     assert top_trainer["label"] == "Anne Durand"
-    assert top_trainer["samples"] == 6
-    assert top_trainer["courses"] == 2
-    assert top_trainer["horses"] == 6
-    assert top_trainer["share"] == pytest.approx(1.0, rel=1e-3)
-    assert top_trainer["precision"] == pytest.approx(0.75, rel=1e-3)
+    assert top_trainer["samples"] == 3
+    assert top_trainer["courses"] == 1
+    assert top_trainer["horses"] == 3
+    assert top_trainer["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_trainer["precision"] == pytest.approx(1.0, rel=1e-3)
+
+    second_trainer = trainer_leaderboard[1]
+    assert second_trainer["label"] == "Marc Dupont"
+    assert second_trainer["samples"] == 3
+    assert second_trainer["courses"] == 1
+    assert second_trainer["horses"] == 3
+    assert second_trainer["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_trainer["recall"] == pytest.approx(0.5, rel=1e-3)
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
+    assert result["jockey_performance"][1]["label"] == "Noah Verbeeck"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
+    assert result["trainer_performance"][1]["label"] == "Marc Dupont"
+    assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
+    assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
     assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
     assert set(result["country_performance"].keys()) == {"belgique", "france"}
@@ -1260,6 +1299,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
 
 
 def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
