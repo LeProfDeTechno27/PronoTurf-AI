@@ -15,7 +15,7 @@ PronoTurf est une plateforme moderne qui combine :
 
 ## Avancement du projet
 
-- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit les vues `horse_age_performance`, `horse_gender_performance`, `day_part_performance` et `hippodrome_performance` pour comparer la précision selon la maturité des chevaux, leur genre, la plage horaire des réunions et l'hippodrome, en complément des tableaux par catégorie officielle, dotation, numéro de corde et mode de départ.
+- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit les vues `horse_age_performance`, `horse_gender_performance`, `day_part_performance`, `hippodrome_performance` et `track_type_performance` pour comparer la précision selon la maturité des chevaux, leur genre, la plage horaire des réunions, l'hippodrome et la nature de la piste, en complément des tableaux par catégorie officielle, dotation, numéro de corde et mode de départ.
 - 🚧 **Version 1 en préparation** : la V1 n'est pas encore finalisée ; une notification sera partagée dès la clôture de l'ensemble des sprints.
 
 ## Nouveautés Analytics Aspiturf
@@ -67,6 +67,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Analyse par âge du cheval** : le tableau `horse_age_performance` regroupe les résultats par classes d'âge (jeunes ≤3 ans, chevaux en pleine force 4-5 ans, expérimentés 6-8 ans, vétérans 9 ans et +, cas inconnus). Il révèle si le modèle se comporte différemment selon la maturité des partants et indique le nombre de chevaux distincts par segment pour appuyer l'analyse métier.
 - **Analyse par genre du cheval** : la nouvelle vue `horse_gender_performance` compare précision, rappel, taux observé et part du trafic entre chevaux mâles, femelles et hongres. Les volumes distincts de chevaux et courses sont exposés afin d'étayer les discussions terrain lorsqu'un genre décroche.
 - **Analyse par plage horaire** : le tableau `day_part_performance` regroupe les métriques selon les réunions du matin, de l'après-midi et du soir. Il expose précision, rappel, part de trafic et horaires moyens/min/max afin d'identifier les créneaux où le modèle doit être recalibré ou surveillé plus finement.
+- **Analyse par type de piste** : la vue `track_type_performance` agrège précision, rappel, part de trafic et volumes de réunions par nature de piste (plat, trot, obstacles, mixte) pour vérifier que le modèle reste fiable quel que soit le tracé proposé par les hippodromes.
 - **Analyse par hippodrome** : la synthèse `hippodrome_performance` classe chaque site selon la précision, le rappel, le volume de courses et le nombre de chevaux distincts analysés pour détecter rapidement les pistes nécessitant une investigation locale (qualité du datafeed, conditions météo ou configuration de tracé spécifiques).
 
 ## Technologies

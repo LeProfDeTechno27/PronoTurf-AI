@@ -67,21 +67,32 @@ def in_memory_session(monkeypatch: pytest.MonkeyPatch) -> sessionmaker:
 def _seed_reference_data(db: Session) -> None:
     """Insère les entités de base nécessaires aux tests."""
 
-    hippodrome = Hippodrome(
+    hippodrome_flat = Hippodrome(
         code="TEST",
         name="Hippodrome Test",
         track_type=TrackType.PLAT,
     )
-    db.add(hippodrome)
+    hippodrome_trot = Hippodrome(
+        code="TROT",
+        name="Hippodrome Trot",
+        track_type=TrackType.TROT,
+    )
+    db.add_all([hippodrome_flat, hippodrome_trot])
     db.flush()
 
     reunion = Reunion(
-        hippodrome_id=hippodrome.hippodrome_id,
+        hippodrome_id=hippodrome_flat.hippodrome_id,
         reunion_date=date.today(),
         reunion_number=1,
         status=ReunionStatus.COMPLETED,
     )
-    db.add(reunion)
+    reunion_evening = Reunion(
+        hippodrome_id=hippodrome_trot.hippodrome_id,
+        reunion_date=date.today(),
+        reunion_number=4,
+        status=ReunionStatus.COMPLETED,
+    )
+    db.add_all([reunion, reunion_evening])
     db.flush()
 
     trainer = Trainer(first_name="Anne", last_name="Durand")
@@ -117,7 +128,7 @@ def _seed_reference_data(db: Session) -> None:
         number_of_runners=8,
     )
     course2 = Course(
-        reunion_id=reunion.reunion_id,
+        reunion_id=reunion_evening.reunion_id,
         course_number=2,
         course_name="R1C2",
         discipline=Discipline.TROT_ATTELE,
@@ -502,14 +513,23 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["latest_post_time"] == "20:30"
 
     hippodrome_performance = metrics["hippodrome_performance"]
-    assert len(hippodrome_performance) == 1
-    venue_entry = hippodrome_performance[0]
-    assert venue_entry["label"] == "Hippodrome Test"
-    assert venue_entry["samples"] == 6
-    assert venue_entry["courses"] == 2
+    assert len(hippodrome_performance) == 2
+    hippodrome_map = {entry["label"]: entry for entry in hippodrome_performance}
+    assert set(hippodrome_map.keys()) == {"Hippodrome Test", "Hippodrome Trot"}
+
+    venue_entry = hippodrome_map["Hippodrome Test"]
+    assert venue_entry["samples"] == 3
+    assert venue_entry["courses"] == 1
     assert venue_entry["reunions"] == 1
-    assert venue_entry["horses"] == 6
-    assert venue_entry["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+    assert venue_entry["horses"] == 3
+    assert venue_entry["accuracy"] == pytest.approx(1.0, rel=1e-3)
+
+    trot_entry = hippodrome_map["Hippodrome Trot"]
+    assert trot_entry["samples"] == 3
+    assert trot_entry["courses"] == 1
+    assert trot_entry["reunions"] == 1
+    assert trot_entry["horses"] == 3
+    assert trot_entry["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
 
     discipline_performance = metrics["discipline_performance"]
     assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
@@ -535,6 +555,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surface_performance["pelouse"]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
     assert surface_performance["sable"]["samples"] == 3
     assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    track_type_performance = metrics["track_type_performance"]
+    assert set(track_type_performance.keys()) == {"flat", "trot"}
+    assert track_type_performance["flat"]["label"] == "Piste plate"
+    assert track_type_performance["flat"]["samples"] == 3
+    assert track_type_performance["flat"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert track_type_performance["trot"]["label"] == "Piste de trot"
+    assert track_type_performance["trot"]["samples"] == 3
+    assert track_type_performance["trot"]["reunions"] == 1
+    assert track_type_performance["trot"]["hippodromes"] == 1
 
     prize_money_performance = metrics["prize_money_performance"]
     assert set(prize_money_performance.keys()) == {"low_prize", "medium_prize"}
@@ -708,7 +738,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
-    assert result["hippodrome_performance"][0]["label"] == "Hippodrome Test"
+    hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
+    assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
+    assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
@@ -740,6 +772,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
