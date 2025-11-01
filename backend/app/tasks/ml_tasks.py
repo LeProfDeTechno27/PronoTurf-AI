@@ -1345,6 +1345,29 @@ def _categorise_prize_money(prize_money: Optional[object]) -> str:
     return "premium_prize"
 
 
+def _categorise_handicap_value(handicap_value: Optional[object]) -> Tuple[str, str]:
+    """Regroupe les valeurs de handicap pour analyser l'équité donnée à chaque partant."""
+
+    if handicap_value is None:
+        return "unknown", "Handicap inconnu"
+
+    try:
+        value = float(handicap_value)
+    except (TypeError, ValueError):  # pragma: no cover - sécurise les imports de données exotiques
+        return "unknown", "Handicap inconnu"
+
+    if value <= 10:
+        return "light_handicap", "Handicap léger (≤10)"
+
+    if value <= 20:
+        return "medium_handicap", "Handicap moyen (11-20)"
+
+    if value <= 30:
+        return "competitive_handicap", "Handicap relevé (21-30)"
+
+    return "high_handicap", "Handicap très élevé (>30)"
+
+
 def _categorise_odds_band(odds: Optional[object]) -> Tuple[str, str]:
     """Regroupe les partants par profil de cote pour suivre la robustesse du modèle."""
 
@@ -1748,6 +1771,47 @@ def _summarise_prize_money_performance(
     return prize_metrics
 
 
+def _summarise_handicap_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise les performances selon la valeur de handicap imposée."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    handicap_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        handicap_values = [
+            float(value)
+            for value in payload.get("handicaps", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["average_handicap_value"] = _safe_average(handicap_values)
+        summary["min_handicap_value"] = min(handicap_values) if handicap_values else None
+        summary["max_handicap_value"] = max(handicap_values) if handicap_values else None
+
+        handicap_metrics[segment] = summary
+
+    return handicap_metrics
+
+
 def _categorise_horse_gender(gender: Optional[object]) -> Tuple[str, str]:
     """Normalise le genre du cheval pour faciliter l'agrégation."""
 
@@ -2059,6 +2123,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
+        handicap_breakdown: Dict[str, Dict[str, object]] = {}
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2292,6 +2357,36 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             prize_value = getattr(course, "prize_money", None)
             if prize_value is not None and is_new_prize_course:
                 prize_bucket.setdefault("prize_amounts", []).append(float(prize_value))
+
+            handicap_segment, handicap_label = _categorise_handicap_value(
+                getattr(partant, "handicap_value", None)
+            )
+            handicap_bucket = handicap_breakdown.setdefault(
+                handicap_segment,
+                {
+                    "label": handicap_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "handicaps": [],
+                },
+            )
+            handicap_bucket["label"] = handicap_label
+            handicap_bucket["truths"].append(is_top3)
+            handicap_bucket["predictions"].append(predicted_label)
+            handicap_bucket["scores"].append(probability)
+            handicap_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                handicap_bucket.setdefault("horses", set()).add(partant.horse_id)
+            raw_handicap = getattr(partant, "handicap_value", None)
+            try:
+                handicap_value = float(raw_handicap) if raw_handicap is not None else None
+            except (TypeError, ValueError):  # pragma: no cover - robustesse face aux données incohérentes
+                handicap_value = None
+            if handicap_value is not None:
+                handicap_bucket.setdefault("handicaps", []).append(handicap_value)
 
             horse_age = _resolve_horse_age(partant, course, pronostic)
             age_segment = _categorise_horse_age(horse_age)
@@ -2785,6 +2880,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
+        handicap_performance = _summarise_handicap_performance(handicap_breakdown)
         odds_band_performance = _summarise_odds_band_performance(odds_band_breakdown)
         horse_age_performance = _summarise_horse_age_performance(
             horse_age_breakdown
@@ -2854,6 +2950,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
+            "handicap_performance": handicap_performance,
             "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
@@ -2900,6 +2997,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
+            "handicap_performance": handicap_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
@@ -2964,6 +3062,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,
+            "handicap_performance": handicap_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "track_type_performance": track_type_performance,

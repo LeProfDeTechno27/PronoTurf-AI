@@ -182,6 +182,7 @@ def _seed_reference_data(db: Session) -> None:
             final_position=1,
             odds_pmu=Decimal("3.0"),
             days_since_last_race=10,
+            handicap_value=8,
         ),
         Partant(
             course_id=course1.course_id,
@@ -192,6 +193,7 @@ def _seed_reference_data(db: Session) -> None:
             final_position=2,
             odds_pmu=Decimal("4.0"),
             days_since_last_race=25,
+            handicap_value=16,
         ),
         Partant(
             course_id=course1.course_id,
@@ -202,6 +204,7 @@ def _seed_reference_data(db: Session) -> None:
             final_position=4,
             odds_pmu=Decimal("12.0"),
             days_since_last_race=75,
+            handicap_value=26,
         ),
         Partant(
             course_id=course2.course_id,
@@ -212,6 +215,7 @@ def _seed_reference_data(db: Session) -> None:
             final_position=1,
             odds_pmu=Decimal("5.5"),
             days_since_last_race=45,
+            handicap_value=34,
         ),
         Partant(
             course_id=course2.course_id,
@@ -222,6 +226,7 @@ def _seed_reference_data(db: Session) -> None:
             final_position=4,
             odds_pmu=Decimal("7.0"),
             days_since_last_race=210,
+            handicap_value=12,
         ),
         Partant(
             course_id=course2.course_id,
@@ -581,6 +586,77 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         10000.0, abs=1e-6
     )
 
+    handicap_performance = metrics["handicap_performance"]
+    assert set(handicap_performance.keys()) == {
+        "competitive_handicap",
+        "high_handicap",
+        "light_handicap",
+        "medium_handicap",
+        "unknown",
+    }
+
+    light_segment = handicap_performance["light_handicap"]
+    assert light_segment["label"] == "Handicap léger (≤10)"
+    assert light_segment["samples"] == 1
+    assert light_segment["courses"] == 1
+    assert light_segment["horses"] == 1
+    assert light_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["average_handicap_value"] == pytest.approx(8.0, rel=1e-3)
+    assert light_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    medium_segment = handicap_performance["medium_handicap"]
+    assert medium_segment["label"] == "Handicap moyen (11-20)"
+    assert medium_segment["samples"] == 2
+    assert medium_segment["courses"] == 2
+    assert medium_segment["horses"] == 2
+    assert medium_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert medium_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["average_handicap_value"] == pytest.approx(14.0, rel=1e-3)
+    assert medium_segment["min_handicap_value"] == pytest.approx(12.0, rel=1e-3)
+    assert medium_segment["max_handicap_value"] == pytest.approx(16.0, rel=1e-3)
+    assert medium_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+
+    competitive_segment = handicap_performance["competitive_handicap"]
+    assert competitive_segment["label"] == "Handicap relevé (21-30)"
+    assert competitive_segment["samples"] == 1
+    assert competitive_segment["courses"] == 1
+    assert competitive_segment["horses"] == 1
+    assert competitive_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert competitive_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["average_handicap_value"] == pytest.approx(26.0, rel=1e-3)
+    assert competitive_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    high_segment = handicap_performance["high_handicap"]
+    assert high_segment["label"] == "Handicap très élevé (>30)"
+    assert high_segment["samples"] == 1
+    assert high_segment["courses"] == 1
+    assert high_segment["horses"] == 1
+    assert high_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert high_segment["average_handicap_value"] == pytest.approx(34.0, rel=1e-3)
+    assert high_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    unknown_segment = handicap_performance["unknown"]
+    assert unknown_segment["label"] == "Handicap inconnu"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["courses"] == 1
+    assert unknown_segment["horses"] == 1
+    assert unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["average_handicap_value"] is None
+    assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
     odds_band_performance = metrics["odds_band_performance"]
     assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
 
@@ -787,6 +863,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
+    assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
@@ -819,6 +896,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
