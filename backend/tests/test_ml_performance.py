@@ -127,7 +127,7 @@ def _seed_reference_data(db: Session) -> None:
         race_class="B",
         surface_type=SurfaceType.SABLE,
         start_type=StartType.AUTOSTART,
-        scheduled_time=time(15, 0),
+        scheduled_time=time(20, 30),
         status=CourseStatus.FINISHED,
         number_of_runners=14,
     )
@@ -472,6 +472,35 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert daily_performance[1]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
     assert daily_performance[1]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
 
+    day_part_performance = metrics["day_part_performance"]
+    assert set(day_part_performance.keys()) == {"afternoon", "evening"}
+
+    afternoon_metrics = day_part_performance["afternoon"]
+    assert afternoon_metrics["label"] == "Après-midi"
+    assert afternoon_metrics["samples"] == 3
+    assert afternoon_metrics["courses"] == 1
+    assert afternoon_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert afternoon_metrics["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert afternoon_metrics["average_post_time"] == "14:00"
+    assert afternoon_metrics["earliest_post_time"] == "14:00"
+    assert afternoon_metrics["latest_post_time"] == "14:00"
+
+    evening_metrics = day_part_performance["evening"]
+    assert evening_metrics["label"] == "Soir"
+    assert evening_metrics["samples"] == 3
+    assert evening_metrics["courses"] == 1
+    assert evening_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert evening_metrics["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert evening_metrics["average_post_time"] == "20:30"
+    assert evening_metrics["earliest_post_time"] == "20:30"
+    assert evening_metrics["latest_post_time"] == "20:30"
+
     discipline_performance = metrics["discipline_performance"]
     assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
     assert discipline_performance["plat"]["samples"] == 3
@@ -669,6 +698,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
+    assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     with in_memory_session() as check_session:
@@ -694,6 +724,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "threshold_recommendations" in stored_metrics["last_evaluation"]["metrics"]
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -3,7 +3,7 @@
 import json
 import logging
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from math import ceil, sqrt
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -1181,6 +1181,23 @@ def _categorise_course_distance(distance: Optional[int]) -> str:
     return "long_distance"
 
 
+def _categorise_day_part(scheduled_time: Optional[object]) -> str:
+    """Regroupe l'horaire officiel en grandes plages (matin, après-midi, soirée)."""
+
+    if not isinstance(scheduled_time, time):
+        return "unknown"
+
+    total_minutes = scheduled_time.hour * 60 + scheduled_time.minute
+
+    if total_minutes < 12 * 60:
+        return "morning"
+
+    if total_minutes < 18 * 60:
+        return "afternoon"
+
+    return "evening"
+
+
 def _categorise_field_size(field_size: Optional[int]) -> str:
     """Regroupe les tailles de champs en segments homogènes pour l'analyse."""
 
@@ -1217,6 +1234,18 @@ def _categorise_prize_money(prize_money: Optional[object]) -> str:
         return "high_prize"
 
     return "premium_prize"
+
+
+def _format_minutes_as_time(value: Optional[float]) -> Optional[str]:
+    """Convertit un nombre de minutes depuis minuit en format ``HH:MM`` lisible."""
+
+    if value is None:
+        return None
+
+    minutes = int(round(value))
+    hour = (minutes // 60) % 24
+    minute = minutes % 60
+    return f"{hour:02d}:{minute:02d}"
 
 
 def _resolve_horse_age(
@@ -1421,6 +1450,55 @@ def _summarise_distance_performance(
         distance_metrics[segment] = summary
 
     return distance_metrics
+
+
+def _resolve_day_part_label(segment: str) -> str:
+    """Associe un segment technique à un libellé métier lisible."""
+
+    mapping = {
+        "morning": "Matin",
+        "afternoon": "Après-midi",
+        "evening": "Soir",
+        "unknown": "Horaire inconnu",
+    }
+    return mapping.get(segment, segment.replace("_", " ").title())
+
+
+def _summarise_day_part_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse l'efficacité du modèle selon la plage horaire des réunions."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    day_part_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        minutes = [int(value) for value in payload.get("minutes", []) if value is not None]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = _resolve_day_part_label(segment)
+
+        average_minutes = _safe_average(minutes) if minutes else None
+        summary["average_post_time"] = _format_minutes_as_time(average_minutes)
+        summary["earliest_post_time"] = _format_minutes_as_time(min(minutes)) if minutes else None
+        summary["latest_post_time"] = _format_minutes_as_time(max(minutes)) if minutes else None
+
+        day_part_metrics[segment] = summary
+
+    return day_part_metrics
 
 
 def _summarise_field_size_performance(
@@ -1804,6 +1882,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
+        day_part_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1881,6 +1960,33 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 getattr(course, "number_of_runners", None)
                 or len(course_entry["predictions"])
             )
+
+            # Segmente l'horaire officiel de départ pour identifier si le modèle
+            # se comporte différemment entre les réunions matinales, l'après-midi
+            # et les nocturnes. Les opérateurs peuvent ainsi ajuster leur
+            # stratégie d'engagement selon le moment de la journée.
+            day_part_segment = _categorise_day_part(
+                getattr(course, "scheduled_time", None)
+            )
+            day_part_bucket = day_part_breakdown.setdefault(
+                day_part_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "minutes": [],
+                },
+            )
+            day_part_bucket["truths"].append(is_top3)
+            day_part_bucket["predictions"].append(predicted_label)
+            day_part_bucket["scores"].append(probability)
+            day_part_bucket.setdefault("courses", set()).add(course.course_id)
+
+            scheduled_time_value = getattr(course, "scheduled_time", None)
+            if isinstance(scheduled_time_value, time):
+                minutes_value = scheduled_time_value.hour * 60 + scheduled_time_value.minute
+                day_part_bucket.setdefault("minutes", []).append(minutes_value)
 
             betting_samples.append(
                 {
@@ -2380,6 +2486,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         }
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
+        day_part_performance = _summarise_day_part_performance(day_part_breakdown)
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
@@ -2447,6 +2554,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
             "daily_performance": daily_performance,
+            "day_part_performance": day_part_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -2488,6 +2596,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "precision_recall_curve": precision_recall_table,
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
+            "day_part_performance": day_part_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -2549,6 +2658,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "odds_alignment": odds_alignment,
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
+            "day_part_performance": day_part_performance,
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,

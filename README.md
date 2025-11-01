@@ -15,7 +15,7 @@ PronoTurf est une plateforme moderne qui combine :
 
 ## Avancement du projet
 
-- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit les vues `horse_age_performance` et `horse_gender_performance` pour comparer la précision selon la maturité et le genre des chevaux, en complément des tableaux par catégorie officielle, dotation, numéro de corde et mode de départ.
+- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit les vues `horse_age_performance`, `horse_gender_performance` et `day_part_performance` pour comparer la précision selon la maturité des chevaux, leur genre et la plage horaire des réunions, en complément des tableaux par catégorie officielle, dotation, numéro de corde et mode de départ.
 - 🚧 **Version 1 en préparation** : la V1 n'est pas encore finalisée ; une notification sera partagée dès la clôture de l'ensemble des sprints.
 
 ## Nouveautés Analytics Aspiturf
@@ -66,6 +66,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Analyse par dotation** : la vue `prize_money_performance` segmente les performances selon la prime totale mise en jeu (petits lots, courses intermédiaires, grands prix). Elle révèle si le modèle conserve la même fiabilité lorsqu'il passe de meetings régionaux à des épreuves premium fortement dotées.
 - **Analyse par âge du cheval** : le tableau `horse_age_performance` regroupe les résultats par classes d'âge (jeunes ≤3 ans, chevaux en pleine force 4-5 ans, expérimentés 6-8 ans, vétérans 9 ans et +, cas inconnus). Il révèle si le modèle se comporte différemment selon la maturité des partants et indique le nombre de chevaux distincts par segment pour appuyer l'analyse métier.
 - **Analyse par genre du cheval** : la nouvelle vue `horse_gender_performance` compare précision, rappel, taux observé et part du trafic entre chevaux mâles, femelles et hongres. Les volumes distincts de chevaux et courses sont exposés afin d'étayer les discussions terrain lorsqu'un genre décroche.
+- **Analyse par plage horaire** : le tableau `day_part_performance` regroupe les métriques selon les réunions du matin, de l'après-midi et du soir. Il expose précision, rappel, part de trafic et horaires moyens/min/max afin d'identifier les créneaux où le modèle doit être recalibré ou surveillé plus finement.
 
 ## Technologies
 
