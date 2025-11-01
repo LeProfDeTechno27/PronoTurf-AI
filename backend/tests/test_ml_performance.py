@@ -179,6 +179,7 @@ def _seed_reference_data(db: Session) -> None:
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
             numero_corde=1,
+            poids_porte=Decimal("52.5"),
             final_position=1,
             odds_pmu=Decimal("3.0"),
             days_since_last_race=10,
@@ -190,6 +191,7 @@ def _seed_reference_data(db: Session) -> None:
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
             numero_corde=5,
+            poids_porte=Decimal("55.0"),
             final_position=2,
             odds_pmu=Decimal("4.0"),
             days_since_last_race=25,
@@ -201,6 +203,7 @@ def _seed_reference_data(db: Session) -> None:
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
             numero_corde=8,
+            poids_porte=Decimal("58.5"),
             final_position=4,
             odds_pmu=Decimal("12.0"),
             days_since_last_race=75,
@@ -212,6 +215,7 @@ def _seed_reference_data(db: Session) -> None:
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
             numero_corde=2,
+            poids_porte=Decimal("60.0"),
             final_position=1,
             odds_pmu=Decimal("5.5"),
             days_since_last_race=45,
@@ -223,6 +227,7 @@ def _seed_reference_data(db: Session) -> None:
             jockey_id=jockey.jockey_id,
             trainer_id=trainer.trainer_id,
             numero_corde=8,
+            poids_porte=Decimal("62.0"),
             final_position=4,
             odds_pmu=Decimal("7.0"),
             days_since_last_race=210,
@@ -657,6 +662,43 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_segment["average_handicap_value"] is None
     assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
 
+    weight_performance = metrics["weight_performance"]
+    assert set(weight_performance.keys()) == {
+        "heavy",
+        "light",
+        "medium",
+        "unknown",
+        "very_light",
+    }
+
+    heavy_weight_segment = weight_performance["heavy"]
+    assert heavy_weight_segment["label"] == "Lourd (≥60 kg)"
+    assert heavy_weight_segment["samples"] == 2
+    assert heavy_weight_segment["horses"] == 2
+    assert heavy_weight_segment["average_weight"] == pytest.approx(61.0, rel=1e-3)
+    assert heavy_weight_segment["min_weight"] == pytest.approx(60.0, rel=1e-3)
+    assert heavy_weight_segment["max_weight"] == pytest.approx(62.0, rel=1e-3)
+
+    light_weight_segment = weight_performance["light"]
+    assert light_weight_segment["label"] == "Léger (54-57 kg)"
+    assert light_weight_segment["samples"] == 1
+    assert light_weight_segment["average_weight"] == pytest.approx(55.0, rel=1e-3)
+
+    very_light_weight_segment = weight_performance["very_light"]
+    assert very_light_weight_segment["label"] == "Très léger (<54 kg)"
+    assert very_light_weight_segment["samples"] == 1
+    assert very_light_weight_segment["average_weight"] == pytest.approx(52.5, rel=1e-3)
+
+    medium_weight_segment = weight_performance["medium"]
+    assert medium_weight_segment["label"] == "Moyen (57-60 kg)"
+    assert medium_weight_segment["samples"] == 1
+    assert medium_weight_segment["average_weight"] == pytest.approx(58.5, rel=1e-3)
+
+    unknown_weight_segment = weight_performance["unknown"]
+    assert unknown_weight_segment["label"] == "Poids inconnu"
+    assert unknown_weight_segment["samples"] == 1
+    assert unknown_weight_segment["average_weight"] is None
+
     odds_band_performance = metrics["odds_band_performance"]
     assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
 
@@ -897,6 +939,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]

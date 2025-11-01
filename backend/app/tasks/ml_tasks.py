@@ -1368,6 +1368,70 @@ def _categorise_handicap_value(handicap_value: Optional[object]) -> Tuple[str, s
     return "high_handicap", "Handicap très élevé (>30)"
 
 
+def _categorise_carried_weight(
+    carried_weight: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Classe le poids porté afin de suivre l'impact de la charge sur la performance."""
+
+    if carried_weight is None:
+        return "unknown", "Poids inconnu", None
+
+    try:
+        value = float(carried_weight)
+    except (TypeError, ValueError):  # pragma: no cover - sécurise les valeurs inattendues
+        return "unknown", "Poids inconnu", None
+
+    if value < 54.0:
+        return "very_light", "Très léger (<54 kg)", value
+
+    if value < 57.0:
+        return "light", "Léger (54-57 kg)", value
+
+    if value < 60.0:
+        return "medium", "Moyen (57-60 kg)", value
+
+    return "heavy", "Lourd (≥60 kg)", value
+
+
+def _summarise_weight_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue agrégée par classe de poids porté."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    weight_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        weights = [
+            float(value)
+            for value in payload.get("weights", [])
+            if value is not None
+        ]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = sum(truths) / len(truths) if truths else None
+        summary["average_weight"] = _safe_average(weights)
+        summary["min_weight"] = min(weights) if weights else None
+        summary["max_weight"] = max(weights) if weights else None
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+
+        weight_metrics[segment] = summary
+
+    return weight_metrics
+
+
 def _categorise_odds_band(odds: Optional[object]) -> Tuple[str, str]:
     """Regroupe les partants par profil de cote pour suivre la robustesse du modèle."""
 
@@ -2124,6 +2188,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
         handicap_breakdown: Dict[str, Dict[str, object]] = {}
+        weight_breakdown: Dict[str, Dict[str, object]] = {}
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2387,6 +2452,31 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 handicap_value = None
             if handicap_value is not None:
                 handicap_bucket.setdefault("handicaps", []).append(handicap_value)
+
+            weight_segment, weight_label, weight_value = _categorise_carried_weight(
+                getattr(partant, "poids_porte", None)
+            )
+            weight_bucket = weight_breakdown.setdefault(
+                weight_segment,
+                {
+                    "label": weight_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "weights": [],
+                },
+            )
+            weight_bucket["label"] = weight_label
+            weight_bucket["truths"].append(is_top3)
+            weight_bucket["predictions"].append(predicted_label)
+            weight_bucket["scores"].append(probability)
+            weight_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                weight_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if weight_value is not None:
+                weight_bucket.setdefault("weights", []).append(weight_value)
 
             horse_age = _resolve_horse_age(partant, course, pronostic)
             age_segment = _categorise_horse_age(horse_age)
@@ -2881,6 +2971,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             prize_money_breakdown
         )
         handicap_performance = _summarise_handicap_performance(handicap_breakdown)
+        weight_performance = _summarise_weight_performance(weight_breakdown)
         odds_band_performance = _summarise_odds_band_performance(odds_band_breakdown)
         horse_age_performance = _summarise_horse_age_performance(
             horse_age_breakdown
@@ -2951,6 +3042,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
+            "weight_performance": weight_performance,
             "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
@@ -2998,6 +3090,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
+            "weight_performance": weight_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
@@ -3063,6 +3156,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
+            "weight_performance": weight_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "track_type_performance": track_type_performance,
