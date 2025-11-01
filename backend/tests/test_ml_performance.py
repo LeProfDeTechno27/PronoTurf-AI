@@ -378,6 +378,19 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert calibration_diagnostics["weighted_bias"] == pytest.approx(1 / 3, rel=1e-3)
     assert len(calibration_diagnostics["bins"]) == len(calibration_table)
     assert calibration_diagnostics["bins"][0]["calibration_gap"] == pytest.approx(-0.15, rel=1e-3)
+
+    probability_bands = metrics["win_probability_performance"]
+    assert set(probability_bands.keys()) >= {
+        "under_20",
+        "between_20_30",
+        "between_30_40",
+        "between_40_50",
+        "between_50_60",
+    }
+    assert probability_bands["under_20"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert probability_bands["between_30_40"]["samples"] == 2
+    assert probability_bands["between_30_40"]["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert probability_bands["between_50_60"]["average_probability"] == pytest.approx(0.55, rel=1e-3)
     assert calibration_diagnostics["bins"][1]["weight"] == pytest.approx(1 / 6, rel=1e-3)
 
     threshold_grid = metrics["threshold_sensitivity"]
@@ -1371,6 +1384,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
+    assert "win_probability_performance" in result
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -1382,6 +1396,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
+        assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]

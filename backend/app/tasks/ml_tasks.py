@@ -2803,6 +2803,88 @@ def _summarise_confidence_score_performance(
     return confidence_metrics
 
 
+def _categorise_win_probability(
+    probability: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Regroupe une probabilité de victoire en bandes homogènes pour analyse."""
+
+    if probability is None:
+        return "unknown", "Probabilité inconnue", None
+
+    try:
+        value = float(probability)
+    except (TypeError, ValueError):  # pragma: no cover - garde-fou contre saisies invalides
+        return "unknown", "Probabilité inconnue", None
+
+    # Les probabilités sont bornées dans [0, 1] mais on protège contre les arrondis exotiques.
+    value = max(0.0, min(value, 1.0))
+
+    bands: List[Tuple[float, str, str]] = [
+        (0.20, "under_20", "Probabilité < 20%"),
+        (0.30, "between_20_30", "Probabilité 20-30%"),
+        (0.40, "between_30_40", "Probabilité 30-40%"),
+        (0.50, "between_40_50", "Probabilité 40-50%"),
+        (0.60, "between_50_60", "Probabilité 50-60%"),
+        (0.70, "between_60_70", "Probabilité 60-70%"),
+        (0.80, "between_70_80", "Probabilité 70-80%"),
+        (0.90, "between_80_90", "Probabilité 80-90%"),
+    ]
+
+    for upper_bound, segment_key, label in bands:
+        if value < upper_bound:
+            return segment_key, label, value
+
+    return "at_least_90", "Probabilité ≥ 90%", value
+
+
+def _summarise_win_probability_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la calibration réelle par bande de probabilité de victoire brute."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    probability_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        probabilities = [
+            float(value)
+            for value in payload.get("probabilities", [])
+            if value is not None
+        ]
+        courses: Set[int] = set(payload.get("courses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["pronostics"] = len(pronostics)
+        summary["average_probability"] = _safe_average(probabilities)
+        summary["min_probability"] = min(probabilities) if probabilities else None
+        summary["max_probability"] = max(probabilities) if probabilities else None
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        if summary["average_probability"] is not None and summary["observed_positive_rate"] is not None:
+            summary["average_calibration_gap"] = (
+                summary["average_probability"] - summary["observed_positive_rate"]
+            )
+        else:
+            summary["average_calibration_gap"] = None
+
+        probability_metrics[segment] = summary
+
+    return probability_metrics
+
+
 def _categorise_horse_gender(gender: Optional[object]) -> Tuple[str, str]:
     """Normalise le genre du cheval pour faciliter l'agrégation."""
 
@@ -3203,6 +3285,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_counter: Counter[str] = Counter()
         confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
         confidence_score_breakdown: Dict[str, Dict[str, object]] = {}
+        win_probability_breakdown: Dict[str, Dict[str, object]] = {}
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3287,6 +3370,31 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if confidence_value is not None:
                 confidence_bucket.setdefault("confidence_scores", []).append(confidence_value)
             confidence_bucket.setdefault("courses", set()).add(course.course_id)
+
+            probability_segment, probability_label, normalized_probability = _categorise_win_probability(
+                probability
+            )
+            probability_bucket = win_probability_breakdown.setdefault(
+                probability_segment,
+                {
+                    "label": probability_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "probabilities": [],
+                    "courses": set(),
+                    "pronostics": set(),
+                },
+            )
+            probability_bucket["label"] = probability_label
+            probability_bucket["truths"].append(is_top3)
+            probability_bucket["predictions"].append(predicted_label)
+            probability_bucket["scores"].append(probability)
+            probability_bucket.setdefault("courses", set()).add(course.course_id)
+            probability_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            probability_bucket.setdefault("probabilities", []).append(
+                normalized_probability if normalized_probability is not None else probability
+            )
             version_label = pronostic.model_version or "unknown"
             model_versions[version_label] += 1
             version_bucket = model_version_breakdown.setdefault(
@@ -4441,6 +4549,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_score_performance = _summarise_confidence_score_performance(
             confidence_score_breakdown
         )
+        win_probability_performance = _summarise_win_probability_performance(
+            win_probability_breakdown
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -4537,6 +4648,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "ks_analysis": ks_analysis,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "win_probability_performance": win_probability_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
@@ -4591,6 +4703,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_breakdown": dict(model_versions),
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "win_probability_performance": win_probability_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
@@ -4674,6 +4787,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "win_probability_performance": win_probability_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
