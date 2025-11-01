@@ -130,7 +130,7 @@ def _seed_reference_data(db: Session) -> None:
     )
     course2 = Course(
         reunion_id=reunion_evening.reunion_id,
-        course_number=2,
+        course_number=7,
         course_name="R1C2",
         discipline=Discipline.TROT_ATTELE,
         distance=3000,
@@ -522,6 +522,37 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["average_post_time"] == "20:30"
     assert evening_metrics["earliest_post_time"] == "20:30"
     assert evening_metrics["latest_post_time"] == "20:30"
+
+    race_order_performance = metrics["race_order_performance"]
+    assert set(race_order_performance.keys()) == {"early_card", "late_card"}
+
+    early_segment = race_order_performance["early_card"]
+    assert early_segment["label"] == "Début de réunion (courses 1-3)"
+    assert early_segment["samples"] == 3
+    assert early_segment["courses"] == 1
+    assert early_segment["reunions"] == 1
+    assert early_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert early_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert early_segment["average_course_number"] == pytest.approx(1.0, abs=1e-6)
+    assert early_segment["min_course_number"] == 1
+    assert early_segment["max_course_number"] == 1
+
+    late_segment = race_order_performance["late_card"]
+    assert late_segment["label"] == "Fin de réunion (courses 7+)"
+    assert late_segment["samples"] == 3
+    assert late_segment["courses"] == 1
+    assert late_segment["reunions"] == 1
+    assert late_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert late_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert late_segment["average_course_number"] == pytest.approx(7.0, abs=1e-6)
+    assert late_segment["min_course_number"] == 7
+    assert late_segment["max_course_number"] == 7
 
     weekday_performance = metrics["weekday_performance"]
     weekday_labels = {
@@ -953,6 +984,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
+    assert result["race_order_performance"]["early_card"]["samples"] == 3
+    assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -984,6 +1017,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_order_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
