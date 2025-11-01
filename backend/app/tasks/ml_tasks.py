@@ -2308,6 +2308,80 @@ def _summarise_race_order_performance(
     return race_order_metrics
 
 
+def _categorise_reunion_number(
+    reunion_number: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Classe la réunion selon son numéro officiel (R1, R2, etc.)."""
+
+    try:
+        number = int(reunion_number) if reunion_number is not None else None
+    except (TypeError, ValueError):  # pragma: no cover - résilience face aux entrées libres
+        number = None
+
+    if number is None or number <= 0:
+        return "unknown", "Réunion inconnue", None
+
+    if number <= 2:
+        return "morning_cards", "Réunions R1-R2 (matinales)", number
+
+    if number <= 5:
+        return "day_cards", "Réunions R3-R5 (journée)", number
+
+    return "evening_cards", "Réunions R6+ (soir)", number
+
+
+def _summarise_reunion_number_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue des performances par numéro de réunion (R1, R2, ...)."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+
+    order_priority = {
+        "morning_cards": 0,
+        "day_cards": 1,
+        "evening_cards": 2,
+        "unknown": 3,
+    }
+
+    reunion_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(
+        breakdown.items(),
+        key=lambda item: (order_priority.get(item[0], 99), item[0]),
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        reunion_numbers = [
+            int(value)
+            for value in payload.get("reunion_numbers", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+
+        summary["average_reunion_number"] = _safe_average(reunion_numbers)
+        summary["min_reunion_number"] = min(reunion_numbers) if reunion_numbers else None
+        summary["max_reunion_number"] = max(reunion_numbers) if reunion_numbers else None
+
+        reunion_metrics[segment] = summary
+
+    return reunion_metrics
+
+
 def _categorise_month(
     race_date: Optional[object],
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
@@ -3301,6 +3375,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         weather_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
+        reunion_number_breakdown: Dict[str, Dict[str, object]] = {}
         month_breakdown: Dict[str, Dict[str, object]] = {}
         lead_time_breakdown: Dict[str, Dict[str, object]] = {}
         race_order_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3557,6 +3632,35 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if isinstance(race_date, date):
                 month_bucket.setdefault("dates", set()).add(race_date.isoformat())
+
+            # Regroupe les performances par numéro de réunion (R1, R2, etc.)
+            # afin de vérifier si les matinales, les réunions de journée ou les
+            # nocturnes présentent des profils de précision distincts.
+            reunion_segment, reunion_label, reunion_number = _categorise_reunion_number(
+                getattr(reunion_obj, "reunion_number", getattr(course, "reunion_number", None))
+            )
+            reunion_bucket = reunion_number_breakdown.setdefault(
+                reunion_segment,
+                {
+                    "label": reunion_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "reunion_numbers": [],
+                },
+            )
+            reunion_bucket["label"] = reunion_label
+            reunion_bucket["truths"].append(is_top3)
+            reunion_bucket["predictions"].append(predicted_label)
+            reunion_bucket["scores"].append(probability)
+            reunion_bucket.setdefault("courses", set()).add(course.course_id)
+            reunion_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if reunion_number is not None:
+                reunion_bucket.setdefault("reunion_numbers", []).append(reunion_number)
 
             # Segmente les performances selon la position de la course dans la
             # réunion (début/milieu/fin) pour détecter d'éventuels écarts en fin
@@ -4559,6 +4663,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         month_performance = _summarise_month_performance(month_breakdown)
         weekday_performance = _summarise_weekday_performance(weekday_breakdown)
         race_order_performance = _summarise_race_order_performance(race_order_breakdown)
+        reunion_number_performance = _summarise_reunion_number_performance(
+            reunion_number_breakdown
+        )
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
@@ -4655,6 +4762,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
+            "reunion_number_performance": reunion_number_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -4717,6 +4825,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
+            "reunion_number_performance": reunion_number_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -4799,6 +4908,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
+            "reunion_number_performance": reunion_number_performance,
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
             "weather_performance": weather_performance,

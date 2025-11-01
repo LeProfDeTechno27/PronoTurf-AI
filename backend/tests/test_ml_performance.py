@@ -679,6 +679,37 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert late_segment["min_course_number"] == 7
     assert late_segment["max_course_number"] == 7
 
+    reunion_number_performance = metrics["reunion_number_performance"]
+    assert set(reunion_number_performance.keys()) == {"morning_cards", "day_cards"}
+
+    morning_segment = reunion_number_performance["morning_cards"]
+    assert morning_segment["label"] == "Réunions R1-R2 (matinales)"
+    assert morning_segment["samples"] == 3
+    assert morning_segment["courses"] == 1
+    assert morning_segment["reunions"] == 1
+    assert morning_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert morning_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert morning_segment["average_reunion_number"] == pytest.approx(1.0, abs=1e-6)
+    assert morning_segment["min_reunion_number"] == 1
+    assert morning_segment["max_reunion_number"] == 1
+
+    day_segment = reunion_number_performance["day_cards"]
+    assert day_segment["label"] == "Réunions R3-R5 (journée)"
+    assert day_segment["samples"] == 3
+    assert day_segment["courses"] == 1
+    assert day_segment["reunions"] == 1
+    assert day_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert day_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert day_segment["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
+    assert day_segment["min_reunion_number"] == 4
+    assert day_segment["max_reunion_number"] == 4
+
     weekday_performance = metrics["weekday_performance"]
     weekday_labels = {
         0: ("monday", "Lundi"),
@@ -1383,6 +1414,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
+    assert result["reunion_number_performance"]["morning_cards"]["samples"] == 3
+    assert result["reunion_number_performance"]["day_cards"]["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
     assert "win_probability_performance" in result
     with in_memory_session() as check_session:
@@ -1427,6 +1460,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "city_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_order_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "reunion_number_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
