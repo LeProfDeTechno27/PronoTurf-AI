@@ -188,6 +188,7 @@ def _seed_reference_data(db: Session) -> None:
             days_since_last_race=10,
             handicap_value=8,
             equipment={"items": ["Oeillères"]},
+            recent_form="1-1-2",
         ),
         Partant(
             course_id=course1.course_id,
@@ -201,6 +202,7 @@ def _seed_reference_data(db: Session) -> None:
             days_since_last_race=25,
             handicap_value=16,
             equipment={"items": ["Licol"]},
+            recent_form="3-4-5",
         ),
         Partant(
             course_id=course1.course_id,
@@ -214,6 +216,7 @@ def _seed_reference_data(db: Session) -> None:
             days_since_last_race=75,
             handicap_value=26,
             equipment={"items": ["Bonnet", "Mors"]},
+            recent_form="6-7-8",
         ),
         Partant(
             course_id=course2.course_id,
@@ -227,6 +230,7 @@ def _seed_reference_data(db: Session) -> None:
             days_since_last_race=45,
             handicap_value=34,
             equipment={"items": []},
+            recent_form="2-3-2",
         ),
         Partant(
             course_id=course2.course_id,
@@ -240,6 +244,7 @@ def _seed_reference_data(db: Session) -> None:
             days_since_last_race=210,
             handicap_value=12,
             equipment=None,
+            recent_form="9-10-11",
         ),
         Partant(
             course_id=course2.course_id,
@@ -1085,6 +1090,63 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert date.today().strftime("%Y-%m") in result["month_performance"]
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
+    assert result["recent_form_performance"]["recent_winner"]["label"] == "Gagnant récent"
+    assert result["recent_form_performance"]["recent_winner"]["samples"] == 1
+    recent_form_performance = metrics["recent_form_performance"]
+    assert set(recent_form_performance.keys()) == {
+        "recent_winner",
+        "strong_form",
+        "steady_form",
+        "inconsistent_form",
+        "poor_form",
+        "unknown",
+    }
+
+    winner_segment = recent_form_performance["recent_winner"]
+    assert winner_segment["label"] == "Gagnant récent"
+    assert winner_segment["samples"] == 1
+    assert winner_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["recent_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["average_recent_position"] == pytest.approx(4 / 3, rel=1e-3)
+    assert winner_segment["best_recent_position"] == 1
+    assert winner_segment["average_recent_history_size"] == pytest.approx(3.0, rel=1e-3)
+
+    strong_segment = recent_form_performance["strong_form"]
+    assert strong_segment["label"] == "Forme solide (moyenne ≤3)"
+    assert strong_segment["samples"] == 1
+    assert strong_segment["accuracy"] == pytest.approx(0.0, rel=1e-3)
+    assert strong_segment["recent_win_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert strong_segment["average_recent_position"] == pytest.approx(7 / 3, rel=1e-3)
+    assert strong_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    steady_segment = recent_form_performance["steady_form"]
+    assert steady_segment["label"] == "Forme régulière (moyenne 3-5)"
+    assert steady_segment["samples"] == 1
+    assert steady_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert steady_segment["recent_win_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert steady_segment["average_recent_position"] == pytest.approx(4.0, rel=1e-3)
+
+    inconsistent_segment = recent_form_performance["inconsistent_form"]
+    assert inconsistent_segment["label"] == "Forme irrégulière (moyenne 5-8)"
+    assert inconsistent_segment["samples"] == 1
+    assert inconsistent_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert inconsistent_segment["observed_positive_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert inconsistent_segment["average_recent_position"] == pytest.approx(7.0, rel=1e-3)
+
+    poor_segment = recent_form_performance["poor_form"]
+    assert poor_segment["label"] == "Forme en difficulté (>8)"
+    assert poor_segment["samples"] == 1
+    assert poor_segment["accuracy"] == pytest.approx(0.0, rel=1e-3)
+    assert poor_segment["observed_positive_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert poor_segment["average_recent_position"] == pytest.approx(10.0, rel=1e-3)
+
+    unknown_segment = recent_form_performance["unknown"]
+    assert unknown_segment["label"] == "Forme inconnue"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["average_recent_position"] is None
+    assert unknown_segment["recent_win_rate"] is None
+    assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
@@ -1118,6 +1180,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]

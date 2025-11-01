@@ -2182,6 +2182,118 @@ def _summarise_equipment_performance(
     return equipment_metrics
 
 
+def _categorise_recent_form(
+    recent_positions: Optional[List[int]],
+) -> Tuple[str, str]:
+    """Classe la forme récente d'un cheval selon ses dernières arrivées."""
+
+    if not recent_positions:
+        return "unknown", "Forme inconnue"
+
+    # Écarte toute valeur non entière qui pourrait remonter d'une source externe.
+    clean_positions = [
+        int(position)
+        for position in recent_positions
+        if isinstance(position, (int, float))
+    ]
+
+    if not clean_positions:
+        return "unknown", "Forme inconnue"
+
+    best_finish = min(clean_positions)
+    average_finish = sum(clean_positions) / len(clean_positions)
+
+    if best_finish == 1:
+        return "recent_winner", "Gagnant récent"
+
+    if average_finish <= 3.0:
+        return "strong_form", "Forme solide (moyenne ≤3)"
+
+    if average_finish <= 5.0:
+        return "steady_form", "Forme régulière (moyenne 3-5)"
+
+    if average_finish <= 8.0:
+        return "inconsistent_form", "Forme irrégulière (moyenne 5-8)"
+
+    return "poor_form", "Forme en difficulté (>8)"
+
+
+def _summarise_recent_form_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Expose les performances selon les segments de forme récente."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    form_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        average_positions = [
+            float(value)
+            for value in payload.get("average_positions", [])
+            if value is not None
+        ]
+        best_positions = [
+            int(value)
+            for value in payload.get("best_positions", [])
+            if value is not None
+        ]
+        worst_positions = [
+            int(value)
+            for value in payload.get("worst_positions", [])
+            if value is not None
+        ]
+        starts_counts = [
+            int(value)
+            for value in payload.get("starts_counts", [])
+            if value is not None
+        ]
+        win_flags = [
+            bool(value)
+            for value in payload.get("win_flags", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["share"] = (
+            summary["samples"] / total_samples if total_samples else None
+        )
+        summary["label"] = payload.get("label", segment)
+        summary["average_recent_position"] = _safe_average(average_positions)
+        summary["best_recent_position"] = (
+            min(best_positions) if best_positions else None
+        )
+        summary["worst_recent_position"] = (
+            max(worst_positions) if worst_positions else None
+        )
+        summary["average_recent_history_size"] = _safe_average(
+            [float(value) for value in starts_counts]
+        )
+        summary["recent_win_rate"] = (
+            sum(1 for flag in win_flags if flag) / len(win_flags)
+            if win_flags
+            else None
+        )
+
+        form_metrics[segment] = summary
+
+    return form_metrics
+
+
 def _categorise_confidence_score(
     confidence_score: Optional[object],
 ) -> Tuple[str, str, Optional[float]]:
@@ -2660,6 +2772,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
+        recent_form_breakdown: Dict[str, Dict[str, object]] = {}
         equipment_breakdown: Dict[str, Dict[str, object]] = {}
         weather_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3298,6 +3411,51 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if rest_days_value is not None:
                 rest_bucket.setdefault("rest_days", []).append(int(rest_days_value))
 
+            recent_form_list = getattr(partant, "recent_form_list", None)
+            recent_segment, recent_label = _categorise_recent_form(recent_form_list)
+            recent_form_bucket = recent_form_breakdown.setdefault(
+                recent_segment,
+                {
+                    "label": recent_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "average_positions": [],
+                    "best_positions": [],
+                    "worst_positions": [],
+                    "starts_counts": [],
+                    "win_flags": [],
+                },
+            )
+            recent_form_bucket["label"] = recent_label
+            recent_form_bucket["truths"].append(is_top3)
+            recent_form_bucket["predictions"].append(predicted_label)
+            recent_form_bucket["scores"].append(probability)
+            recent_form_bucket.setdefault("courses", set()).add(course.course_id)
+            if getattr(partant, "horse_id", None):
+                recent_form_bucket.setdefault("horses", set()).add(partant.horse_id)
+
+            if recent_form_list:
+                average_form = getattr(partant, "average_recent_position", None)
+                if average_form is not None:
+                    recent_form_bucket.setdefault("average_positions", []).append(
+                        float(average_form)
+                    )
+                recent_form_bucket.setdefault("best_positions", []).append(
+                    int(min(recent_form_list))
+                )
+                recent_form_bucket.setdefault("worst_positions", []).append(
+                    int(max(recent_form_list))
+                )
+                recent_form_bucket.setdefault("starts_counts", []).append(
+                    len(recent_form_list)
+                )
+                recent_form_bucket.setdefault("win_flags", []).append(
+                    bool(getattr(partant, "has_won_recently", False))
+                )
+
             jockey_identifier = str(partant.jockey_id) if partant.jockey_id else "unknown"
             jockey_label = (
                 partant.jockey.full_name
@@ -3627,6 +3785,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_gender_performance = _summarise_horse_gender_performance(
             horse_gender_breakdown
         )
+        recent_form_performance = _summarise_recent_form_performance(
+            recent_form_breakdown
+        )
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
@@ -3700,6 +3861,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "recent_form_performance": recent_form_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -3752,6 +3914,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "recent_form_performance": recent_form_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -3824,6 +3987,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
+            "recent_form_performance": recent_form_performance,
             "track_type_performance": track_type_performance,
             "odds_band_performance": odds_band_performance,
             "model_version_breakdown": dict(model_versions),
