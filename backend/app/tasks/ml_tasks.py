@@ -1767,6 +1767,74 @@ def _summarise_day_part_performance(
     return day_part_metrics
 
 
+def _categorise_weekday(
+    race_date: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Classe la réunion selon le jour de la semaine pour surveiller les dérives."""
+
+    if isinstance(race_date, datetime):
+        race_date = race_date.date()
+
+    if not isinstance(race_date, date):
+        return "unknown", "Jour inconnu", None
+
+    weekday_index = race_date.weekday()
+    mapping = {
+        0: ("monday", "Lundi"),
+        1: ("tuesday", "Mardi"),
+        2: ("wednesday", "Mercredi"),
+        3: ("thursday", "Jeudi"),
+        4: ("friday", "Vendredi"),
+        5: ("saturday", "Samedi"),
+        6: ("sunday", "Dimanche"),
+    }
+
+    segment, label = mapping.get(
+        weekday_index,
+        (f"weekday_{weekday_index}", race_date.strftime("%A")),
+    )
+    return segment, label, weekday_index
+
+
+def _summarise_weekday_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue synthétique des performances par jour de la semaine."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    weekday_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(
+        breakdown.items(),
+        key=lambda item: (item[1].get("weekday_index", 7), item[0]),
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        dates: Set[str] = set(payload.get("dates", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["weekday_index"] = payload.get("weekday_index")
+        summary["first_date"] = min(dates) if dates else None
+        summary["last_date"] = max(dates) if dates else None
+
+        weekday_metrics[segment] = summary
+
+    return weekday_metrics
+
+
 def _summarise_field_size_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -2193,6 +2261,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
+        weekday_breakdown: Dict[str, Dict[str, object]] = {}
         track_type_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2299,6 +2368,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if isinstance(scheduled_time_value, time):
                 minutes_value = scheduled_time_value.hour * 60 + scheduled_time_value.minute
                 day_part_bucket.setdefault("minutes", []).append(minutes_value)
+
+            # Ventile également les performances par jour de la semaine afin de
+            # repérer rapidement si certains créneaux (week-ends, réunions
+            # nocturnes) introduisent un biais de précision. On conserve les
+            # identifiants de course/réunion et les dates ISO pour alimenter le
+            # tableau de bord dédié.
+            reunion_obj = getattr(course, "reunion", None)
+            race_date = getattr(reunion_obj, "reunion_date", None)
+            weekday_segment, weekday_label, weekday_index = _categorise_weekday(race_date)
+            weekday_bucket = weekday_breakdown.setdefault(
+                weekday_segment,
+                {
+                    "label": weekday_label,
+                    "weekday_index": weekday_index,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "dates": set(),
+                },
+            )
+            weekday_bucket["truths"].append(is_top3)
+            weekday_bucket["predictions"].append(predicted_label)
+            weekday_bucket["scores"].append(probability)
+            weekday_bucket.setdefault("courses", set()).add(course.course_id)
+            weekday_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if isinstance(race_date, date):
+                weekday_bucket.setdefault("dates", set()).add(race_date.isoformat())
 
             betting_samples.append(
                 {
@@ -2964,6 +3064,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
+        weekday_performance = _summarise_weekday_performance(weekday_breakdown)
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
@@ -3037,6 +3138,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "weekday_performance": weekday_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -3085,6 +3187,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "weekday_performance": weekday_performance,
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
@@ -3152,6 +3255,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "weekday_performance": weekday_performance,
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,

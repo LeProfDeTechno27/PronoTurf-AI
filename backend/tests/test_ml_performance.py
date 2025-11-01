@@ -80,15 +80,16 @@ def _seed_reference_data(db: Session) -> None:
     db.add_all([hippodrome_flat, hippodrome_trot])
     db.flush()
 
+    today = date.today()
     reunion = Reunion(
         hippodrome_id=hippodrome_flat.hippodrome_id,
-        reunion_date=date.today(),
+        reunion_date=today - timedelta(days=1),
         reunion_number=1,
         status=ReunionStatus.COMPLETED,
     )
     reunion_evening = Reunion(
         hippodrome_id=hippodrome_trot.hippodrome_id,
-        reunion_date=date.today(),
+        reunion_date=today,
         reunion_number=4,
         status=ReunionStatus.COMPLETED,
     )
@@ -522,6 +523,51 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["earliest_post_time"] == "20:30"
     assert evening_metrics["latest_post_time"] == "20:30"
 
+    weekday_performance = metrics["weekday_performance"]
+    weekday_labels = {
+        0: ("monday", "Lundi"),
+        1: ("tuesday", "Mardi"),
+        2: ("wednesday", "Mercredi"),
+        3: ("thursday", "Jeudi"),
+        4: ("friday", "Vendredi"),
+        5: ("saturday", "Samedi"),
+        6: ("sunday", "Dimanche"),
+    }
+
+    previous_day = date.today() - timedelta(days=1)
+    previous_key, previous_label = weekday_labels[previous_day.weekday()]
+    today_key, today_label = weekday_labels[date.today().weekday()]
+
+    assert set(weekday_performance.keys()) == {previous_key, today_key}
+
+    previous_metrics = weekday_performance[previous_key]
+    assert previous_metrics["label"] == previous_label
+    assert previous_metrics["samples"] == 3
+    assert previous_metrics["courses"] == 1
+    assert previous_metrics["reunions"] == 1
+    assert previous_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert previous_metrics["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert previous_metrics["weekday_index"] == previous_day.weekday()
+    assert previous_metrics["first_date"] == previous_day.isoformat()
+    assert previous_metrics["last_date"] == previous_day.isoformat()
+
+    today_metrics = weekday_performance[today_key]
+    assert today_metrics["label"] == today_label
+    assert today_metrics["samples"] == 3
+    assert today_metrics["courses"] == 1
+    assert today_metrics["reunions"] == 1
+    assert today_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert today_metrics["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert today_metrics["weekday_index"] == date.today().weekday()
+    assert today_metrics["first_date"] == date.today().isoformat()
+    assert today_metrics["last_date"] == date.today().isoformat()
+
     hippodrome_performance = metrics["hippodrome_performance"]
     assert len(hippodrome_performance) == 2
     hippodrome_map = {entry["label"]: entry for entry in hippodrome_performance}
@@ -931,6 +977,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
