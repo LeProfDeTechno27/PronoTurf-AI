@@ -86,12 +86,14 @@ def _seed_reference_data(db: Session) -> None:
         reunion_date=today - timedelta(days=1),
         reunion_number=1,
         status=ReunionStatus.COMPLETED,
+        weather_conditions={"condition": "Ensoleillé", "temperature": 18},
     )
     reunion_evening = Reunion(
         hippodrome_id=hippodrome_trot.hippodrome_id,
         reunion_date=today,
         reunion_number=4,
         status=ReunionStatus.COMPLETED,
+        weather_conditions={"condition": "Pluie battante", "temperature": 9},
     )
     db.add_all([reunion, reunion_evening])
     db.flush()
@@ -185,6 +187,7 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("3.0"),
             days_since_last_race=10,
             handicap_value=8,
+            equipment={"items": ["Oeillères"]},
         ),
         Partant(
             course_id=course1.course_id,
@@ -197,6 +200,7 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("4.0"),
             days_since_last_race=25,
             handicap_value=16,
+            equipment={"items": ["Licol"]},
         ),
         Partant(
             course_id=course1.course_id,
@@ -209,6 +213,7 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("12.0"),
             days_since_last_race=75,
             handicap_value=26,
+            equipment={"items": ["Bonnet", "Mors"]},
         ),
         Partant(
             course_id=course2.course_id,
@@ -221,6 +226,7 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("5.5"),
             days_since_last_race=45,
             handicap_value=34,
+            equipment={"items": []},
         ),
         Partant(
             course_id=course2.course_id,
@@ -233,6 +239,7 @@ def _seed_reference_data(db: Session) -> None:
             odds_pmu=Decimal("7.0"),
             days_since_last_race=210,
             handicap_value=12,
+            equipment=None,
         ),
         Partant(
             course_id=course2.course_id,
@@ -242,6 +249,7 @@ def _seed_reference_data(db: Session) -> None:
             numero_corde=13,
             final_position=2,
             odds_pmu=Decimal("6.0"),
+            equipment={"items": ["Œillères australiennes"]},
         ),
     ]
     db.add_all(partants)
@@ -676,6 +684,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surface_performance["sable"]["samples"] == 3
     assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
 
+    weather_performance = metrics["weather_performance"]
+    assert set(weather_performance.keys()) == {"clear", "rain"}
+    assert weather_performance["clear"]["label"] == "Conditions claires"
+    assert weather_performance["clear"]["courses"] == 1
+    assert weather_performance["clear"]["reunions"] == 1
+    assert weather_performance["clear"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert weather_performance["clear"]["average_temperature"] == pytest.approx(18.0, rel=1e-3)
+    assert weather_performance["rain"]["label"] == "Pluie / Averses"
+    assert weather_performance["rain"]["courses"] == 1
+    assert weather_performance["rain"]["reunions"] == 1
+    assert weather_performance["rain"]["average_temperature"] == pytest.approx(9.0, rel=1e-3)
+
     track_type_performance = metrics["track_type_performance"]
     assert set(track_type_performance.keys()) == {"flat", "trot"}
     assert track_type_performance["flat"]["label"] == "Piste plate"
@@ -808,6 +828,54 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_weight_segment["label"] == "Poids inconnu"
     assert unknown_weight_segment["samples"] == 1
     assert unknown_weight_segment["average_weight"] is None
+
+    equipment_performance = metrics["equipment_performance"]
+    assert set(equipment_performance.keys()) == {
+        "blinkers",
+        "multi_gear",
+        "no_equipment",
+        "single_gear",
+        "unknown",
+    }
+
+    blinkers_segment = equipment_performance["blinkers"]
+    assert blinkers_segment["label"] == "Œillères déclarées"
+    assert blinkers_segment["samples"] == 2
+    assert blinkers_segment["courses"] == 2
+    assert blinkers_segment["horses"] == 2
+    assert blinkers_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert blinkers_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["blinkers_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    single_gear_segment = equipment_performance["single_gear"]
+    assert single_gear_segment["label"] == "Équipement isolé"
+    assert single_gear_segment["samples"] == 1
+    assert single_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert single_gear_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
+    assert single_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    multi_gear_segment = equipment_performance["multi_gear"]
+    assert multi_gear_segment["label"] == "Équipement combiné (≥2)"
+    assert multi_gear_segment["samples"] == 1
+    assert multi_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert multi_gear_segment["average_equipment_items"] == pytest.approx(2.0, rel=1e-3)
+    assert multi_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    no_equipment_segment = equipment_performance["no_equipment"]
+    assert no_equipment_segment["label"] == "Aucun équipement déclaré"
+    assert no_equipment_segment["samples"] == 1
+    assert no_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert no_equipment_segment["average_equipment_items"] == pytest.approx(0.0, abs=1e-6)
+    assert no_equipment_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    unknown_equipment_segment = equipment_performance["unknown"]
+    assert unknown_equipment_segment["label"] == "Équipement inconnu"
+    assert unknown_equipment_segment["samples"] == 1
+    assert unknown_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert unknown_equipment_segment["average_equipment_items"] is None
+    assert unknown_equipment_segment["blinkers_rate"] is None
 
     odds_band_performance = metrics["odds_band_performance"]
     assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
@@ -1012,12 +1080,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
     assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
+    assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert date.today().strftime("%Y-%m") in result["month_performance"]
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
+    assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
@@ -1052,6 +1122,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weather_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
@@ -1059,6 +1130,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]

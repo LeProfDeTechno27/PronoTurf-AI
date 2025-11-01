@@ -1393,6 +1393,42 @@ def _categorise_carried_weight(
     return "heavy", "Lourd (≥60 kg)", value
 
 
+def _categorise_equipment_profile(
+    equipment: Optional[object],
+) -> Tuple[str, str, Optional[int], Optional[bool]]:
+    """Normalise les informations d'équipement pour un partant donné."""
+
+    if equipment is None:
+        return "unknown", "Équipement inconnu", None, None
+
+    items: List[str] = []
+
+    if isinstance(equipment, dict):
+        raw_items = equipment.get("items")
+        if isinstance(raw_items, list):
+            items = [str(item).strip() for item in raw_items if str(item).strip()]
+        elif isinstance(raw_items, str):
+            items = [raw_items.strip()]
+    elif isinstance(equipment, list):
+        items = [str(item).strip() for item in equipment if str(item).strip()]
+    elif isinstance(equipment, str):  # pragma: no cover - garde-fou supplémentaire
+        items = [equipment.strip()]
+
+    normalised = [item.lower() for item in items if item]
+    has_blinkers = any("oeill" in item or "œill" in item for item in normalised)
+
+    if not items:
+        return "no_equipment", "Aucun équipement déclaré", 0, False
+
+    if has_blinkers:
+        return "blinkers", "Œillères déclarées", len(items), True
+
+    if len(items) == 1:
+        return "single_gear", "Équipement isolé", 1, False
+
+    return "multi_gear", "Équipement combiné (≥2)", len(items), False
+
+
 def _summarise_weight_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -2091,6 +2127,61 @@ def _summarise_handicap_performance(
     return handicap_metrics
 
 
+def _summarise_equipment_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure l'impact des configurations de matériel sur les performances."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    equipment_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["label"] = payload.get("label", segment.title())
+        summary["share"] = (
+            summary["samples"] / total_samples if total_samples else None
+        )
+
+        item_counts = [
+            int(value)
+            for value in payload.get("item_counts", [])
+            if isinstance(value, (int, float))
+        ]
+        summary["average_equipment_items"] = _safe_average(item_counts)
+        summary["min_equipment_items"] = min(item_counts) if item_counts else None
+        summary["max_equipment_items"] = max(item_counts) if item_counts else None
+
+        blinkers_flags = [
+            bool(flag)
+            for flag in payload.get("blinkers_flags", [])
+            if isinstance(flag, bool)
+        ]
+        summary["blinkers_rate"] = (
+            sum(1 for flag in blinkers_flags if flag) / len(blinkers_flags)
+            if blinkers_flags
+            else None
+        )
+
+        equipment_metrics[segment] = summary
+
+    return equipment_metrics
+
+
 def _categorise_confidence_score(
     confidence_score: Optional[object],
 ) -> Tuple[str, str, Optional[float]]:
@@ -2357,6 +2448,98 @@ def _summarise_start_type_performance(
     return start_type_metrics
 
 
+def _categorise_weather_profile(
+    weather_payload: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Normalise les conditions météo en segments exploitables pour l'analyse."""
+
+    if not weather_payload:
+        return "unknown", "Conditions inconnues", None
+
+    condition_value: Optional[str] = None
+    temperature_value: Optional[float] = None
+
+    if isinstance(weather_payload, dict):
+        for key in ("condition", "weather", "meteo", "label", "libelle", "state"):
+            raw = weather_payload.get(key)
+            if raw:
+                condition_value = str(raw)
+                break
+        for key in ("temperature", "temp", "temperature_c", "temp_c", "temperatureC"):
+            raw_temp = weather_payload.get(key)
+            if raw_temp is not None:
+                try:
+                    temperature_value = float(raw_temp)
+                except (TypeError, ValueError):  # pragma: no cover - tolérance JSON
+                    temperature_value = None
+                break
+    elif isinstance(weather_payload, str):
+        condition_value = weather_payload
+    else:
+        condition_value = str(weather_payload)
+
+    if not condition_value:
+        return "unknown", "Conditions inconnues", temperature_value
+
+    normalised = condition_value.strip().lower()
+
+    keyword_map = [
+        ("clear", ("sun", "soleil", "clair", "clear", "ensoleill"), "Conditions claires"),
+        ("rain", ("rain", "pluie", "averse", "pluv"), "Pluie / Averses"),
+        ("storm", ("orage", "storm", "thunder"), "Orageux"),
+        ("snow", ("neige", "snow", "blizzard"), "Neige / Verglas"),
+        ("fog", ("brouillard", "fog", "mist"), "Brouillard"),
+        ("wind", ("vent", "wind"), "Vent soutenu"),
+        ("cloud", ("nuage", "cloud", "overcast", "gris"), "Couvert / Nuageux"),
+    ]
+
+    for segment, keywords, label in keyword_map:
+        if any(keyword in normalised for keyword in keywords):
+            return segment, label, temperature_value
+
+    label = condition_value.strip().capitalize()
+    return "other", label or "Conditions variées", temperature_value
+
+
+def _summarise_weather_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure l'influence des conditions météo sur la précision du modèle."""
+
+    if not breakdown:
+        return {}
+
+    weather_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        temperatures = [
+            float(value)
+            for value in payload.get("temperatures", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["label"] = payload.get("label")
+        summary["average_temperature"] = _safe_average(temperatures)
+        summary["min_temperature"] = min(temperatures) if temperatures else None
+        summary["max_temperature"] = max(temperatures) if temperatures else None
+
+        weather_metrics[segment] = summary
+
+    return weather_metrics
+
+
 def _summarise_rest_period_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -2477,6 +2660,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
+        equipment_breakdown: Dict[str, Dict[str, object]] = {}
+        weather_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
         month_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2700,6 +2885,32 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if course_number is not None:
                 race_order_bucket.setdefault("course_numbers", []).append(course_number)
 
+            weather_segment, weather_label, weather_temperature = _categorise_weather_profile(
+                getattr(reunion_obj, "weather_conditions", None)
+            )
+            weather_bucket = weather_breakdown.setdefault(
+                weather_segment,
+                {
+                    "label": weather_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "temperatures": [],
+                },
+            )
+            weather_bucket["label"] = weather_label
+            weather_bucket["truths"].append(is_top3)
+            weather_bucket["predictions"].append(predicted_label)
+            weather_bucket["scores"].append(probability)
+            weather_bucket.setdefault("courses", set()).add(course.course_id)
+            weather_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if weather_temperature is not None:
+                weather_bucket.setdefault("temperatures", []).append(weather_temperature)
+
             betting_samples.append(
                 {
                     "probability": probability,
@@ -2877,6 +3088,34 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 weight_bucket.setdefault("horses", set()).add(partant.horse_id)
             if weight_value is not None:
                 weight_bucket.setdefault("weights", []).append(weight_value)
+
+            equipment_segment, equipment_label, equipment_count, has_blinkers = _categorise_equipment_profile(
+                getattr(partant, "equipment", None)
+            )
+            equipment_bucket = equipment_breakdown.setdefault(
+                equipment_segment,
+                {
+                    "label": equipment_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "item_counts": [],
+                    "blinkers_flags": [],
+                },
+            )
+            equipment_bucket["label"] = equipment_label
+            equipment_bucket["truths"].append(is_top3)
+            equipment_bucket["predictions"].append(predicted_label)
+            equipment_bucket["scores"].append(probability)
+            equipment_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                equipment_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if equipment_count is not None:
+                equipment_bucket.setdefault("item_counts", []).append(equipment_count)
+            if has_blinkers is not None:
+                equipment_bucket.setdefault("blinkers_flags", []).append(has_blinkers)
 
             horse_age = _resolve_horse_age(partant, course, pronostic)
             age_segment = _categorise_horse_age(horse_age)
@@ -3374,11 +3613,13 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
+        weather_performance = _summarise_weather_performance(weather_breakdown)
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
         handicap_performance = _summarise_handicap_performance(handicap_breakdown)
         weight_performance = _summarise_weight_performance(weight_breakdown)
+        equipment_performance = _summarise_equipment_performance(equipment_breakdown)
         odds_band_performance = _summarise_odds_band_performance(odds_band_breakdown)
         horse_age_performance = _summarise_horse_age_performance(
             horse_age_breakdown
@@ -3451,9 +3692,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
+            "equipment_performance": equipment_performance,
             "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
@@ -3469,7 +3712,6 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
-            "odds_band_performance": odds_band_performance,
         }
 
         confidence_distribution = {
@@ -3503,9 +3745,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
+            "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
@@ -3573,9 +3817,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "race_order_performance": race_order_performance,
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
+            "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
+            "equipment_performance": equipment_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "track_type_performance": track_type_performance,
