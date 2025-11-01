@@ -523,6 +523,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["earliest_post_time"] == "20:30"
     assert evening_metrics["latest_post_time"] == "20:30"
 
+    month_performance = metrics["month_performance"]
+    current_month_key = date.today().strftime("%Y-%m")
+    assert current_month_key in month_performance
+    assert month_performance[current_month_key]["samples"] >= 3
+    assert month_performance[current_month_key]["reunions"] >= 1
+    assert sum(entry["samples"] for entry in month_performance.values()) == 6
+    assert str(date.today().year) in month_performance[current_month_key]["label"]
+
     race_order_performance = metrics["race_order_performance"]
     assert set(race_order_performance.keys()) == {"early_card", "late_card"}
 
@@ -980,6 +988,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
+    assert date.today().strftime("%Y-%m") in result["month_performance"]
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
@@ -1010,6 +1019,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]

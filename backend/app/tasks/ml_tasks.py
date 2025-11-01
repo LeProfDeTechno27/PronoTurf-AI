@@ -1832,6 +1832,88 @@ def _summarise_race_order_performance(
     return race_order_metrics
 
 
+def _categorise_month(
+    race_date: Optional[object],
+) -> Tuple[str, str, Optional[int], Optional[int]]:
+    """Retourne le mois (AAAA-MM) auquel rattacher la réunion suivie."""
+
+    if isinstance(race_date, datetime):
+        race_date = race_date.date()
+
+    if not isinstance(race_date, date):
+        return "unknown", "Mois inconnu", None, None
+
+    month_names = {
+        1: "Janvier",
+        2: "Février",
+        3: "Mars",
+        4: "Avril",
+        5: "Mai",
+        6: "Juin",
+        7: "Juillet",
+        8: "Août",
+        9: "Septembre",
+        10: "Octobre",
+        11: "Novembre",
+        12: "Décembre",
+    }
+
+    month_index = race_date.month
+    year = race_date.year
+    segment = f"{year:04d}-{month_index:02d}"
+    label = f"{month_names.get(month_index, race_date.strftime('%B'))} {year}"
+
+    return segment, label, month_index, year
+
+
+def _summarise_month_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue des performances agrégées par mois calendaire."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+
+    def _sort_key(item: Tuple[str, Dict[str, object]]) -> Tuple[int, int, str]:
+        payload = item[1]
+        year = payload.get("year")
+        month_index = payload.get("month_index")
+        return (
+            int(year) if isinstance(year, int) else 9999,
+            int(month_index) if isinstance(month_index, int) else 13,
+            item[0],
+        )
+
+    month_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(breakdown.items(), key=_sort_key):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        dates: Set[str] = set(payload.get("dates", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["month_index"] = payload.get("month_index")
+        summary["year"] = payload.get("year")
+        summary["first_date"] = min(dates) if dates else None
+        summary["last_date"] = max(dates) if dates else None
+
+        month_metrics[segment] = summary
+
+    return month_metrics
+
+
 def _categorise_weekday(
     race_date: Optional[object],
 ) -> Tuple[str, str, Optional[int]]:
@@ -2327,6 +2409,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
+        month_breakdown: Dict[str, Dict[str, object]] = {}
         race_order_breakdown: Dict[str, Dict[str, object]] = {}
         track_type_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2465,6 +2548,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if isinstance(race_date, date):
                 weekday_bucket.setdefault("dates", set()).add(race_date.isoformat())
+
+            # Alimente également un suivi mensuel pour détecter d'éventuelles
+            # variations saisonnières (meeting d'hiver/été) dans la précision
+            # du modèle. Les identifiants de course et réunion sont conservés
+            # afin d'établir des tableaux de bord détaillés.
+            month_segment, month_label, month_index, month_year = _categorise_month(
+                race_date
+            )
+            month_bucket = month_breakdown.setdefault(
+                month_segment,
+                {
+                    "label": month_label,
+                    "month_index": month_index,
+                    "year": month_year,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "dates": set(),
+                },
+            )
+            month_bucket["truths"].append(is_top3)
+            month_bucket["predictions"].append(predicted_label)
+            month_bucket["scores"].append(probability)
+            month_bucket.setdefault("courses", set()).add(course.course_id)
+            month_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if isinstance(race_date, date):
+                month_bucket.setdefault("dates", set()).add(race_date.isoformat())
 
             # Segmente les performances selon la position de la course dans la
             # réunion (début/milieu/fin) pour détecter d'éventuels écarts en fin
@@ -3158,6 +3272,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
+        month_performance = _summarise_month_performance(month_breakdown)
         weekday_performance = _summarise_weekday_performance(weekday_breakdown)
         race_order_performance = _summarise_race_order_performance(race_order_breakdown)
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
@@ -3233,6 +3348,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "discipline_performance": discipline_performance,
@@ -3283,6 +3399,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "discipline_performance": discipline_performance,
@@ -3352,6 +3469,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "distance_performance": distance_performance,
