@@ -1474,6 +1474,96 @@ def _summarise_prediction_rank_performance(
     return rank_metrics
 
 
+def _categorise_publication_lead_time(
+    generated_at: Optional[datetime],
+    race_date: Optional[date],
+    scheduled_time: Optional[time],
+) -> Tuple[str, str, Optional[float]]:
+    """Détermine la fenêtre de publication en heures avant le départ officiel."""
+
+    if not generated_at or not race_date:
+        return "unknown", "Publication à délai inconnu", None
+
+    if not isinstance(generated_at, datetime):
+        return "unknown", "Publication à délai inconnu", None
+
+    race_time = scheduled_time or time(12, 0)
+    race_datetime = datetime.combine(race_date, race_time)
+    lead_delta = race_datetime - generated_at
+    lead_hours = lead_delta.total_seconds() / 3600
+
+    if lead_hours < 0:
+        return "post_race", "Publication postérieure à la course", lead_hours
+    if lead_hours < 2:
+        return "less_2h", "Publication < 2h avant départ", lead_hours
+    if lead_hours < 6:
+        return "between_2h_6h", "Publication 2-6h avant départ", lead_hours
+    if lead_hours < 12:
+        return "between_6h_12h", "Publication 6-12h avant départ", lead_hours
+    if lead_hours < 24:
+        return "between_12h_24h", "Publication 12-24h avant départ", lead_hours
+    if lead_hours < 48:
+        return "between_24h_48h", "Publication 24-48h avant départ", lead_hours
+    return "beyond_48h", "Publication ≥ 48h avant départ", lead_hours
+
+
+def _summarise_lead_time_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Observe la précision du modèle en fonction du délai de publication."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    lead_time_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+        lead_times = [float(value) for value in payload.get("lead_times", [])]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["pronostics"] = len(pronostics)
+
+        if lead_times:
+            ordered = sorted(lead_times)
+            midpoint = len(ordered) // 2
+            if len(ordered) % 2 == 0:
+                median_value = (ordered[midpoint - 1] + ordered[midpoint]) / 2
+            else:
+                median_value = ordered[midpoint]
+
+            summary.update(
+                {
+                    "average_lead_hours": _safe_average(lead_times),
+                    "median_lead_hours": median_value,
+                    "min_lead_hours": ordered[0],
+                    "max_lead_hours": ordered[-1],
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "average_lead_hours": None,
+                    "median_lead_hours": None,
+                    "min_lead_hours": None,
+                    "max_lead_hours": None,
+                }
+            )
+
+        lead_time_metrics[segment] = summary
+
+    return lead_time_metrics
+
+
 def _normalise_nationality_label(
     nationality: Optional[object]
 ) -> Tuple[str, str]:
@@ -3129,6 +3219,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
         month_breakdown: Dict[str, Dict[str, object]] = {}
+        lead_time_breakdown: Dict[str, Dict[str, object]] = {}
         race_order_breakdown: Dict[str, Dict[str, object]] = {}
         track_type_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3240,6 +3331,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 or len(course_entry["predictions"])
             )
 
+            reunion_obj = getattr(course, "reunion", None)
+
+            # Évalue le délai entre la génération du pronostic et l'heure
+            # officielle de départ afin de vérifier si les publications
+            # tardives/anticipées conservent une précision homogène.
+            lead_segment, lead_label, lead_hours = _categorise_publication_lead_time(
+                getattr(pronostic, "generated_at", None),
+                getattr(reunion_obj, "reunion_date", None),
+                getattr(course, "scheduled_time", None),
+            )
+            lead_bucket = lead_time_breakdown.setdefault(
+                lead_segment,
+                {
+                    "label": lead_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "pronostics": set(),
+                    "lead_times": [],
+                },
+            )
+            lead_bucket["label"] = lead_label
+            lead_bucket["truths"].append(is_top3)
+            lead_bucket["predictions"].append(predicted_label)
+            lead_bucket["scores"].append(probability)
+            lead_bucket.setdefault("courses", set()).add(course.course_id)
+            lead_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            if lead_hours is not None:
+                lead_bucket.setdefault("lead_times", []).append(lead_hours)
+
             # Segmente l'horaire officiel de départ pour identifier si le modèle
             # se comporte différemment entre les réunions matinales, l'après-midi
             # et les nocturnes. Les opérateurs peuvent ainsi ajuster leur
@@ -3272,7 +3394,6 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             # nocturnes) introduisent un biais de précision. On conserve les
             # identifiants de course/réunion et les dates ISO pour alimenter le
             # tableau de bord dédié.
-            reunion_obj = getattr(course, "reunion", None)
             race_date = getattr(reunion_obj, "reunion_date", None)
             weekday_segment, weekday_label, weekday_index = _categorise_weekday(race_date)
             weekday_bucket = weekday_breakdown.setdefault(
@@ -4323,6 +4444,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
+        lead_time_performance = _summarise_lead_time_performance(lead_time_breakdown)
         month_performance = _summarise_month_performance(month_breakdown)
         weekday_performance = _summarise_weekday_performance(weekday_breakdown)
         race_order_performance = _summarise_race_order_performance(race_order_breakdown)
@@ -4417,6 +4539,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_score_performance": confidence_score_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
@@ -4477,6 +4600,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_curve": roc_curve_points,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
@@ -4557,6 +4681,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "lift_analysis": lift_analysis,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
+            "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
