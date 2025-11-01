@@ -602,6 +602,31 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["earliest_post_time"] == "20:30"
     assert evening_metrics["latest_post_time"] == "20:30"
 
+    lead_time_performance = metrics["lead_time_performance"]
+    assert set(lead_time_performance.keys()) == {"between_2h_6h", "between_6h_12h"}
+
+    short_notice = lead_time_performance["between_2h_6h"]
+    assert short_notice["label"] == "Publication 2-6h avant départ"
+    assert short_notice["samples"] == 3
+    assert short_notice["courses"] == 1
+    assert short_notice["pronostics"] == 1
+    assert short_notice["share"] == pytest.approx(0.5, rel=1e-3)
+    assert short_notice["average_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["median_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["min_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["max_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+
+    extended_notice = lead_time_performance["between_6h_12h"]
+    assert extended_notice["label"] == "Publication 6-12h avant départ"
+    assert extended_notice["samples"] == 3
+    assert extended_notice["courses"] == 1
+    assert extended_notice["pronostics"] == 1
+    assert extended_notice["share"] == pytest.approx(0.5, rel=1e-3)
+    assert extended_notice["average_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["median_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["min_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["max_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+
     month_performance = metrics["month_performance"]
     current_month_key = date.today().strftime("%Y-%m")
     assert current_month_key in month_performance
@@ -1278,6 +1303,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
     assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
+    assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
     assert date.today().strftime("%Y-%m") in result["month_performance"]
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
@@ -1371,6 +1397,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "lead_time_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
