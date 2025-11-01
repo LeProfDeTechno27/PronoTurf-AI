@@ -1345,6 +1345,76 @@ def _categorise_prize_money(prize_money: Optional[object]) -> str:
     return "premium_prize"
 
 
+def _categorise_odds_band(odds: Optional[object]) -> Tuple[str, str]:
+    """Regroupe les partants par profil de cote pour suivre la robustesse du modèle."""
+
+    if odds is None:
+        return "unpriced", "Non coté"
+
+    try:
+        value = float(odds)
+    except (TypeError, ValueError):  # pragma: no cover - sécurité sur valeurs exotiques
+        return "unpriced", "Non coté"
+
+    if value <= 4.0:
+        return "favorite", "Favori (≤4/1)"
+
+    if value <= 8.0:
+        return "challenger", "Challenger (4-8/1)"
+
+    if value <= 15.0:
+        return "outsider", "Outsider (8-15/1)"
+
+    return "long_shot", "Très longue cote (>15/1)"
+
+
+def _summarise_odds_band_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble un tableau de bord par segment de cote PMU."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    odds_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        odds_values = [
+            float(value)
+            for value in payload.get("odds", [])
+            if value is not None
+        ]
+        implied_probabilities = [
+            float(value)
+            for value in payload.get("implied_probabilities", [])
+            if value is not None
+        ]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["average_odds"] = _safe_average(odds_values)
+        summary["min_odds"] = min(odds_values) if odds_values else None
+        summary["max_odds"] = max(odds_values) if odds_values else None
+        summary["average_implied_probability"] = _safe_average(implied_probabilities)
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+
+        odds_metrics[segment] = summary
+
+    return odds_metrics
+
+
 def _format_minutes_as_time(value: Optional[float]) -> Optional[str]:
     """Convertit un nombre de minutes depuis minuit en format ``HH:MM`` lisible."""
 
@@ -1989,6 +2059,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
+        odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
@@ -2110,6 +2181,40 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "final_position": partant.final_position,
                 }
             )
+
+            # Classe les partants selon leur profil de cote (favori, challenger,
+            # outsider, etc.) afin de vérifier si le modèle reste fiable lorsque
+            # l'on s'éloigne des chevaux les plus attendus par le marché.
+            odds_segment, odds_label = _categorise_odds_band(getattr(partant, "odds_pmu", None))
+            odds_bucket = odds_band_breakdown.setdefault(
+                odds_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "odds": [],
+                    "implied_probabilities": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "label": odds_label,
+                },
+            )
+            odds_bucket["truths"].append(is_top3)
+            odds_bucket["predictions"].append(predicted_label)
+            odds_bucket["scores"].append(probability)
+            odds_bucket.setdefault("courses", set()).add(course.course_id)
+            if getattr(partant, "horse_id", None) is not None:
+                odds_bucket.setdefault("horses", set()).add(partant.horse_id)
+
+            raw_odds_value = getattr(partant, "odds_pmu", None)
+            try:
+                odds_value = float(raw_odds_value) if raw_odds_value is not None else None
+            except (TypeError, ValueError):  # pragma: no cover - robustesse en entrée
+                odds_value = None
+
+            if odds_value and odds_value > 0:
+                odds_bucket.setdefault("odds", []).append(odds_value)
+                odds_bucket.setdefault("implied_probabilities", []).append(1.0 / odds_value)
 
             # Cartographie les performances par attribut métier pour identifier
             # rapidement les segments qui décrochent (discipline, surface,
@@ -2680,6 +2785,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
+        odds_band_performance = _summarise_odds_band_performance(odds_band_breakdown)
         horse_age_performance = _summarise_horse_age_performance(
             horse_age_breakdown
         )
@@ -2748,6 +2854,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
+            "odds_band_performance": odds_band_performance,
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
@@ -2762,6 +2869,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "odds_band_performance": odds_band_performance,
         }
 
         confidence_distribution = {
@@ -2806,6 +2914,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "odds_band_performance": odds_band_performance,
         }
 
         active_model = (
@@ -2858,6 +2967,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "horse_age_performance": horse_age_performance,
             "horse_gender_performance": horse_gender_performance,
             "track_type_performance": track_type_performance,
+            "odds_band_performance": odds_band_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,

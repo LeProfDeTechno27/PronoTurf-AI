@@ -581,6 +581,49 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         10000.0, abs=1e-6
     )
 
+    odds_band_performance = metrics["odds_band_performance"]
+    assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
+
+    favorite_segment = odds_band_performance["favorite"]
+    assert favorite_segment["label"] == "Favori (≤4/1)"
+    assert favorite_segment["samples"] == 2
+    assert favorite_segment["courses"] == 1
+    assert favorite_segment["horses"] == 2
+    assert favorite_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert favorite_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["average_odds"] == pytest.approx(3.5, rel=1e-3)
+    assert favorite_segment["average_implied_probability"] == pytest.approx(0.291666, rel=1e-3)
+
+    challenger_segment = odds_band_performance["challenger"]
+    assert challenger_segment["label"] == "Challenger (4-8/1)"
+    assert challenger_segment["samples"] == 3
+    assert challenger_segment["courses"] == 1
+    assert challenger_segment["horses"] == 3
+    assert challenger_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert challenger_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert challenger_segment["average_odds"] == pytest.approx(6.166666, rel=1e-3)
+    assert challenger_segment["min_odds"] == pytest.approx(5.5, rel=1e-3)
+    assert challenger_segment["max_odds"] == pytest.approx(7.0, rel=1e-3)
+    assert challenger_segment["average_implied_probability"] == pytest.approx(0.163780, rel=1e-3)
+
+    outsider_segment = odds_band_performance["outsider"]
+    assert outsider_segment["label"] == "Outsider (8-15/1)"
+    assert outsider_segment["samples"] == 1
+    assert outsider_segment["courses"] == 1
+    assert outsider_segment["horses"] == 1
+    assert outsider_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert outsider_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert outsider_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["average_odds"] == pytest.approx(12.0, rel=1e-3)
+    assert outsider_segment["average_implied_probability"] == pytest.approx(1 / 12, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -744,6 +787,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
+    assert result["odds_band_performance"]["favorite"]["samples"] == 2
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -773,6 +817,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
