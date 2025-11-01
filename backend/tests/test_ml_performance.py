@@ -496,6 +496,38 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surface_performance["sable"]["samples"] == 3
     assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
 
+    prize_money_performance = metrics["prize_money_performance"]
+    assert set(prize_money_performance.keys()) == {"low_prize", "medium_prize"}
+    assert prize_money_performance["low_prize"]["samples"] == 3
+    assert prize_money_performance["low_prize"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert prize_money_performance["low_prize"]["average_prize_eur"] == pytest.approx(
+        8000.0, abs=1e-6
+    )
+    assert prize_money_performance["medium_prize"]["samples"] == 3
+    assert prize_money_performance["medium_prize"]["accuracy"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    assert prize_money_performance["medium_prize"]["average_prize_eur"] == pytest.approx(
+        10000.0, abs=1e-6
+    )
+
+    race_category_performance = metrics["race_category_performance"]
+    assert set(race_category_performance.keys()) == {"classe", "groupe"}
+    assert race_category_performance["groupe"]["samples"] == 3
+    assert race_category_performance["groupe"]["courses"] == 1
+    assert race_category_performance["groupe"]["label"] == "Groupe"
+    assert race_category_performance["classe"]["samples"] == 3
+    assert race_category_performance["classe"]["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    race_class_performance = metrics["race_class_performance"]
+    assert set(race_class_performance.keys()) == {"class_a", "class_b"}
+    assert race_class_performance["class_a"]["label"] == "Classe A"
+    assert race_class_performance["class_a"]["courses"] == 1
+    assert race_class_performance["class_b"]["samples"] == 3
+    assert race_class_performance["class_b"]["observed_positive_rate"] == pytest.approx(
+        2 / 3, rel=1e-3
+    )
+
     start_type_performance = metrics["start_type_performance"]
     assert set(start_type_performance.keys()) == {"autostart", "stalle"}
     assert start_type_performance["stalle"]["samples"] == 3
@@ -595,7 +627,6 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
-
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -622,6 +653,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]

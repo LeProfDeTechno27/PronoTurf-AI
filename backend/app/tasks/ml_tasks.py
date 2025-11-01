@@ -1195,6 +1195,29 @@ def _categorise_field_size(field_size: Optional[int]) -> str:
     return "large_field"
 
 
+def _categorise_prize_money(prize_money: Optional[object]) -> str:
+    """Classe l'allocation financière afin de suivre l'impact du niveau de dotation."""
+
+    if prize_money is None:
+        return "unknown"
+
+    try:
+        value = float(prize_money)
+    except (TypeError, ValueError):  # pragma: no cover - robustesse sur types inattendus
+        return "unknown"
+
+    if value < 10000:
+        return "low_prize"
+
+    if value < 30000:
+        return "medium_prize"
+
+    if value < 70000:
+        return "high_prize"
+
+    return "premium_prize"
+
+
 def _categorise_draw_position(
     draw: Optional[int],
     field_size: Optional[int],
@@ -1251,6 +1274,35 @@ def _categorise_start_type(start_type: Optional[object]) -> str:
         return "manual_start"
 
     return label or "unknown"
+
+
+def _normalise_race_category_label(category: Optional[object]) -> Tuple[str, str]:
+    """Normalise une catégorie de course en identifiant stable et libellé lisible."""
+
+    if not category:
+        return "unknown", "Catégorie inconnue"
+
+    cleaned = str(category).strip()
+    if not cleaned:
+        return "unknown", "Catégorie inconnue"
+
+    identifier = cleaned.lower().replace(" ", "_")
+    return identifier, cleaned
+
+
+def _normalise_race_class_label(race_class: Optional[object]) -> Tuple[str, str]:
+    """Normalise une classe officielle en conservant une étiquette business."""
+
+    if not race_class:
+        return "unknown", "Classe inconnue"
+
+    cleaned = str(race_class).strip()
+    if not cleaned:
+        return "unknown", "Classe inconnue"
+
+    identifier = f"class_{cleaned.lower().replace(' ', '_')}"
+    display = f"Classe {cleaned.upper()}"
+    return identifier, display
 
 
 def _categorise_rest_period(rest_days: Optional[int]) -> str:
@@ -1335,6 +1387,42 @@ def _summarise_field_size_performance(
     return field_metrics
 
 
+def _summarise_prize_money_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Évalue la robustesse du modèle selon la dotation financière des courses."""
+
+    if not breakdown:
+        return {}
+
+    prize_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        prize_amounts = [
+            float(value)
+            for value in payload.get("prize_amounts", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["average_prize_eur"] = _safe_average(prize_amounts)
+        summary["min_prize_eur"] = min(prize_amounts) if prize_amounts else None
+        summary["max_prize_eur"] = max(prize_amounts) if prize_amounts else None
+
+        prize_metrics[segment] = summary
+
+    return prize_metrics
+
+
 def _summarise_draw_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -1369,6 +1457,36 @@ def _summarise_draw_performance(
         draw_metrics[segment] = summary
 
     return draw_metrics
+
+
+def _summarise_race_profile_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse les performances selon les catégories ou classes officielles."""
+
+    if not breakdown:
+        return {}
+
+    profile_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        label = payload.get("label") or segment
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["label"] = label
+
+        profile_metrics[segment] = summary
+
+    return profile_metrics
 
 
 def _summarise_start_type_performance(
@@ -1512,6 +1630,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
+        prize_money_breakdown: Dict[str, Dict[str, object]] = {}
+        race_category_breakdown: Dict[str, Dict[str, object]] = {}
+        race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
         draw_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1653,6 +1774,67 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             surface_bucket["predictions"].append(predicted_label)
             surface_bucket["scores"].append(probability)
             surface_bucket.setdefault("courses", set()).add(course.course_id)
+
+            prize_segment = _categorise_prize_money(
+                getattr(course, "prize_money", None)
+            )
+            prize_bucket = prize_money_breakdown.setdefault(
+                prize_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "prize_amounts": [],
+                },
+            )
+            prize_bucket["truths"].append(is_top3)
+            prize_bucket["predictions"].append(predicted_label)
+            prize_bucket["scores"].append(probability)
+            courses_seen = prize_bucket.setdefault("courses", set())
+            is_new_prize_course = course.course_id not in courses_seen
+            courses_seen.add(course.course_id)
+            prize_value = getattr(course, "prize_money", None)
+            if prize_value is not None and is_new_prize_course:
+                prize_bucket.setdefault("prize_amounts", []).append(float(prize_value))
+
+            category_key, category_label = _normalise_race_category_label(
+                getattr(course, "race_category", None)
+            )
+            category_bucket = race_category_breakdown.setdefault(
+                category_key,
+                {
+                    "label": category_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                },
+            )
+            category_bucket["label"] = category_label
+            category_bucket["truths"].append(is_top3)
+            category_bucket["predictions"].append(predicted_label)
+            category_bucket["scores"].append(probability)
+            category_bucket.setdefault("courses", set()).add(course.course_id)
+
+            class_key, class_label = _normalise_race_class_label(
+                getattr(course, "race_class", None)
+            )
+            class_bucket = race_class_breakdown.setdefault(
+                class_key,
+                {
+                    "label": class_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                },
+            )
+            class_bucket["label"] = class_label
+            class_bucket["truths"].append(is_top3)
+            class_bucket["predictions"].append(predicted_label)
+            class_bucket["scores"].append(probability)
+            class_bucket.setdefault("courses", set()).add(course.course_id)
 
             value_bet_label = "value_bet" if pronostic.value_bet_detected else "standard"
             value_bet_bucket = value_bet_breakdown.setdefault(
@@ -1983,9 +2165,18 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
+        prize_money_performance = _summarise_prize_money_performance(
+            prize_money_breakdown
+        )
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
+        race_category_performance = _summarise_race_profile_performance(
+            race_category_breakdown
+        )
+        race_class_performance = _summarise_race_profile_performance(
+            race_class_breakdown
+        )
         start_type_performance = _summarise_start_type_performance(start_type_breakdown)
         rest_period_performance = _summarise_rest_period_performance(
             rest_period_breakdown
@@ -2035,6 +2226,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "prize_money_performance": prize_money_performance,
+            "race_category_performance": race_category_performance,
+            "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
@@ -2071,6 +2265,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "prize_money_performance": prize_money_performance,
+            "race_category_performance": race_category_performance,
+            "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
@@ -2126,6 +2323,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "daily_performance": daily_performance,
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
+            "prize_money_performance": prize_money_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,
