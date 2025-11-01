@@ -1213,6 +1213,87 @@ def _summarise_hippodrome_performance(
     return leaderboard
 
 
+def _normalise_country_label(country: Optional[object]) -> Tuple[str, str]:
+    """Normalise un champ ``country`` pour garantir des regroupements cohérents."""
+
+    if country is None:
+        return "unknown", "Pays inconnu"
+
+    raw_value = str(country).strip()
+
+    if not raw_value:
+        return "unknown", "Pays inconnu"
+
+    iso_mapping = {
+        "FR": "France",
+        "FRA": "France",
+        "BE": "Belgique",
+        "BEL": "Belgique",
+        "CH": "Suisse",
+        "CHE": "Suisse",
+        "GB": "Royaume-Uni",
+        "UK": "Royaume-Uni",
+        "GBR": "Royaume-Uni",
+        "IE": "Irlande",
+        "IRL": "Irlande",
+        "ES": "Espagne",
+        "ESP": "Espagne",
+        "IT": "Italie",
+        "ITA": "Italie",
+    }
+
+    upper_value = raw_value.upper()
+    label = iso_mapping.get(upper_value, raw_value)
+
+    slug_source = upper_value if len(upper_value) <= 3 else raw_value.lower()
+    slug = "".join(char if char.isalnum() else "_" for char in slug_source).strip("_")
+
+    if not slug:
+        slug = "unknown"
+
+    return slug.lower(), label
+
+
+def _summarise_country_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble un tableau de bord des performances agrégées par pays."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    country_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        hippodromes: Set[int] = set(payload.get("hippodromes", set()))
+        cities: Set[str] = set(payload.get("cities", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (
+            summary["samples"] / total_samples if total_samples else None
+        )
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["hippodromes"] = len(hippodromes)
+        if cities:
+            summary["cities"] = sorted(cities)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        country_metrics[segment] = summary
+
+    return country_metrics
+
+
 def _normalise_track_type_label(track_type: Optional[object]) -> Tuple[str, str]:
     """Normalise le type de piste pour alimenter les tableaux de bord."""
 
@@ -2790,6 +2871,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
         hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
+        country_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -3556,6 +3638,39 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
                 venue_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
 
+            country_key, country_label = _normalise_country_label(
+                getattr(hippodrome_entity, "country", None)
+            )
+            country_bucket = country_breakdown.setdefault(
+                country_key,
+                {
+                    "label": country_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "hippodromes": set(),
+                    "cities": set(),
+                },
+            )
+            country_bucket["label"] = country_label
+            country_bucket["truths"].append(is_top3)
+            country_bucket["predictions"].append(predicted_label)
+            country_bucket["scores"].append(probability)
+            country_bucket.setdefault("courses", set()).add(course.course_id)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                country_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
+            if hippodrome_id is not None:
+                country_bucket.setdefault("hippodromes", set()).add(int(hippodrome_id))
+            city_value = (
+                getattr(hippodrome_entity, "city", None)
+                if hippodrome_entity is not None
+                else None
+            )
+            if city_value:
+                country_bucket.setdefault("cities", set()).add(str(city_value))
+
             track_type_bucket = track_type_breakdown.setdefault(
                 track_type_key,
                 {
@@ -3809,6 +3924,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         trainer_performance = _summarise_actor_performance(trainer_breakdown)
         hippodrome_performance = _summarise_hippodrome_performance(hippodrome_breakdown)
         track_type_performance = _summarise_track_type_performance(track_type_breakdown)
+        country_performance = _summarise_country_performance(country_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -3874,6 +3990,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "country_performance": country_performance,
         }
 
         confidence_distribution = {
@@ -3927,6 +4044,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "country_performance": country_performance,
             "odds_band_performance": odds_band_performance,
         }
 
@@ -3996,6 +4114,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "hippodrome_performance": hippodrome_performance,
+            "country_performance": country_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,
