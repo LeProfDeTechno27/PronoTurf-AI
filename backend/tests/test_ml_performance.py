@@ -501,6 +501,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert evening_metrics["earliest_post_time"] == "20:30"
     assert evening_metrics["latest_post_time"] == "20:30"
 
+    hippodrome_performance = metrics["hippodrome_performance"]
+    assert len(hippodrome_performance) == 1
+    venue_entry = hippodrome_performance[0]
+    assert venue_entry["label"] == "Hippodrome Test"
+    assert venue_entry["samples"] == 6
+    assert venue_entry["courses"] == 2
+    assert venue_entry["reunions"] == 1
+    assert venue_entry["horses"] == 6
+    assert venue_entry["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+
     discipline_performance = metrics["discipline_performance"]
     assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
     assert discipline_performance["plat"]["samples"] == 3
@@ -698,6 +708,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
+    assert result["hippodrome_performance"][0]["label"] == "Hippodrome Test"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
@@ -728,6 +739,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]

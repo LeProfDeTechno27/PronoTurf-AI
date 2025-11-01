@@ -1166,6 +1166,52 @@ def _summarise_actor_performance(
     return filtered[:top_n] if filtered else leaderboard[:top_n]
 
 
+def _summarise_hippodrome_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> List[Dict[str, Any]]:
+    """Mesure la fiabilité du modèle hippodrome par hippodrome."""
+
+    if not breakdown:
+        return []
+
+    leaderboard: List[Dict[str, Any]] = []
+
+    for identifier, payload in breakdown.items():
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        label = payload.get("label") or identifier
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "identifier": identifier,
+                "label": label,
+                "samples": len(truths),
+                "courses": len(courses),
+                "reunions": len(reunions),
+                "horses": len(horses),
+                "observed_positive_rate": (sum(truths) / len(truths)) if truths else None,
+            }
+        )
+
+        leaderboard.append(summary)
+
+    leaderboard.sort(
+        key=lambda item: (
+            -item["samples"],
+            -((item.get("f1") or 0.0)),
+            -((item.get("precision") or 0.0)),
+            item.get("label"),
+        )
+    )
+
+    return leaderboard
+
+
 def _categorise_course_distance(distance: Optional[int]) -> str:
     """Classe les distances officielles en familles d'effort comparables."""
 
@@ -1892,6 +1938,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
+        hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -2306,6 +2353,53 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             trainer_bucket.setdefault("courses", set()).add(course.course_id)
             trainer_bucket.setdefault("horses", set()).add(partant.horse_id)
 
+            # Enfin, on garde une vue géographique afin de repérer les hippodromes
+            # où le modèle excelle ou se dégrade. Cette information aide à prioriser
+            # les analyses locales (qualité des données, biais spécifiques, météo...).
+            reunion_entity = getattr(course, "reunion", None)
+            hippodrome_entity = (
+                getattr(reunion_entity, "hippodrome", None) if reunion_entity else None
+            )
+            hippodrome_id = None
+            venue_key = "unknown"
+            venue_label = "Hippodrome inconnu"
+
+            if hippodrome_entity is not None:
+                hippodrome_id = getattr(hippodrome_entity, "hippodrome_id", None)
+                hippodrome_code = getattr(hippodrome_entity, "code", None)
+                venue_key = hippodrome_code or (
+                    f"hippodrome_{hippodrome_id}" if hippodrome_id else "unknown"
+                )
+                venue_label = getattr(hippodrome_entity, "name", None) or venue_key
+            elif reunion_entity is not None:
+                hippodrome_id = getattr(reunion_entity, "hippodrome_id", None)
+                venue_key = f"hippodrome_{hippodrome_id}" if hippodrome_id else "unknown"
+                venue_label = (
+                    f"Hippodrome #{hippodrome_id}" if hippodrome_id else "Hippodrome inconnu"
+                )
+
+            venue_bucket = hippodrome_breakdown.setdefault(
+                venue_key,
+                {
+                    "label": venue_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "horses": set(),
+                },
+            )
+            venue_bucket["label"] = venue_label
+            venue_bucket["truths"].append(is_top3)
+            venue_bucket["predictions"].append(predicted_label)
+            venue_bucket["scores"].append(probability)
+            venue_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                venue_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                venue_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
+
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
             generation_day = (
@@ -2518,6 +2612,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         )
         jockey_performance = _summarise_actor_performance(jockey_breakdown)
         trainer_performance = _summarise_actor_performance(trainer_breakdown)
+        hippodrome_performance = _summarise_hippodrome_performance(hippodrome_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -2571,6 +2666,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "hippodrome_performance": hippodrome_performance,
         }
 
         confidence_distribution = {
@@ -2613,6 +2709,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "model_version_performance": model_version_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "hippodrome_performance": hippodrome_performance,
         }
 
         active_model = (
@@ -2669,6 +2766,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
+            "hippodrome_performance": hippodrome_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,
