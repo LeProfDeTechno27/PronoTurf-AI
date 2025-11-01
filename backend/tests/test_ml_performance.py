@@ -470,6 +470,31 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert level_metrics["low"]["precision"] == pytest.approx(0.0, abs=1e-6)
     assert level_metrics["low"]["positive_rate"] == pytest.approx(0.0, abs=1e-6)
 
+    confidence_score_performance = metrics["confidence_score_performance"]
+    assert set(confidence_score_performance.keys()) == {"low", "medium"}
+
+    medium_confidence = confidence_score_performance["medium"]
+    assert medium_confidence["label"] == "Confiance moyenne (50-70%)"
+    assert medium_confidence["samples"] == 3
+    assert medium_confidence["courses"] == 1
+    assert medium_confidence["share"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_confidence["average_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["min_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["max_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert medium_confidence["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    low_confidence = confidence_score_performance["low"]
+    assert low_confidence["label"] == "Confiance faible (30-50%)"
+    assert low_confidence["samples"] == 3
+    assert low_confidence["courses"] == 1
+    assert low_confidence["share"] == pytest.approx(0.5, rel=1e-3)
+    assert low_confidence["average_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["min_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["max_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert low_confidence["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+
     daily_performance = metrics["daily_performance"]
     assert len(daily_performance) == 2
 
@@ -995,6 +1020,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
+    assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -1005,6 +1031,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
+        assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
@@ -1019,6 +1046,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
         assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
