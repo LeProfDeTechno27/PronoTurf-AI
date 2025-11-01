@@ -15,7 +15,7 @@ PronoTurf est une plateforme moderne qui combine :
 
 ## Avancement du projet
 
-- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit la ventilation des performances par catégorie officielle (Groupe/Classe) et par classe réglementaire (Classe A/B/...) en complément du suivi numéro de corde et mode de départ afin d'évaluer la robustesse du modèle sur les scénarios les plus huppés.
+- 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit la vue `horse_age_performance` pour comparer la précision selon la maturité des chevaux (jeunes pousses, pleine force de l'âge, vétérans) en complément des tableaux par catégorie officielle, dotation, numéro de corde et mode de départ.
 - 🚧 **Version 1 en préparation** : la V1 n'est pas encore finalisée ; une notification sera partagée dès la clôture de l'ensemble des sprints.
 
 ## Nouveautés Analytics Aspiturf
@@ -64,6 +64,7 @@ PronoTurf est une plateforme moderne qui combine :
 - **Analyse par mode de départ** : le tableau `start_type_performance` compare les résultats entre départs mécanisés (stalle, autostart) et départs manuels afin d'identifier un éventuel biais lié au protocole de lancement.
 - **Analyse par catégorie/classe de course** : les tableaux `race_category_performance` et `race_class_performance` mesurent précision, rappel et part de trafic selon le niveau officiel de l'épreuve (Groupe, Classe A/B...). Ils permettent de vérifier que le modèle reste performant lors des courses les plus relevées.
 - **Analyse par dotation** : la vue `prize_money_performance` segmente les performances selon la prime totale mise en jeu (petits lots, courses intermédiaires, grands prix). Elle révèle si le modèle conserve la même fiabilité lorsqu'il passe de meetings régionaux à des épreuves premium fortement dotées.
+- **Analyse par âge du cheval** : le tableau `horse_age_performance` regroupe les résultats par classes d'âge (jeunes ≤3 ans, chevaux en pleine force 4-5 ans, expérimentés 6-8 ans, vétérans 9 ans et +, cas inconnus). Il révèle si le modèle se comporte différemment selon la maturité des partants et indique le nombre de chevaux distincts par segment pour appuyer l'analyse métier.
 
 ## Technologies
 

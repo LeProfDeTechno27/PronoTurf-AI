@@ -1218,6 +1218,73 @@ def _categorise_prize_money(prize_money: Optional[object]) -> str:
     return "premium_prize"
 
 
+def _resolve_horse_age(
+    partant: object,
+    course: Course,
+    pronostic: Pronostic,
+) -> Optional[int]:
+    """Calcule l'âge du cheval au moment de la course ou ``None`` si inconnu."""
+
+    horse = getattr(partant, "horse", None)
+    if horse is None:
+        return None
+
+    explicit_age = getattr(partant, "horse_age", None)
+    if explicit_age is not None:
+        try:
+            value = int(explicit_age)
+        except (TypeError, ValueError):  # pragma: no cover - garde-fou sur données erratiques
+            return None
+        return value if value >= 0 else None
+
+    birth_year = getattr(horse, "birth_year", None)
+    if birth_year:
+        try:
+            reference_year: Optional[int] = None
+            reunion = getattr(course, "reunion", None)
+            if reunion and getattr(reunion, "reunion_date", None):
+                reference_year = reunion.reunion_date.year
+            elif getattr(pronostic, "generated_at", None):
+                reference_year = pronostic.generated_at.year
+            else:
+                reference_year = date.today().year
+
+            age = int(reference_year) - int(birth_year)
+        except (TypeError, ValueError):  # pragma: no cover - tolérance sur types inattendus
+            return None
+
+        return age if age >= 0 else None
+
+    computed_age = getattr(horse, "age", None)
+    if computed_age is None:
+        return None
+
+    try:
+        value = int(computed_age)
+    except (TypeError, ValueError):  # pragma: no cover - dernières sécurités
+        return None
+
+    return value if value >= 0 else None
+
+
+def _categorise_horse_age(age: Optional[int]) -> str:
+    """Regroupe les âges des chevaux pour analyser la maturité qui performe."""
+
+    if age is None or age <= 0:
+        return "unknown"
+
+    if age <= 3:
+        return "juvenile"
+
+    if age <= 5:
+        return "prime"
+
+    if age <= 8:
+        return "experienced"
+
+    return "senior"
+
+
 def _categorise_draw_position(
     draw: Optional[int],
     field_size: Optional[int],
@@ -1421,6 +1488,40 @@ def _summarise_prize_money_performance(
         prize_metrics[segment] = summary
 
     return prize_metrics
+
+
+def _summarise_horse_age_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la stabilité des prédictions selon la maturité des chevaux."""
+
+    if not breakdown:
+        return {}
+
+    age_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        ages = [int(value) for value in payload.get("ages", []) if value is not None]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["average_age"] = _safe_average(ages)
+        summary["min_age"] = min(ages) if ages else None
+        summary["max_age"] = max(ages) if ages else None
+
+        age_metrics[segment] = summary
+
+    return age_metrics
 
 
 def _summarise_draw_performance(
@@ -1631,6 +1732,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
+        horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1797,6 +1899,28 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             prize_value = getattr(course, "prize_money", None)
             if prize_value is not None and is_new_prize_course:
                 prize_bucket.setdefault("prize_amounts", []).append(float(prize_value))
+
+            horse_age = _resolve_horse_age(partant, course, pronostic)
+            age_segment = _categorise_horse_age(horse_age)
+            age_bucket = horse_age_breakdown.setdefault(
+                age_segment,
+                {
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "ages": [],
+                },
+            )
+            age_bucket["truths"].append(is_top3)
+            age_bucket["predictions"].append(predicted_label)
+            age_bucket["scores"].append(probability)
+            age_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                age_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if horse_age is not None:
+                age_bucket.setdefault("ages", []).append(int(horse_age))
 
             category_key, category_label = _normalise_race_category_label(
                 getattr(course, "race_category", None)
@@ -2168,6 +2292,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
+        horse_age_performance = _summarise_horse_age_performance(
+            horse_age_breakdown
+        )
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
@@ -2227,6 +2354,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
+            "horse_age_performance": horse_age_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -2266,6 +2394,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
+            "horse_age_performance": horse_age_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -2324,6 +2453,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,
+            "horse_age_performance": horse_age_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,

@@ -89,12 +89,13 @@ def _seed_reference_data(db: Session) -> None:
     db.add_all([trainer, jockey])
     db.flush()
 
+    current_year = date.today().year
     horses = [
-        Horse(name="Cheval A", gender=Gender.MALE),
-        Horse(name="Cheval B", gender=Gender.FEMALE),
-        Horse(name="Cheval C", gender=Gender.MALE),
-        Horse(name="Cheval D", gender=Gender.MALE),
-        Horse(name="Cheval E", gender=Gender.FEMALE),
+        Horse(name="Cheval A", gender=Gender.MALE, birth_year=current_year - 4),
+        Horse(name="Cheval B", gender=Gender.FEMALE, birth_year=current_year - 3),
+        Horse(name="Cheval C", gender=Gender.MALE, birth_year=current_year - 5),
+        Horse(name="Cheval D", gender=Gender.MALE, birth_year=current_year - 7),
+        Horse(name="Cheval E", gender=Gender.FEMALE, birth_year=current_year - 9),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
     db.add_all(horses)
@@ -511,6 +512,28 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         10000.0, abs=1e-6
     )
 
+    horse_age_performance = metrics["horse_age_performance"]
+    assert set(horse_age_performance.keys()) == {
+        "experienced",
+        "juvenile",
+        "prime",
+        "senior",
+        "unknown",
+    }
+    assert horse_age_performance["prime"]["samples"] == 2
+    assert horse_age_performance["prime"]["courses"] == 1
+    assert horse_age_performance["prime"]["horses"] == 2
+    assert horse_age_performance["prime"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_age_performance["prime"]["average_age"] == pytest.approx(4.5, rel=1e-3)
+    assert horse_age_performance["juvenile"]["samples"] == 1
+    assert horse_age_performance["juvenile"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_age_performance["experienced"]["samples"] == 1
+    assert horse_age_performance["experienced"]["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert horse_age_performance["senior"]["samples"] == 1
+    assert horse_age_performance["senior"]["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert horse_age_performance["unknown"]["samples"] == 1
+    assert horse_age_performance["unknown"]["average_age"] is None
+
     race_category_performance = metrics["race_category_performance"]
     assert set(race_category_performance.keys()) == {"classe", "groupe"}
     assert race_category_performance["groupe"]["samples"] == 3
@@ -627,6 +650,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
+    assert result["horse_age_performance"]["prime"]["samples"] == 2
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -654,6 +678,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
