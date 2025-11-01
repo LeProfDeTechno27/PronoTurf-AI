@@ -843,6 +843,32 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surface_performance["sable"]["samples"] == 3
     assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
 
+    discipline_surface_performance = metrics["discipline_surface_performance"]
+    assert set(discipline_surface_performance.keys()) == {
+        "plat__pelouse",
+        "trot_attele__sable",
+    }
+
+    plat_pelouse_segment = discipline_surface_performance["plat__pelouse"]
+    assert plat_pelouse_segment["label"] == "Plat · Pelouse"
+    assert plat_pelouse_segment["discipline"] == "plat"
+    assert plat_pelouse_segment["surface"] == "pelouse"
+    assert plat_pelouse_segment["samples"] == 3
+    assert plat_pelouse_segment["courses"] == 1
+    assert plat_pelouse_segment["reunions"] == 1
+    assert plat_pelouse_segment["average_distance"] == pytest.approx(1400.0, abs=1e-6)
+    assert plat_pelouse_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    trot_sable_segment = discipline_surface_performance["trot_attele__sable"]
+    assert trot_sable_segment["label"] == "Trot Attele · Sable"
+    assert trot_sable_segment["discipline"] == "trot_attele"
+    assert trot_sable_segment["surface"] == "sable"
+    assert trot_sable_segment["samples"] == 3
+    assert trot_sable_segment["courses"] == 1
+    assert trot_sable_segment["reunions"] == 1
+    assert trot_sable_segment["average_distance"] == pytest.approx(3000.0, abs=1e-6)
+    assert trot_sable_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
     weather_performance = metrics["weather_performance"]
     assert set(weather_performance.keys()) == {"clear", "rain"}
     assert weather_performance["clear"]["label"] == "Conditions claires"
@@ -1373,6 +1399,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert set(result["city_performance"].keys()) == {"paris", "mons"}
     assert result["city_performance"]["paris"]["countries"] == ["France"]
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
+    assert set(result["discipline_surface_performance"].keys()) == {
+        "plat__pelouse",
+        "trot_attele__sable",
+    }
+    assert result["discipline_surface_performance"]["plat__pelouse"]["average_distance"] == pytest.approx(
+        1400.0, abs=1e-6
+    )
+    assert result["discipline_surface_performance"]["trot_attele__sable"]["average_distance"] == pytest.approx(
+        3000.0, abs=1e-6
+    )
     assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
@@ -1489,6 +1525,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "discipline_surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weather_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -1083,6 +1083,49 @@ def _summarise_segment_performance(
     return segment_metrics
 
 
+def _summarise_discipline_surface_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse les combinaisons discipline/surface pour détecter les biais croisés."""
+
+    if not breakdown:
+        return {}
+
+    combined_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for identifier in sorted(breakdown.keys()):
+        payload = breakdown[identifier]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        distances = [
+            float(value)
+            for value in payload.get("distances", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label") or identifier,
+                "discipline": payload.get("discipline"),
+                "surface": payload.get("surface"),
+                "courses": len(courses),
+                "reunions": len(reunions),
+                "average_distance": _safe_average(distances),
+                "min_distance": min(distances) if distances else None,
+                "max_distance": max(distances) if distances else None,
+                "observed_positive_rate": (sum(truths) / len(truths)) if truths else None,
+            }
+        )
+
+        combined_metrics[identifier] = summary
+
+    return combined_metrics
+
+
 def _summarise_model_version_performance(
     breakdown: Dict[str, Dict[str, object]],
     total_samples: int,
@@ -3437,6 +3480,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_score_breakdown: Dict[str, Dict[str, object]] = {}
         win_probability_breakdown: Dict[str, Dict[str, object]] = {}
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
+        discipline_surface_breakdown: Dict[str, Dict[str, object]] = {}
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
@@ -3487,6 +3531,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             probability = max(0.0, min(probability, 1.0))
             is_top3 = 1 if partant.final_position and partant.final_position <= 3 else 0
             predicted_label = 1 if probability >= probability_threshold else 0
+
+            reunion_entity = getattr(course, "reunion", None)
 
             y_true.append(is_top3)
             y_scores.append(probability)
@@ -3903,10 +3949,6 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             distance_bucket["predictions"].append(predicted_label)
             distance_bucket["scores"].append(probability)
             distance_bucket.setdefault("courses", set()).add(course.course_id)
-            course_distance = getattr(course, "distance", None)
-            if course_distance:
-                distance_bucket.setdefault("distances", []).append(int(course_distance))
-
             surface_label = (
                 course.surface_type.value
                 if getattr(course, "surface_type", None)
@@ -3920,6 +3962,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             surface_bucket["predictions"].append(predicted_label)
             surface_bucket["scores"].append(probability)
             surface_bucket.setdefault("courses", set()).add(course.course_id)
+
+            discipline_surface_key = f"{discipline_label}__{surface_label}"
+            discipline_surface_bucket = discipline_surface_breakdown.setdefault(
+                discipline_surface_key,
+                {
+                    "discipline": discipline_label,
+                    "surface": surface_label,
+                    "label": f"{discipline_label.replace('_', ' ').title()} · {surface_label.replace('_', ' ').title()}",
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "distances": [],
+                },
+            )
+            discipline_surface_bucket["truths"].append(is_top3)
+            discipline_surface_bucket["predictions"].append(predicted_label)
+            discipline_surface_bucket["scores"].append(probability)
+            discipline_surface_bucket.setdefault("courses", set()).add(course.course_id)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                discipline_surface_bucket.setdefault("reunions", set()).add(
+                    reunion_entity.reunion_id
+                )
+
+            course_distance = getattr(course, "distance", None)
+            if course_distance:
+                distance_bucket.setdefault("distances", []).append(int(course_distance))
+                discipline_surface_bucket.setdefault("distances", []).append(
+                    int(course_distance)
+                )
 
             prize_segment = _categorise_prize_money(
                 getattr(course, "prize_money", None)
@@ -4774,6 +4847,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         discipline_performance = _summarise_segment_performance(discipline_breakdown)
         distance_performance = _summarise_distance_performance(distance_breakdown)
         surface_performance = _summarise_segment_performance(surface_breakdown)
+        discipline_surface_performance = _summarise_discipline_surface_performance(
+            discipline_surface_breakdown
+        )
         weather_performance = _summarise_weather_performance(weather_breakdown)
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
@@ -4874,6 +4950,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
@@ -4938,6 +5015,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_performance": discipline_performance,
             "distance_performance": distance_performance,
             "surface_performance": surface_performance,
+            "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,
@@ -5020,6 +5098,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "race_order_performance": race_order_performance,
             "reunion_number_performance": reunion_number_performance,
             "distance_performance": distance_performance,
+            "discipline_surface_performance": discipline_surface_performance,
             "draw_performance": draw_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
