@@ -691,6 +691,27 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert belgium_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
     assert belgium_metrics["cities"] == ["Mons"]
 
+    city_performance = metrics["city_performance"]
+    assert set(city_performance.keys()) == {"paris", "mons"}
+
+    paris_metrics = city_performance["paris"]
+    assert paris_metrics["label"] == "Paris"
+    assert paris_metrics["samples"] == 3
+    assert paris_metrics["courses"] == 1
+    assert paris_metrics["reunions"] == 1
+    assert paris_metrics["hippodromes"] == 1
+    assert paris_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert paris_metrics["countries"] == ["France"]
+
+    mons_metrics = city_performance["mons"]
+    assert mons_metrics["label"] == "Mons"
+    assert mons_metrics["samples"] == 3
+    assert mons_metrics["courses"] == 1
+    assert mons_metrics["reunions"] == 1
+    assert mons_metrics["hippodromes"] == 1
+    assert mons_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert mons_metrics["countries"] == ["Belgique"]
+
     discipline_performance = metrics["discipline_performance"]
     assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
     assert discipline_performance["plat"]["samples"] == 3
@@ -1113,6 +1134,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
     assert set(result["country_performance"].keys()) == {"belgique", "france"}
     assert result["country_performance"]["france"]["cities"] == ["Paris"]
+    assert set(result["city_performance"].keys()) == {"paris", "mons"}
+    assert result["city_performance"]["paris"]["countries"] == ["France"]
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
     assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
@@ -1218,6 +1241,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "country_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "city_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_order_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -1213,6 +1213,27 @@ def _summarise_hippodrome_performance(
     return leaderboard
 
 
+def _normalise_city_label(city: Optional[object]) -> Tuple[str, str]:
+    """Normalise une ville d'hippodrome pour stabiliser les tableaux de bord."""
+
+    if city is None:
+        return "unknown", "Ville inconnue"
+
+    raw_value = str(city).strip()
+
+    if not raw_value:
+        return "unknown", "Ville inconnue"
+
+    # On génère un slug simple afin de garantir des clés déterministes.
+    slug = "".join(char if char.isalnum() else "_" for char in raw_value)
+    slug = slug.strip("_").lower() or "unknown"
+
+    # Pour l'affichage on capitalise chaque mot afin de conserver les accents.
+    label = " ".join(word.capitalize() for word in raw_value.split()) or raw_value
+
+    return slug, label
+
+
 def _normalise_country_label(country: Optional[object]) -> Tuple[str, str]:
     """Normalise un champ ``country`` pour garantir des regroupements cohérents."""
 
@@ -1292,6 +1313,44 @@ def _summarise_country_performance(
         country_metrics[segment] = summary
 
     return country_metrics
+
+
+def _summarise_city_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Construit une synthèse des performances du modèle par ville."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    city_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        hippodromes: Set[int] = set(payload.get("hippodromes", set()))
+        countries: Set[str] = set(payload.get("countries", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["hippodromes"] = len(hippodromes)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        if countries:
+            summary["countries"] = sorted(countries)
+
+        city_metrics[segment] = summary
+
+    return city_metrics
 
 
 def _normalise_track_type_label(track_type: Optional[object]) -> Tuple[str, str]:
@@ -2872,6 +2931,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
         hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
         country_breakdown: Dict[str, Dict[str, object]] = {}
+        city_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -3671,6 +3731,32 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if city_value:
                 country_bucket.setdefault("cities", set()).add(str(city_value))
 
+            city_key, city_label = _normalise_city_label(city_value)
+            city_bucket = city_breakdown.setdefault(
+                city_key,
+                {
+                    "label": city_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "hippodromes": set(),
+                    "countries": set(),
+                },
+            )
+            city_bucket["label"] = city_label
+            city_bucket["truths"].append(is_top3)
+            city_bucket["predictions"].append(predicted_label)
+            city_bucket["scores"].append(probability)
+            city_bucket.setdefault("courses", set()).add(course.course_id)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                city_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
+            if hippodrome_id is not None:
+                city_bucket.setdefault("hippodromes", set()).add(int(hippodrome_id))
+            if country_label:
+                city_bucket.setdefault("countries", set()).add(country_label)
+
             track_type_bucket = track_type_breakdown.setdefault(
                 track_type_key,
                 {
@@ -3925,6 +4011,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         hippodrome_performance = _summarise_hippodrome_performance(hippodrome_breakdown)
         track_type_performance = _summarise_track_type_performance(track_type_breakdown)
         country_performance = _summarise_country_performance(country_breakdown)
+        city_performance = _summarise_city_performance(city_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -3991,6 +4078,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
             "country_performance": country_performance,
+            "city_performance": city_performance,
         }
 
         confidence_distribution = {
@@ -4045,6 +4133,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
             "country_performance": country_performance,
+            "city_performance": city_performance,
             "odds_band_performance": odds_band_performance,
         }
 
@@ -4107,6 +4196,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "horse_gender_performance": horse_gender_performance,
             "recent_form_performance": recent_form_performance,
             "track_type_performance": track_type_performance,
+            "city_performance": city_performance,
             "odds_band_performance": odds_band_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
