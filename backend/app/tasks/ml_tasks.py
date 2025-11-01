@@ -15,6 +15,7 @@ from app.core.database import SessionLocal
 from app.ml.predictor import RacePredictionService
 from app.ml.training import ModelTrainer
 from app.models.course import Course, CourseStatus, StartType
+from app.models.horse import Gender
 from app.models.reunion import Reunion
 from app.models.pronostic import Pronostic
 from app.models.partant_prediction import PartantPrediction
@@ -1490,6 +1491,75 @@ def _summarise_prize_money_performance(
     return prize_metrics
 
 
+def _categorise_horse_gender(gender: Optional[object]) -> Tuple[str, str]:
+    """Normalise le genre du cheval pour faciliter l'agrégation."""
+
+    if gender is None:
+        return "unknown", "Genre inconnu"
+
+    if isinstance(gender, Gender):
+        normalized = gender.value
+    else:
+        normalized = str(gender).strip().lower()
+
+    if not normalized:
+        return "unknown", "Genre inconnu"
+
+    normalized = (
+        normalized.replace("â", "a")
+        .replace("à", "a")
+        .replace("é", "e")
+        .replace("è", "e")
+    )
+
+    mapping = {
+        "male": ("male", "Mâle"),
+        "femelle": ("female", "Femelle"),
+        "female": ("female", "Femelle"),
+        "hongre": ("hongre", "Hongre"),
+    }
+
+    if normalized in mapping:
+        return mapping[normalized]
+
+    return "unknown", "Genre inconnu"
+
+
+def _summarise_horse_gender_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la qualité prédictive selon le genre déclaré des chevaux."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    gender_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["label"] = payload.get("label", segment.title())
+        summary["share"] = (
+            summary["samples"] / total_samples if total_samples else None
+        )
+
+        gender_metrics[segment] = summary
+
+    return gender_metrics
+
+
 def _summarise_horse_age_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -1733,6 +1803,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
+        horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
@@ -1921,6 +1992,29 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 age_bucket.setdefault("horses", set()).add(partant.horse_id)
             if horse_age is not None:
                 age_bucket.setdefault("ages", []).append(int(horse_age))
+
+            horse_entity = getattr(partant, "horse", None)
+            gender_key, gender_label = _categorise_horse_gender(
+                getattr(horse_entity, "gender", None)
+            )
+            gender_bucket = horse_gender_breakdown.setdefault(
+                gender_key,
+                {
+                    "label": gender_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                },
+            )
+            gender_bucket["label"] = gender_label
+            gender_bucket["truths"].append(is_top3)
+            gender_bucket["predictions"].append(predicted_label)
+            gender_bucket["scores"].append(probability)
+            gender_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                gender_bucket.setdefault("horses", set()).add(partant.horse_id)
 
             category_key, category_label = _normalise_race_category_label(
                 getattr(course, "race_category", None)
@@ -2295,6 +2389,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_age_performance = _summarise_horse_age_performance(
             horse_age_breakdown
         )
+        horse_gender_performance = _summarise_horse_gender_performance(
+            horse_gender_breakdown
+        )
         value_bet_performance = _summarise_segment_performance(value_bet_breakdown)
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
@@ -2355,6 +2452,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
             "horse_age_performance": horse_age_performance,
+            "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -2395,6 +2493,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "prize_money_performance": prize_money_performance,
             "horse_age_performance": horse_age_performance,
+            "horse_gender_performance": horse_gender_performance,
             "race_category_performance": race_category_performance,
             "race_class_performance": race_class_performance,
             "value_bet_performance": value_bet_performance,
@@ -2454,6 +2553,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "draw_performance": draw_performance,
             "prize_money_performance": prize_money_performance,
             "horse_age_performance": horse_age_performance,
+            "horse_gender_performance": horse_gender_performance,
             "model_version_breakdown": dict(model_versions),
             "model_version_performance": model_version_performance,
             "rest_period_performance": rest_period_performance,

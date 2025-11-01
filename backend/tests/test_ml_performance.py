@@ -534,6 +534,25 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert horse_age_performance["unknown"]["samples"] == 1
     assert horse_age_performance["unknown"]["average_age"] is None
 
+    horse_gender_performance = metrics["horse_gender_performance"]
+    assert set(horse_gender_performance.keys()) == {"female", "male"}
+    assert horse_gender_performance["male"]["label"] == "Mâle"
+    assert horse_gender_performance["male"]["samples"] == 4
+    assert horse_gender_performance["male"]["horses"] == 4
+    assert horse_gender_performance["male"]["courses"] == 2
+    assert horse_gender_performance["male"]["accuracy"] == pytest.approx(0.75, rel=1e-3)
+    assert horse_gender_performance["male"]["recall"] == pytest.approx(2 / 3, rel=1e-3)
+    assert horse_gender_performance["male"]["observed_positive_rate"] == pytest.approx(3 / 4, rel=1e-3)
+    assert horse_gender_performance["male"]["share"] == pytest.approx(4 / 6, rel=1e-3)
+    assert horse_gender_performance["female"]["label"] == "Femelle"
+    assert horse_gender_performance["female"]["samples"] == 2
+    assert horse_gender_performance["female"]["horses"] == 2
+    assert horse_gender_performance["female"]["courses"] == 2
+    assert horse_gender_performance["female"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert horse_gender_performance["female"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_gender_performance["female"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert horse_gender_performance["female"]["share"] == pytest.approx(2 / 6, rel=1e-3)
+
     race_category_performance = metrics["race_category_performance"]
     assert set(race_category_performance.keys()) == {"classe", "groupe"}
     assert race_category_performance["groupe"]["samples"] == 3
@@ -651,6 +670,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["trainer_performance"][0]["label"] == "Anne Durand"
     assert result["horse_age_performance"]["prime"]["samples"] == 2
+    assert result["horse_gender_performance"]["male"]["samples"] == 4
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -679,6 +699,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
