@@ -528,16 +528,29 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert set(level_metrics.keys()) == {"high", "low", "medium"}
 
     assert level_metrics["high"]["samples"] == 1
+    assert level_metrics["high"]["label"] == "Confiance élevée"
     assert level_metrics["high"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
     assert level_metrics["high"]["positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert level_metrics["high"]["courses"] == 1
+    assert level_metrics["high"]["pronostics"] == 1
 
     assert level_metrics["medium"]["samples"] == 3
     assert level_metrics["medium"]["precision"] == pytest.approx(2 / 3, rel=1e-3)
     assert level_metrics["medium"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["medium"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert level_metrics["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert level_metrics["medium"]["courses"] == 2
+    assert level_metrics["medium"]["pronostics"] == 2
 
     assert level_metrics["low"]["samples"] == 2
     assert level_metrics["low"]["precision"] == pytest.approx(0.0, abs=1e-6)
     assert level_metrics["low"]["positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert level_metrics["low"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert level_metrics["low"]["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert level_metrics["low"]["courses"] == 2
+    assert level_metrics["low"]["pronostics"] == 2
 
     confidence_score_performance = metrics["confidence_score_performance"]
     assert set(confidence_score_performance.keys()) == {"low", "medium"}
@@ -1644,6 +1657,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "lead_time_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
+        stored_confidence_levels = stored_metrics["last_evaluation"]["confidence_level_metrics"]
+        assert stored_confidence_levels["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]

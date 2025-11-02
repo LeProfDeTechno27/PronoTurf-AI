@@ -1003,6 +1003,57 @@ def _summarise_group_performance(
     return summary
 
 
+def _describe_prediction_confidence_level(level: str) -> str:
+    """Retourne un libellé lisible pour un niveau de confiance brut."""
+
+    mapping = {
+        "high": "Confiance élevée",
+        "medium": "Confiance moyenne",
+        "low": "Confiance faible",
+        "unknown": "Confiance inconnue",
+    }
+    return mapping.get(level, f"Confiance {level}")
+
+
+def _summarise_prediction_confidence_performance(
+    breakdown: Dict[str, Dict[str, object]],
+    total_samples: int,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Dresse un panorama complet des performances par niveau de confiance."""
+
+    if not breakdown:
+        return {}
+
+    confidence_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for level in sorted(breakdown.keys()):
+        payload = breakdown[level]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        sample_count = len(truths)
+        summary.update(
+            {
+                "label": payload.get("label")
+                or _describe_prediction_confidence_level(level),
+                "share": (sample_count / total_samples) if total_samples else None,
+                "observed_positive_rate": (
+                    sum(truths) / sample_count if sample_count else None
+                ),
+                "courses": len(courses),
+                "pronostics": len(pronostics),
+            }
+        )
+
+        confidence_metrics[level] = summary
+
+    return confidence_metrics
+
+
 def _summarise_daily_performance(
     daily_breakdown: Dict[str, Dict[str, object]]
 ) -> List[Dict[str, Optional[float]]]:
@@ -3926,13 +3977,24 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             y_pred.append(predicted_label)
 
             confidence_counter[prediction.confidence_level or "unknown"] += 1
+            confidence_level = prediction.confidence_level or "unknown"
             level_bucket = confidence_breakdown.setdefault(
-                prediction.confidence_level or "unknown",
-                {"truths": [], "predictions": [], "scores": []},
+                confidence_level,
+                {
+                    "label": _describe_prediction_confidence_level(confidence_level),
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "pronostics": set(),
+                },
             )
+            level_bucket["label"] = _describe_prediction_confidence_level(confidence_level)
             level_bucket["truths"].append(is_top3)
             level_bucket["predictions"].append(predicted_label)
             level_bucket["scores"].append(probability)
+            level_bucket.setdefault("courses", set()).add(course.course_id)
+            level_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
 
             confidence_segment, confidence_label, confidence_value = _categorise_confidence_score(
                 getattr(pronostic, "confidence_score", None)
@@ -5374,14 +5436,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         # Consolide un tableau de bord par niveau de confiance afin d'inspecter
         # rapidement la fiabilité réelle de chaque segment (utile pour piloter
         # alertes ou limites d'enjeux par exemple).
-        confidence_level_metrics = {
-            level: _summarise_group_performance(
-                data["truths"],
-                data["predictions"],
-                data["scores"],
-            )
-            for level, data in sorted(confidence_breakdown.items())
-        }
+        confidence_level_metrics = _summarise_prediction_confidence_performance(
+            confidence_breakdown,
+            len(y_true),
+        )
 
         confidence_score_performance = _summarise_confidence_score_performance(
             confidence_score_breakdown
