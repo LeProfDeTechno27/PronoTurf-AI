@@ -1253,6 +1253,34 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert start_delay_performance["heavy_delay"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
     assert start_delay_performance["heavy_delay"]["reunions"] == 1
 
+    final_position_performance = metrics["final_position_performance"]
+    assert set(final_position_performance.keys()) == {"winner", "runner_up", "top6"}
+
+    winner_segment = final_position_performance["winner"]
+    assert winner_segment["samples"] == 2
+    assert winner_segment["courses"] == 2
+    assert winner_segment["horses"] == 2
+    assert winner_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert winner_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["average_final_position"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["top3_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    runner_up_segment = final_position_performance["runner_up"]
+    assert runner_up_segment["samples"] == 2
+    assert runner_up_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert runner_up_segment["average_final_position"] == pytest.approx(2.0, rel=1e-3)
+    assert runner_up_segment["top3_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    top6_segment = final_position_performance["top6"]
+    assert top6_segment["samples"] == 2
+    assert top6_segment["courses"] == 2
+    assert top6_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert top6_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert top6_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert top6_segment["best_final_position"] == 4
+    assert top6_segment["worst_final_position"] == 4
+    assert top6_segment["top3_rate"] == pytest.approx(0.0, abs=1e-6)
+
     value_bet_performance = metrics["value_bet_performance"]
     assert set(value_bet_performance.keys()) == {"standard", "value_bet"}
     assert value_bet_performance["value_bet"]["samples"] == 3
@@ -1479,6 +1507,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["owner_jockey_performance"][0]["label"] == "Ecurie Horizon × Leo Martin"
     assert set(result["start_delay_performance"].keys()) == {"heavy_delay", "on_time"}
     assert result["start_delay_performance"]["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
+    assert set(result["final_position_performance"].keys()) == {"winner", "runner_up", "top6"}
+    assert result["final_position_performance"]["winner"]["samples"] == 2
+    assert result["final_position_performance"]["winner"]["average_final_position"] == pytest.approx(1.0, rel=1e-3)
+    assert result["final_position_performance"]["top6"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
     assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
     assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
@@ -1645,6 +1677,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_rank_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "final_position_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -1691,6 +1691,89 @@ def _summarise_prediction_rank_performance(
     return rank_metrics
 
 
+def _categorise_final_position(final_position: Optional[object]) -> Tuple[str, str]:
+    """Range la position d'arrivée observée dans des segments lisibles."""
+
+    if final_position is None:
+        return "unknown", "Position inconnue"
+
+    try:
+        position_value = int(final_position)
+    except (TypeError, ValueError):  # pragma: no cover - tolérance pour formats inattendus
+        return "unknown", "Position inconnue"
+
+    if position_value <= 0:
+        return "unknown", "Position inconnue"
+
+    if position_value == 1:
+        return "winner", "Vainqueur"
+
+    if position_value == 2:
+        return "runner_up", "Deuxième place"
+
+    if position_value == 3:
+        return "third_place", "Troisième place"
+
+    if position_value <= 6:
+        return "top6", "Places 4 à 6"
+
+    if position_value <= 10:
+        return "top10", "Places 7 à 10"
+
+    return "beyond_top10", "Au-delà de la 10e place"
+
+
+def _summarise_final_position_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise les performances réelles selon la position d'arrivée enregistrée."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    position_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = [int(value) for value in payload.get("truths", [])]
+        predicted = [int(value) for value in payload.get("predictions", [])]
+        scores = [float(score) for score in payload.get("scores", [])]
+        raw_positions = [
+            int(position)
+            for position in payload.get("positions", [])
+            if position is not None
+        ]
+        position_values = [float(value) for value in raw_positions]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        sample_count = len(truths)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (sample_count / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        if horses:
+            summary["horses"] = len(horses)
+        summary["observed_positive_rate"] = (
+            sum(truths) / sample_count if sample_count else None
+        )
+        summary["average_final_position"] = (
+            _safe_average(position_values) if position_values else None
+        )
+        summary["best_final_position"] = min(raw_positions) if raw_positions else None
+        summary["worst_final_position"] = max(raw_positions) if raw_positions else None
+        summary["top3_rate"] = (
+            sum(1 for value in raw_positions if value <= 3) / len(raw_positions)
+            if raw_positions
+            else None
+        )
+
+        position_metrics[segment] = summary
+
+    return position_metrics
+
+
 def _categorise_publication_lead_time(
     generated_at: Optional[datetime],
     race_date: Optional[date],
@@ -3824,6 +3907,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_version_breakdown: Dict[str, Dict[str, object]] = {}
         course_stats: Dict[int, Dict[str, object]] = {}
         prediction_rank_breakdown: Dict[str, Dict[str, object]] = {}
+        final_position_breakdown: Dict[str, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
 
@@ -3939,6 +4023,36 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 getattr(course, "number_of_runners", None)
                 or len(course_entry["predictions"])
             )
+
+            # Ventile les observations selon la position d'arrivée réelle pour
+            # identifier les segments (gagnant, podium, au-delà) où le modèle
+            # réussit ou échoue le plus fréquemment.
+            if getattr(partant, "final_position", None) is not None:
+                final_segment, final_label = _categorise_final_position(
+                    partant.final_position
+                )
+                final_bucket = final_position_breakdown.setdefault(
+                    final_segment,
+                    {
+                        "label": final_label,
+                        "truths": [],
+                        "predictions": [],
+                        "scores": [],
+                        "positions": [],
+                        "courses": set(),
+                        "horses": set(),
+                    },
+                )
+                final_bucket["label"] = final_label
+                final_bucket.setdefault("truths", []).append(is_top3)
+                final_bucket.setdefault("predictions", []).append(predicted_label)
+                final_bucket.setdefault("scores", []).append(probability)
+                final_bucket.setdefault("positions", []).append(
+                    int(partant.final_position)
+                )
+                final_bucket.setdefault("courses", set()).add(course.course_id)
+                if getattr(partant, "horse_id", None) is not None:
+                    final_bucket.setdefault("horses", set()).add(partant.horse_id)
 
             # Segmente les performances selon que le pronostic a été marqué
             # comme value bet. Cela permet de suivre si les pronostics mis en
@@ -5342,6 +5456,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prediction_rank_performance = _summarise_prediction_rank_performance(
             prediction_rank_breakdown
         )
+        final_position_performance = _summarise_final_position_performance(
+            final_position_breakdown
+        )
         jockey_performance = _summarise_actor_performance(jockey_breakdown)
         trainer_performance = _summarise_actor_performance(trainer_breakdown)
         jockey_trainer_performance = _summarise_jockey_trainer_performance(
@@ -5429,6 +5546,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "final_position_performance": final_position_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_trainer_performance": jockey_trainer_performance,
@@ -5498,6 +5616,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "final_position_performance": final_position_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_trainer_performance": jockey_trainer_performance,
@@ -5592,6 +5711,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "hippodrome_performance": hippodrome_performance,
             "country_performance": country_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "final_position_performance": final_position_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,
