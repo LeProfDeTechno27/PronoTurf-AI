@@ -90,6 +90,7 @@ def _seed_reference_data(db: Session) -> None:
         reunion_date=today - timedelta(days=1),
         reunion_number=1,
         status=ReunionStatus.COMPLETED,
+        api_source="Turfinfo",
         weather_conditions={"condition": "Ensoleillé", "temperature": 18},
     )
     reunion_evening = Reunion(
@@ -97,6 +98,7 @@ def _seed_reference_data(db: Session) -> None:
         reunion_date=today,
         reunion_number=4,
         status=ReunionStatus.COMPLETED,
+        api_source="PMU_API",
         weather_conditions={"condition": "Pluie battante", "temperature": 9},
     )
     db.add_all([reunion, reunion_evening])
@@ -834,6 +836,29 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert mons_metrics["share"] == pytest.approx(0.5, rel=1e-3)
     assert mons_metrics["countries"] == ["Belgique"]
 
+    api_source_performance = metrics["api_source_performance"]
+    assert set(api_source_performance.keys()) == {"pmu_api", "turfinfo"}
+
+    turfinfo_metrics = api_source_performance["turfinfo"]
+    assert turfinfo_metrics["label"] == "Turfinfo"
+    assert turfinfo_metrics["samples"] == 3
+    assert turfinfo_metrics["courses"] == 1
+    assert turfinfo_metrics["reunions"] == 1
+    assert turfinfo_metrics["pronostics"] == 1
+    assert turfinfo_metrics["hippodromes"] == 1
+    assert turfinfo_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert turfinfo_metrics["model_versions"] == ["v1.0"]
+
+    pmu_metrics = api_source_performance["pmu_api"]
+    assert pmu_metrics["label"] == "PMU_API"
+    assert pmu_metrics["samples"] == 3
+    assert pmu_metrics["courses"] == 1
+    assert pmu_metrics["reunions"] == 1
+    assert pmu_metrics["pronostics"] == 1
+    assert pmu_metrics["hippodromes"] == 1
+    assert pmu_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert pmu_metrics["model_versions"] == ["v2.0"]
+
     discipline_performance = metrics["discipline_performance"]
     assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
     assert discipline_performance["plat"]["samples"] == 3
@@ -1533,6 +1558,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["country_performance"]["france"]["cities"] == ["Paris"]
     assert set(result["city_performance"].keys()) == {"paris", "mons"}
     assert result["city_performance"]["paris"]["countries"] == ["France"]
+    assert set(result["api_source_performance"].keys()) == {"pmu_api", "turfinfo"}
+    assert result["api_source_performance"]["turfinfo"]["label"] == "Turfinfo"
+    assert result["api_source_performance"]["pmu_api"]["pronostics"] == 1
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
     assert set(result["discipline_surface_performance"].keys()) == {
         "plat__pelouse",
@@ -1646,6 +1674,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]

@@ -1650,6 +1650,64 @@ def _summarise_city_performance(
     return city_metrics
 
 
+def _normalise_api_source_label(source: Optional[object]) -> Tuple[str, str]:
+    """Nettoie la source API d'une réunion pour stabiliser les regroupements."""
+
+    if source is None:
+        return "unknown", "Source API inconnue"
+
+    raw_value = str(source).strip()
+    if not raw_value:
+        return "unknown", "Source API inconnue"
+
+    slug = "".join(char if char.isalnum() else "_" for char in raw_value).strip("_")
+    slug = slug.lower() or "unknown"
+
+    return slug, raw_value
+
+
+def _summarise_api_source_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble les performances agrégées par source d'alimentation API."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    api_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = [int(value) for value in payload.get("truths", [])]
+        predicted = [int(value) for value in payload.get("predictions", [])]
+        scores = [float(score) for score in payload.get("scores", [])]
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        hippodromes: Set[int] = set(payload.get("hippodromes", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+        model_versions: Set[str] = set(payload.get("model_versions", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        if hippodromes:
+            summary["hippodromes"] = len(hippodromes)
+        if pronostics:
+            summary["pronostics"] = len(pronostics)
+        if model_versions:
+            summary["model_versions"] = sorted(model_versions)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        api_metrics[segment] = summary
+
+    return api_metrics
+
+
 def _normalise_owner_label(owner: Optional[object]) -> Tuple[str, str]:
     """Normalise un propriétaire pour stabiliser les ventilations dédiées."""
 
@@ -3981,6 +4039,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
         country_breakdown: Dict[str, Dict[str, object]] = {}
         city_breakdown: Dict[str, Dict[str, object]] = {}
+        api_source_breakdown: Dict[str, Dict[str, object]] = {}
         # Prépare une vision par version du modèle afin d'identifier rapidement
         # les régressions potentielles lorsqu'une version minoritaire décroche.
         model_versions: Counter[str] = Counter()
@@ -4000,6 +4059,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             predicted_label = 1 if probability >= probability_threshold else 0
 
             reunion_entity = getattr(course, "reunion", None)
+
+            # Regroupe immédiatement les échantillons par source API afin de
+            # détecter les éventuelles dérives liées à une alimentation
+            # spécifique (Turfinfo, PMU, Aspiturf...).
+            api_key, api_label = _normalise_api_source_label(
+                getattr(reunion_entity, "api_source", None)
+            )
+            api_bucket = api_source_breakdown.setdefault(
+                api_key,
+                {
+                    "label": api_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "hippodromes": set(),
+                    "pronostics": set(),
+                    "model_versions": set(),
+                },
+            )
+            api_bucket["label"] = api_label
+            api_bucket["truths"].append(is_top3)
+            api_bucket["predictions"].append(predicted_label)
+            api_bucket["scores"].append(probability)
+            api_bucket.setdefault("courses", set()).add(course.course_id)
+            api_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            if pronostic.model_version:
+                api_bucket.setdefault("model_versions", set()).add(pronostic.model_version)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                api_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
 
             y_true.append(is_top3)
             y_scores.append(probability)
@@ -5144,6 +5234,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     f"Hippodrome #{hippodrome_id}" if hippodrome_id else "Hippodrome inconnu"
                 )
 
+            if hippodrome_id is not None:
+                api_bucket.setdefault("hippodromes", set()).add(int(hippodrome_id))
+
             venue_bucket = hippodrome_breakdown.setdefault(
                 venue_key,
                 {
@@ -5567,6 +5660,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         track_type_performance = _summarise_track_type_performance(track_type_breakdown)
         country_performance = _summarise_country_performance(country_breakdown)
         city_performance = _summarise_city_performance(city_breakdown)
+        api_source_performance = _summarise_api_source_performance(api_source_breakdown)
 
         metrics = {
             "accuracy": accuracy,
@@ -5650,6 +5744,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "track_type_performance": track_type_performance,
             "country_performance": country_performance,
             "city_performance": city_performance,
+            "api_source_performance": api_source_performance,
         }
 
         confidence_distribution = {
@@ -5720,6 +5815,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "track_type_performance": track_type_performance,
             "country_performance": country_performance,
             "city_performance": city_performance,
+            "api_source_performance": api_source_performance,
             "odds_band_performance": odds_band_performance,
         }
 
@@ -5806,6 +5902,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "country_performance": country_performance,
             "prediction_rank_performance": prediction_rank_performance,
             "final_position_performance": final_position_performance,
+            "api_source_performance": api_source_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),
             "evaluation_timestamp": evaluation_timestamp,
             "model_updated": model_updated,
