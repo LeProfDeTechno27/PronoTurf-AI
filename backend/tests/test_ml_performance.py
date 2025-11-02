@@ -118,30 +118,35 @@ def _seed_reference_data(db: Session) -> None:
             gender=Gender.MALE,
             birth_year=current_year - 4,
             owner="Ecurie Horizon",
+            coat_color="Bai",
         ),
         Horse(
             name="Cheval B",
             gender=Gender.FEMALE,
             birth_year=current_year - 3,
             owner="Ecurie Horizon",
+            coat_color="Alezane",
         ),
         Horse(
             name="Cheval C",
             gender=Gender.MALE,
             birth_year=current_year - 5,
             owner="Ecurie Equinoxe",
+            coat_color="Bai brun",
         ),
         Horse(
             name="Cheval D",
             gender=Gender.MALE,
             birth_year=current_year - 7,
             owner="Ecurie Equinoxe",
+            coat_color="Gris Pommelé",
         ),
         Horse(
             name="Cheval E",
             gender=Gender.FEMALE,
             birth_year=current_year - 9,
             owner="Ecurie Boreale",
+            coat_color="Alezan brûlé",
         ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
@@ -1191,6 +1196,47 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert horse_gender_performance["female"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
     assert horse_gender_performance["female"]["share"] == pytest.approx(2 / 6, rel=1e-3)
 
+    horse_coat_performance = metrics["horse_coat_performance"]
+    assert set(horse_coat_performance.keys()) == {"alezan", "bai", "gris", "unknown"}
+
+    bai_segment = horse_coat_performance["bai"]
+    assert bai_segment["label"] == "Bai"
+    assert bai_segment["samples"] == 2
+    assert bai_segment["courses"] == 1
+    assert bai_segment["horses"] == 2
+    assert bai_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert bai_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert bai_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert bai_segment["input_examples"] == ["Bai", "Bai brun"]
+
+    alezan_segment = horse_coat_performance["alezan"]
+    assert alezan_segment["label"] == "Alezan"
+    assert alezan_segment["samples"] == 2
+    assert alezan_segment["courses"] == 2
+    assert alezan_segment["horses"] == 2
+    assert alezan_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert alezan_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert set(alezan_segment["input_examples"]) == {"Alezan brûlé", "Alezane"}
+
+    gris_segment = horse_coat_performance["gris"]
+    assert gris_segment["label"] == "Gris"
+    assert gris_segment["samples"] == 1
+    assert gris_segment["courses"] == 1
+    assert gris_segment["horses"] == 1
+    assert gris_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert gris_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert gris_segment["input_examples"] == ["Gris Pommelé"]
+
+    unknown_coat_segment = horse_coat_performance["unknown"]
+    assert unknown_coat_segment["label"] == "Robe inconnue"
+    assert unknown_coat_segment["samples"] == 1
+    assert unknown_coat_segment["courses"] == 1
+    assert unknown_coat_segment["horses"] == 1
+    assert unknown_coat_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_coat_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_coat_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert unknown_coat_segment["input_examples"] == []
+
     owner_performance = metrics["owner_performance"]
     assert set(owner_performance.keys()) == {
         "ecurie_boreale",
@@ -1719,6 +1765,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_coat_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
