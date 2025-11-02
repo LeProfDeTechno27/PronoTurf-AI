@@ -3491,6 +3491,88 @@ def _summarise_start_type_performance(
     return start_type_metrics
 
 
+def _compute_start_delay_minutes(
+    scheduled: Optional[time],
+    actual: Optional[time],
+) -> Optional[int]:
+    """Calcule le décalage en minutes entre l'horaire prévu et l'heure réelle."""
+
+    if not scheduled or not actual:
+        return None
+
+    scheduled_dt = datetime.combine(date.today(), scheduled)
+    actual_dt = datetime.combine(date.today(), actual)
+    delta_minutes = int((actual_dt - scheduled_dt).total_seconds() // 60)
+
+    return delta_minutes
+
+
+def _categorise_start_delay(
+    scheduled: Optional[time],
+    actual: Optional[time],
+) -> Tuple[str, str, Optional[int]]:
+    """Regroupe les courses selon le respect des horaires de départ officiels."""
+
+    delay_minutes = _compute_start_delay_minutes(scheduled, actual)
+
+    if delay_minutes is None:
+        return "unknown", "Horaire réel inconnu", None
+
+    if delay_minutes <= -3:
+        return "ahead_of_schedule", "Départ anticipé (≥3 min d'avance)", delay_minutes
+
+    if abs(delay_minutes) <= 5:
+        return "on_time", "Départ ponctuel (±5 min)", delay_minutes
+
+    if delay_minutes <= 15:
+        return "slight_delay", "Retard modéré (6-15 min)", delay_minutes
+
+    return "heavy_delay", "Retard conséquent (>15 min)", delay_minutes
+
+
+def _summarise_start_delay_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise la stabilité du modèle selon la ponctualité des départs."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    delay_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        delay_values = [
+            float(value)
+            for value in payload.get("delays", [])
+            if isinstance(value, (int, float))
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment),
+                "share": (len(truths) / total_samples) if total_samples else None,
+                "courses": len(courses),
+                "reunions": len(reunions),
+                "observed_positive_rate": (sum(truths) / len(truths)) if truths else None,
+                "average_delay_minutes": _safe_average(delay_values),
+                "min_delay_minutes": min(delay_values) if delay_values else None,
+                "max_delay_minutes": max(delay_values) if delay_values else None,
+            }
+        )
+
+        delay_metrics[segment] = summary
+
+    return delay_metrics
+
+
 def _categorise_weather_profile(
     weather_payload: Optional[object],
 ) -> Tuple[str, str, Optional[float]]:
@@ -3726,6 +3808,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         draw_breakdown: Dict[str, Dict[str, object]] = {}
         draw_parity_breakdown: Dict[str, Dict[str, object]] = {}
         start_type_breakdown: Dict[str, Dict[str, object]] = {}
+        start_delay_breakdown: Dict[str, Dict[str, object]] = {}
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4537,6 +4620,32 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             start_bucket["scores"].append(probability)
             start_bucket.setdefault("courses", set()).add(course.course_id)
 
+            delay_segment, delay_label, delay_minutes = _categorise_start_delay(
+                getattr(course, "scheduled_time", None),
+                getattr(course, "actual_start_time", None),
+            )
+            delay_bucket = start_delay_breakdown.setdefault(
+                delay_segment,
+                {
+                    "label": delay_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "delays": [],
+                },
+            )
+            delay_bucket["label"] = delay_label
+            delay_bucket["truths"].append(is_top3)
+            delay_bucket["predictions"].append(predicted_label)
+            delay_bucket["scores"].append(probability)
+            delay_bucket.setdefault("courses", set()).add(course.course_id)
+            if getattr(reunion_entity, "reunion_id", None) is not None:
+                delay_bucket.setdefault("reunions", set()).add(reunion_entity.reunion_id)
+            if delay_minutes is not None:
+                delay_bucket.setdefault("delays", []).append(delay_minutes)
+
             rest_segment = _categorise_rest_period(
                 getattr(partant, "days_since_last_race", None)
             )
@@ -5221,6 +5330,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         race_class_performance = _summarise_race_profile_performance(
             race_class_breakdown
         )
+        start_delay_performance = _summarise_start_delay_performance(start_delay_breakdown)
         start_type_performance = _summarise_start_type_performance(start_type_breakdown)
         rest_period_performance = _summarise_rest_period_performance(
             rest_period_breakdown
@@ -5314,6 +5424,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
             "draw_parity_performance": draw_parity_performance,
+            "start_delay_performance": start_delay_performance,
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
@@ -5382,6 +5493,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
             "draw_parity_performance": draw_parity_performance,
+            "start_delay_performance": start_delay_performance,
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
@@ -5453,6 +5565,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_surface_performance": discipline_surface_performance,
             "draw_performance": draw_performance,
             "draw_parity_performance": draw_parity_performance,
+            "start_delay_performance": start_delay_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,

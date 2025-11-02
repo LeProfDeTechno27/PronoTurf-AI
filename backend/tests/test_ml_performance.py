@@ -158,6 +158,7 @@ def _seed_reference_data(db: Session) -> None:
         surface_type=SurfaceType.PELOUSE,
         start_type=StartType.STALLE,
         scheduled_time=time(14, 0),
+        actual_start_time=time(14, 3),
         status=CourseStatus.FINISHED,
         number_of_runners=8,
     )
@@ -173,6 +174,7 @@ def _seed_reference_data(db: Session) -> None:
         surface_type=SurfaceType.SABLE,
         start_type=StartType.AUTOSTART,
         scheduled_time=time(20, 30),
+        actual_start_time=time(20, 55),
         status=CourseStatus.FINISHED,
         number_of_runners=14,
     )
@@ -1242,6 +1244,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert start_type_performance["autostart"]["precision"] == pytest.approx(0.5, rel=1e-3)
     assert start_type_performance["autostart"]["courses"] == 1
 
+    start_delay_performance = metrics["start_delay_performance"]
+    assert set(start_delay_performance.keys()) == {"heavy_delay", "on_time"}
+    assert start_delay_performance["on_time"]["samples"] == 3
+    assert start_delay_performance["on_time"]["average_delay_minutes"] == pytest.approx(3.0, rel=1e-3)
+    assert start_delay_performance["on_time"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["reunions"] == 1
+
     value_bet_performance = metrics["value_bet_performance"]
     assert set(value_bet_performance.keys()) == {"standard", "value_bet"}
     assert value_bet_performance["value_bet"]["samples"] == 3
@@ -1466,6 +1477,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
     assert result["owner_trainer_performance"][0]["label"] == "Ecurie Horizon × Anne Durand"
     assert result["owner_jockey_performance"][0]["label"] == "Ecurie Horizon × Leo Martin"
+    assert set(result["start_delay_performance"].keys()) == {"heavy_delay", "on_time"}
+    assert result["start_delay_performance"]["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
     assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
     assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
@@ -1558,6 +1571,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
 
     assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
+    assert result["start_delay_performance"]["on_time"]["samples"] == 3
+    assert result["start_delay_performance"]["on_time"]["average_delay_minutes"] == pytest.approx(3.0, rel=1e-3)
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
@@ -1625,6 +1640,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "draw_parity_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "start_delay_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "start_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
