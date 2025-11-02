@@ -1190,6 +1190,19 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
     assert unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    owner_trainer_leaderboard = metrics["owner_trainer_performance"]
+    assert len(owner_trainer_leaderboard) == 1
+    top_owner_trainer = owner_trainer_leaderboard[0]
+    assert top_owner_trainer["label"] == "Ecurie Horizon × Anne Durand"
+    assert top_owner_trainer["samples"] == 2
+    assert top_owner_trainer["courses"] == 1
+    assert top_owner_trainer["horses"] == 2
+    assert top_owner_trainer["owners"] == 1
+    assert top_owner_trainer["trainers"] == 1
+    assert top_owner_trainer["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert top_owner_trainer["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert top_owner_trainer["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
     race_category_performance = metrics["race_category_performance"]
     assert set(race_category_performance.keys()) == {"classe", "groupe"}
     assert race_category_performance["groupe"]["samples"] == 3
@@ -1422,6 +1435,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["trainer_performance"][1]["label"] == "Marc Dupont"
     assert result["jockey_trainer_performance"][0]["label"] == "Leo Martin × Anne Durand"
     assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
+    assert result["owner_trainer_performance"][0]["label"] == "Ecurie Horizon × Anne Durand"
     assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
     assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
@@ -1538,6 +1552,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
