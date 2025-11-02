@@ -198,6 +198,56 @@ def _compute_matthews_correlation(
     return numerator / denominator
 
 
+def _compute_binary_classification_insights(
+    true_negative: int,
+    false_positive: int,
+    false_negative: int,
+    true_positive: int,
+) -> Dict[str, Optional[float]]:
+    """Dérive des métriques complémentaires pour équilibrer le diagnostic binaire.
+
+    En plus du rappel (déjà exposé via ``recall``), les opérateurs ont besoin d'une
+    visibilité sur la capacité du modèle à filtrer correctement les faux positifs
+    et à confirmer les prédictions négatives. Cette fonction calcule donc la
+    spécificité (taux de vrais négatifs), le taux de faux positifs, la valeur
+    prédictive négative ainsi que la balanced accuracy qui combine rappel et
+    spécificité. Tous les calculs gèrent explicitement les cas dégénérés pour
+    éviter les divisions par zéro.
+    """
+
+    total_negatives = true_negative + false_positive
+    total_predicted_negative = true_negative + false_negative
+    total_actual_positive = true_positive + false_negative
+
+    specificity = (
+        true_negative / total_negatives if total_negatives > 0 else None
+    )
+    false_positive_rate = (
+        false_positive / total_negatives if total_negatives > 0 else None
+    )
+    negative_predictive_value = (
+        true_negative / total_predicted_negative
+        if total_predicted_negative > 0
+        else None
+    )
+    sensitivity = (
+        true_positive / total_actual_positive if total_actual_positive > 0 else None
+    )
+
+    balanced_accuracy = (
+        (specificity + sensitivity) / 2
+        if specificity is not None and sensitivity is not None
+        else None
+    )
+
+    return {
+        "specificity": specificity,
+        "false_positive_rate": false_positive_rate,
+        "negative_predictive_value": negative_predictive_value,
+        "balanced_accuracy": balanced_accuracy,
+    }
+
+
 def _build_calibration_table(
     scores: List[float],
     truths: List[int],
@@ -5447,6 +5497,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         tn, fp = cm[0][0], cm[0][1]
         fn, tp = cm[1][0], cm[1][1]
         matthews_correlation = _compute_matthews_correlation(tn, fp, fn, tp)
+        classification_insights = _compute_binary_classification_insights(tn, fp, fn, tp)
 
         positives = sum(y_pred)
         negatives = len(y_pred) - positives
@@ -5677,6 +5728,12 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 "true_positive": cm[1][1],
             },
             "matthews_correlation": matthews_correlation,
+            "specificity": classification_insights["specificity"],
+            "false_positive_rate": classification_insights["false_positive_rate"],
+            "negative_predictive_value": classification_insights[
+                "negative_predictive_value"
+            ],
+            "balanced_accuracy": classification_insights["balanced_accuracy"],
             "positive_prediction_rate": positives / len(y_pred) if y_pred else 0.0,
             "average_positive_probability": avg_positive_prob,
             "average_negative_probability": avg_negative_prob,

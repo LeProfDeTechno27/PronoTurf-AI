@@ -368,6 +368,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["roc_auc"] == pytest.approx(0.625, rel=1e-3)
     assert metrics["brier_score"] == pytest.approx(0.31, rel=1e-2)
     assert metrics["matthews_correlation"] == pytest.approx(0.25, rel=1e-3)
+    assert metrics["specificity"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
     assert metrics["top1_accuracy"] == pytest.approx(0.5, rel=1e-3)
     assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
 
@@ -1665,6 +1669,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
         assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["matthews_correlation"] == pytest.approx(0.25, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["specificity"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
