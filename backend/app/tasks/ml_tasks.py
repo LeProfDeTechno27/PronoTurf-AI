@@ -169,6 +169,35 @@ def _safe_average(values: List[float]) -> Optional[float]:
     return sum(values) / len(values) if values else None
 
 
+def _compute_matthews_correlation(
+    true_negative: int,
+    false_positive: int,
+    false_negative: int,
+    true_positive: int,
+) -> Optional[float]:
+    """Calcule le coefficient de corrélation de Matthews en gérant les cas dégénérés.
+
+    Cet indicateur fournit une mesure équilibrée de la qualité de la classification
+    binaire en tenant compte simultanément de la précision sur les classes positives
+    et négatives. Lorsque l'un des termes du dénominateur est nul (aucun positif ou
+    négatif prédit/observé), le score n'est pas défini et nous retournons ``None``
+    pour éviter une division par zéro.
+    """
+
+    denominator = sqrt(
+        (true_positive + false_positive)
+        * (true_positive + false_negative)
+        * (true_negative + false_positive)
+        * (true_negative + false_negative)
+    )
+
+    if denominator == 0:
+        return None
+
+    numerator = (true_positive * true_negative) - (false_positive * false_negative)
+    return numerator / denominator
+
+
 def _build_calibration_table(
     scores: List[float],
     truths: List[int],
@@ -5320,6 +5349,12 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         if confusion_matrix:
             cm = confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist()
 
+        # Convertit la matrice de confusion en compte explicite (TN, FP, FN, TP)
+        # pour calculer un coefficient de corrélation équilibré.
+        tn, fp = cm[0][0], cm[0][1]
+        fn, tp = cm[1][0], cm[1][1]
+        matthews_correlation = _compute_matthews_correlation(tn, fp, fn, tp)
+
         positives = sum(y_pred)
         negatives = len(y_pred) - positives
 
@@ -5547,6 +5582,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 "false_negative": cm[1][0],
                 "true_positive": cm[1][1],
             },
+            "matthews_correlation": matthews_correlation,
             "positive_prediction_rate": positives / len(y_pred) if y_pred else 0.0,
             "average_positive_probability": avg_positive_prob,
             "average_negative_probability": avg_negative_prob,
