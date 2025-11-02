@@ -675,6 +675,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert sum(entry["samples"] for entry in month_performance.values()) == 6
     assert str(date.today().year) in month_performance[current_month_key]["label"]
 
+    quarter_performance = metrics["quarter_performance"]
+    current_quarter_index = ((date.today().month - 1) // 3) + 1
+    current_quarter_key = f"{date.today().year:04d}-Q{current_quarter_index}"
+    assert current_quarter_key in quarter_performance
+    current_quarter_metrics = quarter_performance[current_quarter_key]
+    assert current_quarter_metrics["samples"] == 6
+    assert current_quarter_metrics["reunions"] >= 1
+    assert current_quarter_metrics["share"] == pytest.approx(1.0, rel=1e-3)
+    assert current_quarter_metrics["label"] == f"T{current_quarter_index} {date.today().year}"
+    assert current_quarter_metrics["dates"][0].startswith(str(date.today().year))
+    assert sum(entry["samples"] for entry in quarter_performance.values()) == 6
+
     race_order_performance = metrics["race_order_performance"]
     assert set(race_order_performance.keys()) == {"early_card", "late_card"}
 
@@ -1660,6 +1672,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
     assert date.today().strftime("%Y-%m") in result["month_performance"]
+    current_quarter_index = ((date.today().month - 1) // 3) + 1
+    current_quarter_key = f"{date.today().year:04d}-Q{current_quarter_index}"
+    assert current_quarter_key in result["quarter_performance"]
+    assert result["quarter_performance"][current_quarter_key]["label"] == f"T{current_quarter_index} {date.today().year}"
     assert result["horse_age_performance"]["prime"]["samples"] == 2
     assert result["horse_gender_performance"]["male"]["samples"] == 4
     assert result["recent_form_performance"]["recent_winner"]["label"] == "Gagnant récent"
@@ -1787,6 +1803,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         stored_confidence_levels = stored_metrics["last_evaluation"]["confidence_level_metrics"]
         assert stored_confidence_levels["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "quarter_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]

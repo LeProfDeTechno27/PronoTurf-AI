@@ -3166,6 +3166,70 @@ def _summarise_month_performance(
     return month_metrics
 
 
+def _categorise_quarter(
+    race_date: Optional[object],
+) -> Tuple[str, str, Optional[int], Optional[int]]:
+    """Identifie le trimestre civil auquel rattacher la réunion évaluée."""
+
+    if isinstance(race_date, datetime):
+        race_date = race_date.date()
+
+    if not isinstance(race_date, date):
+        return "unknown", "Trimestre inconnu", None, None
+
+    quarter_index = ((race_date.month - 1) // 3) + 1
+    year = race_date.year
+    segment = f"{year:04d}-Q{quarter_index}"
+    label = f"T{quarter_index} {year}"
+
+    return segment, label, quarter_index, year
+
+
+def _summarise_quarter_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue des performances agrégées par trimestre civil."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+
+    def _sort_key(item: Tuple[str, Dict[str, object]]) -> Tuple[int, int, str]:
+        payload = item[1]
+        year = payload.get("year")
+        quarter_index = payload.get("quarter_index")
+        return (
+            int(year) if isinstance(year, int) else 9999,
+            int(quarter_index) if isinstance(quarter_index, int) else 5,
+            item[0],
+        )
+
+    quarter_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(breakdown.items(), key=_sort_key):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        dates: Set[str] = set(payload.get("dates", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = sum(truths) / len(truths) if truths else None
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["quarter_index"] = payload.get("quarter_index")
+        summary["year"] = payload.get("year")
+        summary["dates"] = sorted(dates)
+
+        quarter_metrics[segment] = summary
+
+    return quarter_metrics
+
+
 def _categorise_weekday(
     race_date: Optional[object],
 ) -> Tuple[str, str, Optional[int]]:
@@ -4304,6 +4368,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
         reunion_number_breakdown: Dict[str, Dict[str, object]] = {}
         month_breakdown: Dict[str, Dict[str, object]] = {}
+        quarter_breakdown: Dict[str, Dict[str, object]] = {}
         lead_time_breakdown: Dict[str, Dict[str, object]] = {}
         race_order_breakdown: Dict[str, Dict[str, object]] = {}
         track_type_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4667,6 +4732,39 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if isinstance(race_date, date):
                 month_bucket.setdefault("dates", set()).add(race_date.isoformat())
+
+            # Aggrège également par trimestre civil afin de disposer d'une
+            # vision synthétique des meetings saisonniers (hiver, printemps,
+            # été, automne). Cela permet aux analystes de repérer rapidement
+            # les périodes où le modèle décroche, sans attendre la fin d'un
+            # mois complet.
+            quarter_segment, quarter_label, quarter_index, quarter_year = _categorise_quarter(
+                race_date
+            )
+            quarter_bucket = quarter_breakdown.setdefault(
+                quarter_segment,
+                {
+                    "label": quarter_label,
+                    "quarter_index": quarter_index,
+                    "year": quarter_year,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "dates": set(),
+                },
+            )
+            quarter_bucket["label"] = quarter_label
+            quarter_bucket["truths"].append(is_top3)
+            quarter_bucket["predictions"].append(predicted_label)
+            quarter_bucket["scores"].append(probability)
+            quarter_bucket.setdefault("courses", set()).add(course.course_id)
+            quarter_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if isinstance(race_date, date):
+                quarter_bucket.setdefault("dates", set()).add(race_date.isoformat())
 
             # Regroupe les performances par numéro de réunion (R1, R2, etc.)
             # afin de vérifier si les matinales, les réunions de journée ou les
@@ -5928,6 +6026,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
         lead_time_performance = _summarise_lead_time_performance(lead_time_breakdown)
         month_performance = _summarise_month_performance(month_breakdown)
+        quarter_performance = _summarise_quarter_performance(quarter_breakdown)
         weekday_performance = _summarise_weekday_performance(weekday_breakdown)
         race_order_performance = _summarise_race_order_performance(race_order_breakdown)
         reunion_number_performance = _summarise_reunion_number_performance(
@@ -6061,6 +6160,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
+            "quarter_performance": quarter_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "reunion_number_performance": reunion_number_performance,
@@ -6135,6 +6235,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
+            "quarter_performance": quarter_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "reunion_number_performance": reunion_number_performance,
@@ -6229,6 +6330,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
             "month_performance": month_performance,
+            "quarter_performance": quarter_performance,
             "weekday_performance": weekday_performance,
             "race_order_performance": race_order_performance,
             "reunion_number_performance": reunion_number_performance,
