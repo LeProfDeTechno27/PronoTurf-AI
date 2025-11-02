@@ -1203,6 +1203,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert top_owner_trainer["precision"] == pytest.approx(1.0, rel=1e-3)
     assert top_owner_trainer["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    owner_jockey_leaderboard = metrics["owner_jockey_performance"]
+    assert len(owner_jockey_leaderboard) == 1
+    top_owner_jockey = owner_jockey_leaderboard[0]
+    assert top_owner_jockey["label"] == "Ecurie Horizon × Leo Martin"
+    assert top_owner_jockey["samples"] == 2
+    assert top_owner_jockey["courses"] == 1
+    assert top_owner_jockey["horses"] == 2
+    assert top_owner_jockey["owners"] == 1
+    assert top_owner_jockey["jockeys"] == 1
+    assert top_owner_jockey["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert top_owner_jockey["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
     race_category_performance = metrics["race_category_performance"]
     assert set(race_category_performance.keys()) == {"classe", "groupe"}
     assert race_category_performance["groupe"]["samples"] == 3
@@ -1453,6 +1465,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["jockey_trainer_performance"][0]["label"] == "Leo Martin × Anne Durand"
     assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
     assert result["owner_trainer_performance"][0]["label"] == "Ecurie Horizon × Anne Durand"
+    assert result["owner_jockey_performance"][0]["label"] == "Ecurie Horizon × Leo Martin"
     assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
     assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
     hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
@@ -1570,6 +1583,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
