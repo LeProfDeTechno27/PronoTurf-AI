@@ -968,6 +968,25 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         10000.0, abs=1e-6
     )
 
+    prize_per_runner_performance = metrics["prize_per_runner_performance"]
+    assert set(prize_per_runner_performance.keys()) == {
+        "per_runner_low",
+        "per_runner_high",
+    }
+    low_segment = prize_per_runner_performance["per_runner_low"]
+    assert low_segment["label"] == "< 600 € par partant"
+    assert low_segment["samples"] == 3
+    assert low_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert low_segment["average_prize_per_runner_eur"] == pytest.approx(8000 / 14, rel=1e-3)
+    assert low_segment["average_field_size"] == pytest.approx(14.0, abs=1e-6)
+
+    high_segment = prize_per_runner_performance["per_runner_high"]
+    assert high_segment["label"] == "1200-2000 € par partant"
+    assert high_segment["samples"] == 3
+    assert high_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert high_segment["average_prize_per_runner_eur"] == pytest.approx(10000 / 8, rel=1e-3)
+    assert high_segment["average_field_size"] == pytest.approx(8.0, abs=1e-6)
+
     handicap_performance = metrics["handicap_performance"]
     assert set(handicap_performance.keys()) == {
         "competitive_handicap",
@@ -1819,6 +1838,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "race_order_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "reunion_number_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prize_per_runner_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]

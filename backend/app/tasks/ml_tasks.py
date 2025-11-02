@@ -2411,6 +2411,42 @@ def _categorise_prize_money(prize_money: Optional[object]) -> str:
     return "premium_prize"
 
 
+def _categorise_prize_per_runner(
+    prize_money: Optional[object],
+    field_size: Optional[object],
+) -> Tuple[str, str, Optional[float], Optional[int]]:
+    """Calcule la dotation moyenne par partant et la segmente pour le reporting."""
+
+    if prize_money is None or field_size in (None, 0):
+        return "unknown", "Dotation/partant inconnue", None, None
+
+    try:
+        prize_value = float(prize_money)
+        field_value = int(field_size)
+    except (TypeError, ValueError):  # pragma: no cover - entrées incohérentes
+        return "unknown", "Dotation/partant inconnue", None, None
+
+    if field_value <= 0:
+        return "unknown", "Dotation/partant inconnue", None, None
+
+    per_runner = prize_value / float(field_value)
+
+    if per_runner < 600:
+        segment = "per_runner_low"
+        label = "< 600 € par partant"
+    elif per_runner < 1200:
+        segment = "per_runner_mid"
+        label = "600-1200 € par partant"
+    elif per_runner < 2000:
+        segment = "per_runner_high"
+        label = "1200-2000 € par partant"
+    else:
+        segment = "per_runner_premium"
+        label = "> 2000 € par partant"
+
+    return segment, label, per_runner, field_value
+
+
 def _categorise_handicap_value(handicap_value: Optional[object]) -> Tuple[str, str]:
     """Regroupe les valeurs de handicap pour analyser l'équité donnée à chaque partant."""
 
@@ -3364,6 +3400,57 @@ def _summarise_prize_money_performance(
         prize_metrics[segment] = summary
 
     return prize_metrics
+
+
+def _summarise_prize_per_runner_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la stabilité du modèle selon la dotation moyenne par partant."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    per_runner_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        per_runner_values = [
+            float(value)
+            for value in payload.get("per_runner_values", [])
+            if value is not None
+        ]
+        field_sizes = [
+            int(value)
+            for value in payload.get("field_sizes", [])
+            if value not in (None, "unknown")
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["average_prize_per_runner_eur"] = _safe_average(per_runner_values)
+        summary["min_prize_per_runner_eur"] = (
+            min(per_runner_values) if per_runner_values else None
+        )
+        summary["max_prize_per_runner_eur"] = (
+            max(per_runner_values) if per_runner_values else None
+        )
+        summary["average_field_size"] = _safe_average(field_sizes)
+        summary["min_field_size"] = min(field_sizes) if field_sizes else None
+        summary["max_field_size"] = max(field_sizes) if field_sizes else None
+
+        per_runner_metrics[segment] = summary
+
+    return per_runner_metrics
 
 
 def _summarise_handicap_performance(
@@ -4351,6 +4438,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         distance_breakdown: Dict[str, Dict[str, object]] = {}
         surface_breakdown: Dict[str, Dict[str, object]] = {}
         prize_money_breakdown: Dict[str, Dict[str, object]] = {}
+        prize_per_runner_breakdown: Dict[str, Dict[str, object]] = {}
         handicap_breakdown: Dict[str, Dict[str, object]] = {}
         weight_breakdown: Dict[str, Dict[str, object]] = {}
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
@@ -5029,6 +5117,34 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             prize_value = getattr(course, "prize_money", None)
             if prize_value is not None and is_new_prize_course:
                 prize_bucket.setdefault("prize_amounts", []).append(float(prize_value))
+
+            per_runner_segment, per_runner_label, per_runner_value, per_runner_field = _categorise_prize_per_runner(
+                getattr(course, "prize_money", None),
+                getattr(course, "number_of_runners", None),
+            )
+            per_runner_bucket = prize_per_runner_breakdown.setdefault(
+                per_runner_segment,
+                {
+                    "label": per_runner_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "per_runner_values": [],
+                    "field_sizes": [],
+                },
+            )
+            per_runner_bucket["label"] = per_runner_label
+            per_runner_bucket["truths"].append(is_top3)
+            per_runner_bucket["predictions"].append(predicted_label)
+            per_runner_bucket["scores"].append(probability)
+            per_runner_courses = per_runner_bucket.setdefault("courses", set())
+            is_new_per_runner_course = course.course_id not in per_runner_courses
+            per_runner_courses.add(course.course_id)
+            if per_runner_value is not None and is_new_per_runner_course:
+                per_runner_bucket.setdefault("per_runner_values", []).append(per_runner_value)
+            if per_runner_field is not None and is_new_per_runner_course:
+                per_runner_bucket.setdefault("field_sizes", []).append(per_runner_field)
 
             handicap_segment, handicap_label = _categorise_handicap_value(
                 getattr(partant, "handicap_value", None)
@@ -6042,6 +6158,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
+        prize_per_runner_performance = _summarise_prize_per_runner_performance(
+            prize_per_runner_breakdown
+        )
         handicap_performance = _summarise_handicap_performance(handicap_breakdown)
         weight_performance = _summarise_weight_performance(weight_breakdown)
         equipment_performance = _summarise_equipment_performance(equipment_breakdown)
@@ -6170,6 +6289,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
+            "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
             "equipment_performance": equipment_performance,
@@ -6245,6 +6365,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
+            "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
             "equipment_performance": equipment_performance,
@@ -6341,6 +6462,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "start_delay_performance": start_delay_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
+            "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,
             "weight_performance": weight_performance,
             "equipment_performance": equipment_performance,
