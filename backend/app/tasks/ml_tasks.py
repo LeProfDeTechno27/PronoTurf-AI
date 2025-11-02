@@ -3333,6 +3333,48 @@ def _summarise_draw_performance(
     return draw_metrics
 
 
+def _categorise_draw_parity(draw_position: Optional[int]) -> Tuple[str, str]:
+    """Classe la corde selon une parité exploitable par le tableau de bord."""
+
+    if draw_position is None:
+        return "unknown", "Numéro de corde inconnu"
+
+    return ("even", "Numéro pair") if draw_position % 2 == 0 else ("odd", "Numéro impair")
+
+
+def _summarise_draw_parity_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise la réussite du modèle selon la parité du numéro de corde."""
+
+    if not breakdown:
+        return {}
+
+    parity_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        draws = [int(value) for value in payload.get("draws", []) if value is not None]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+        summary["courses"] = len(courses)
+        summary["label"] = payload.get("label") or segment
+        summary["average_draw"] = _safe_average(draws)
+        summary["min_draw"] = min(draws) if draws else None
+        summary["max_draw"] = max(draws) if draws else None
+
+        parity_metrics[segment] = summary
+
+    return parity_metrics
+
+
 def _summarise_race_profile_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -3623,6 +3665,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         value_bet_flag_breakdown: Dict[str, Dict[str, object]] = {}
         field_size_breakdown: Dict[str, Dict[str, object]] = {}
         draw_breakdown: Dict[str, Dict[str, object]] = {}
+        draw_parity_breakdown: Dict[str, Dict[str, object]] = {}
         start_type_breakdown: Dict[str, Dict[str, object]] = {}
         rest_period_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4394,6 +4437,28 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if field_size:
                 draw_bucket.setdefault("field_sizes", []).append(int(field_size))
 
+            parity_segment, parity_label = _categorise_draw_parity(
+                int(draw_value) if draw_value is not None else None
+            )
+            parity_bucket = draw_parity_breakdown.setdefault(
+                parity_segment,
+                {
+                    "label": parity_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "draws": [],
+                },
+            )
+            parity_bucket["label"] = parity_label
+            parity_bucket["truths"].append(is_top3)
+            parity_bucket["predictions"].append(predicted_label)
+            parity_bucket["scores"].append(probability)
+            parity_bucket.setdefault("courses", set()).add(course.course_id)
+            if draw_value is not None:
+                parity_bucket.setdefault("draws", []).append(int(draw_value))
+
             # Suivi spécifique des modes de départ (stalle, autostart, volte...)
             # afin d'identifier si le modèle décroche sur un protocole précis.
             start_segment = _categorise_start_type(
@@ -5055,6 +5120,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         )
         field_size_performance = _summarise_field_size_performance(field_size_breakdown)
         draw_performance = _summarise_draw_performance(draw_breakdown)
+        draw_parity_performance = _summarise_draw_parity_performance(
+            draw_parity_breakdown
+        )
         race_category_performance = _summarise_race_profile_performance(
             race_category_breakdown
         )
@@ -5152,6 +5220,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "value_bet_flag_performance": value_bet_flag_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
+            "draw_parity_performance": draw_parity_performance,
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
@@ -5218,6 +5287,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "value_bet_flag_performance": value_bet_flag_performance,
             "field_size_performance": field_size_performance,
             "draw_performance": draw_performance,
+            "draw_parity_performance": draw_parity_performance,
             "start_type_performance": start_type_performance,
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
@@ -5288,6 +5358,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "distance_performance": distance_performance,
             "discipline_surface_performance": discipline_surface_performance,
             "draw_performance": draw_performance,
+            "draw_parity_performance": draw_parity_performance,
             "weather_performance": weather_performance,
             "prize_money_performance": prize_money_performance,
             "handicap_performance": handicap_performance,

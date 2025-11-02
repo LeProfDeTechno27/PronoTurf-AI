@@ -1283,6 +1283,23 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert draw_performance["outside"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
     assert draw_performance["outside"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
 
+    draw_parity_performance = metrics["draw_parity_performance"]
+    assert set(draw_parity_performance.keys()) == {"even", "odd"}
+
+    odd_segment = draw_parity_performance["odd"]
+    assert odd_segment["label"] == "Numéro impair"
+    assert odd_segment["samples"] == 3
+    assert odd_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert odd_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert odd_segment["average_draw"] == pytest.approx((1 + 5 + 13) / 3, rel=1e-3)
+
+    even_segment = draw_parity_performance["even"]
+    assert even_segment["label"] == "Numéro pair"
+    assert even_segment["samples"] == 3
+    assert even_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert even_segment["observed_positive_rate"] == pytest.approx(1 / 3, rel=1e-3)
+    assert even_segment["average_draw"] == pytest.approx((2 + 8 + 8) / 3, rel=1e-3)
+
     rest_period_performance = metrics["rest_period_performance"]
     assert set(rest_period_performance.keys()) == {
         "extended_break",
@@ -1593,6 +1610,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "draw_parity_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "start_type_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
