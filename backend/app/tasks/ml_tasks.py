@@ -1040,6 +1040,144 @@ def _summarise_betting_value(
     }
 
 
+def _compute_probability_edge(
+    predicted_probability: Optional[object],
+    market_odds: Optional[object],
+) -> Optional[float]:
+    """Calcule l'écart entre la probabilité du modèle et l'implicite du marché."""
+
+    if predicted_probability is None:
+        return None
+
+    try:
+        model_probability = float(predicted_probability)
+    except (TypeError, ValueError):
+        return None
+
+    if model_probability < 0.0 or model_probability > 1.0:
+        model_probability = max(0.0, min(model_probability, 1.0))
+
+    try:
+        odds_value = float(market_odds) if market_odds is not None else None
+    except (TypeError, ValueError):
+        odds_value = None
+
+    if odds_value is None or odds_value <= 1.0:
+        return None
+
+    implied_probability = 1.0 / odds_value
+    return model_probability - implied_probability
+
+
+def _categorise_probability_edge(
+    edge_value: Optional[float],
+) -> Tuple[str, str]:
+    """Regroupe l'écart modèle/marché en segments interprétables."""
+
+    if edge_value is None:
+        return "unknown_edge", "Écart de probabilité inconnu"
+
+    if edge_value >= 0.18:
+        return "strong_positive_edge", "Écart très favorable (≥ 18 pts)"
+
+    if edge_value >= 0.08:
+        return "positive_edge", "Écart favorable (8-18 pts)"
+
+    if edge_value >= 0.03:
+        return "slight_positive_edge", "Écart légèrement favorable (3-8 pts)"
+
+    if edge_value <= -0.10:
+        return "strong_negative_edge", "Écart très défavorable (≤ -10 pts)"
+
+    if edge_value <= -0.04:
+        return "negative_edge", "Écart défavorable (-10 à -4 pts)"
+
+    return "neutral_edge", "Écart neutre (-4 à +3 pts)"
+
+
+def _summarise_probability_edge_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la réussite par tranche d'écart avec les cotes publiques."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    edge_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    order_priority = {
+        "strong_positive_edge": 0,
+        "positive_edge": 1,
+        "slight_positive_edge": 2,
+        "neutral_edge": 3,
+        "negative_edge": 4,
+        "strong_negative_edge": 5,
+        "unknown_edge": 6,
+    }
+
+    for segment, payload in sorted(
+        breakdown.items(),
+        key=lambda item: (order_priority.get(item[0], 99), item[0]),
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        edges = [float(value) for value in payload.get("edges", []) if value is not None]
+        implied_probabilities = [
+            float(value)
+            for value in payload.get("implied_probabilities", [])
+            if value is not None
+        ]
+        odds_values = [
+            float(value) for value in payload.get("odds", []) if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["horses"] = len(horses)
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        if edges:
+            ordered = sorted(edges)
+            midpoint = len(ordered) // 2
+            if len(ordered) % 2 == 0:
+                median_edge = (ordered[midpoint - 1] + ordered[midpoint]) / 2
+            else:
+                median_edge = ordered[midpoint]
+
+            summary.update(
+                {
+                    "average_edge": _safe_average(edges),
+                    "median_edge": median_edge,
+                    "min_edge": ordered[0],
+                    "max_edge": ordered[-1],
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "average_edge": None,
+                    "median_edge": None,
+                    "min_edge": None,
+                    "max_edge": None,
+                }
+            )
+
+        summary["average_implied_probability"] = _safe_average(implied_probabilities)
+        summary["average_odds"] = _safe_average(odds_values)
+
+        edge_metrics[segment] = summary
+
+    return edge_metrics
+
+
 def _summarise_group_performance(
     truths: List[int],
     predicted: List[int],
@@ -4152,6 +4290,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         handicap_breakdown: Dict[str, Dict[str, object]] = {}
         weight_breakdown: Dict[str, Dict[str, object]] = {}
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
+        probability_edge_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         horse_coat_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4657,6 +4796,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if odds_value and odds_value > 0:
                 odds_bucket.setdefault("odds", []).append(odds_value)
                 odds_bucket.setdefault("implied_probabilities", []).append(1.0 / odds_value)
+
+            edge_value = _compute_probability_edge(probability, odds_value)
+            implied_probability = (1.0 / odds_value) if odds_value and odds_value > 0 else None
+            edge_segment, edge_label = _categorise_probability_edge(edge_value)
+            edge_bucket = probability_edge_breakdown.setdefault(
+                edge_segment,
+                {
+                    "label": edge_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "edges": [],
+                    "implied_probabilities": [],
+                    "odds": [],
+                    "courses": set(),
+                    "horses": set(),
+                },
+            )
+            edge_bucket["label"] = edge_label
+            edge_bucket["truths"].append(is_top3)
+            edge_bucket["predictions"].append(predicted_label)
+            edge_bucket["scores"].append(probability)
+            edge_bucket.setdefault("courses", set()).add(course.course_id)
+            if getattr(partant, "horse_id", None) is not None:
+                edge_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if edge_value is not None:
+                edge_bucket.setdefault("edges", []).append(edge_value)
+            if implied_probability is not None:
+                edge_bucket.setdefault("implied_probabilities", []).append(implied_probability)
+            if odds_value is not None:
+                edge_bucket.setdefault("odds", []).append(odds_value)
 
             # Cartographie les performances par attribut métier pour identifier
             # rapidement les segments qui décrochent (discipline, surface,
@@ -5750,6 +5920,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         win_probability_performance = _summarise_win_probability_performance(
             win_probability_breakdown
         )
+        probability_edge_performance = _summarise_probability_edge_performance(
+            probability_edge_breakdown
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -5883,6 +6056,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "probability_edge_performance": probability_edge_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
@@ -5949,6 +6123,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "probability_edge_performance": probability_edge_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
@@ -6044,6 +6219,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "probability_edge_performance": probability_edge_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,

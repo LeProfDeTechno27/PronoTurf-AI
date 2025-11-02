@@ -1155,6 +1155,40 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert outsider_segment["average_odds"] == pytest.approx(12.0, rel=1e-3)
     assert outsider_segment["average_implied_probability"] == pytest.approx(1 / 12, rel=1e-3)
 
+    probability_edge_performance = metrics["probability_edge_performance"]
+    assert set(probability_edge_performance.keys()) == {
+        "slight_positive_edge",
+        "strong_positive_edge",
+    }
+
+    strong_edge_segment = probability_edge_performance["strong_positive_edge"]
+    assert strong_edge_segment["label"] == "Écart très favorable (≥ 18 pts)"
+    assert strong_edge_segment["samples"] == 3
+    assert strong_edge_segment["courses"] == 2
+    assert strong_edge_segment["horses"] == 3
+    assert strong_edge_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert strong_edge_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert strong_edge_segment["average_edge"] == pytest.approx(0.219047, rel=1e-3)
+    assert strong_edge_segment["median_edge"] == pytest.approx(0.216667, rel=1e-3)
+    assert strong_edge_segment["min_edge"] == pytest.approx(0.183333, rel=1e-3)
+    assert strong_edge_segment["max_edge"] == pytest.approx(0.257143, rel=1e-3)
+    assert strong_edge_segment["average_implied_probability"] == pytest.approx(0.214286, rel=1e-3)
+    assert strong_edge_segment["average_odds"] == pytest.approx(5.333333, rel=1e-3)
+
+    slight_edge_segment = probability_edge_performance["slight_positive_edge"]
+    assert slight_edge_segment["label"] == "Écart légèrement favorable (3-8 pts)"
+    assert slight_edge_segment["samples"] == 3
+    assert slight_edge_segment["courses"] == 2
+    assert slight_edge_segment["horses"] == 3
+    assert slight_edge_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert slight_edge_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert slight_edge_segment["average_edge"] == pytest.approx(0.061616, rel=1e-3)
+    assert slight_edge_segment["median_edge"] == pytest.approx(0.066667, rel=1e-3)
+    assert slight_edge_segment["min_edge"] == pytest.approx(0.05, rel=1e-3)
+    assert slight_edge_segment["max_edge"] == pytest.approx(0.068182, rel=1e-3)
+    assert slight_edge_segment["average_implied_probability"] == pytest.approx(0.171717, rel=1e-3)
+    assert slight_edge_segment["average_odds"] == pytest.approx(7.166667, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -1698,6 +1732,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["start_delay_performance"]["on_time"]["samples"] == 3
     assert result["start_delay_performance"]["on_time"]["average_delay_minutes"] == pytest.approx(3.0, rel=1e-3)
     assert result["odds_band_performance"]["favorite"]["samples"] == 2
+    assert set(result["probability_edge_performance"].keys()) == {
+        "slight_positive_edge",
+        "strong_positive_edge",
+    }
+    assert result["probability_edge_performance"]["strong_positive_edge"]["average_edge"] == pytest.approx(
+        0.219047, rel=1e-3
+    )
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -1728,6 +1769,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
