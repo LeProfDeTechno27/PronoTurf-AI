@@ -1178,6 +1178,98 @@ def _summarise_probability_edge_performance(
     return edge_metrics
 
 
+def _categorise_probability_error(
+    absolute_error: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Classe l'écart absolu probabilité / réalité en fourchettes parlantes."""
+
+    if absolute_error is None:
+        return "error_unknown", "Erreur inconnue", None
+
+    try:
+        value = float(absolute_error)
+    except (TypeError, ValueError):  # pragma: no cover - robustesse sur données inattendues
+        return "error_unknown", "Erreur inconnue", None
+
+    # Les écarts théoriques sont bornés dans [0, 1]. On contraint donc la valeur
+    # afin d'éviter qu'une dérive d'arrondi ne vienne polluer la catégorisation.
+    value = max(0.0, min(value, 1.0))
+
+    if value <= 0.10:
+        return "error_0_10", "Ultra précis (≤ 10 pts)", value
+
+    if value <= 0.20:
+        return "error_10_20", "Fiable (10-20 pts)", value
+
+    if value <= 0.35:
+        return "error_20_35", "Approximation (20-35 pts)", value
+
+    if value <= 0.50:
+        return "error_35_50", "Fragile (35-50 pts)", value
+
+    return "error_50_plus", "À surveiller (> 50 pts)", value
+
+
+def _summarise_probability_error_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la précision réelle selon l'écart absolu des probabilités."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    error_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        errors = [
+            float(value)
+            for value in payload.get("errors", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["observed_positive_rate"] = sum(truths) / len(truths) if truths else None
+
+        if errors:
+            ordered = sorted(errors)
+            midpoint = len(ordered) // 2
+            if len(ordered) % 2 == 0:
+                median_error = (ordered[midpoint - 1] + ordered[midpoint]) / 2
+            else:
+                median_error = ordered[midpoint]
+
+            summary.update(
+                {
+                    "average_absolute_error": _safe_average(errors),
+                    "median_absolute_error": median_error,
+                    "min_absolute_error": ordered[0],
+                    "max_absolute_error": ordered[-1],
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "average_absolute_error": None,
+                    "median_absolute_error": None,
+                    "min_absolute_error": None,
+                    "max_absolute_error": None,
+                }
+            )
+
+        error_metrics[segment] = summary
+
+    return error_metrics
+
+
 def _summarise_group_performance(
     truths: List[int],
     predicted: List[int],
@@ -4443,6 +4535,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         weight_breakdown: Dict[str, Dict[str, object]] = {}
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         probability_edge_breakdown: Dict[str, Dict[str, object]] = {}
+        probability_error_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         horse_coat_breakdown: Dict[str, Dict[str, object]] = {}
@@ -4496,6 +4589,33 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             probability = max(0.0, min(probability, 1.0))
             is_top3 = 1 if partant.final_position and partant.final_position <= 3 else 0
             predicted_label = 1 if probability >= probability_threshold else 0
+
+            # Mesure l'écart absolu entre la probabilité annoncée et l'issue réelle
+            # afin de piloter un tableau de bord de précision par bandes d'erreur.
+            absolute_error = abs(probability - is_top3)
+            (
+                error_segment,
+                error_label,
+                normalised_error,
+            ) = _categorise_probability_error(absolute_error)
+            error_bucket = probability_error_breakdown.setdefault(
+                error_segment,
+                {
+                    "label": error_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "errors": [],
+                    "courses": set(),
+                },
+            )
+            error_bucket["label"] = error_label
+            error_bucket["truths"].append(is_top3)
+            error_bucket["predictions"].append(predicted_label)
+            error_bucket["scores"].append(probability)
+            error_bucket.setdefault("courses", set()).add(course.course_id)
+            stored_error = normalised_error if normalised_error is not None else absolute_error
+            error_bucket.setdefault("errors", []).append(stored_error)
 
             reunion_entity = getattr(course, "reunion", None)
 
@@ -6137,6 +6257,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         probability_edge_performance = _summarise_probability_edge_performance(
             probability_edge_breakdown
         )
+        probability_error_performance = _summarise_probability_error_performance(
+            probability_error_breakdown
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -6275,6 +6398,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
             "probability_edge_performance": probability_edge_performance,
+            "probability_error_performance": probability_error_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
@@ -6344,6 +6468,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
             "probability_edge_performance": probability_edge_performance,
+            "probability_error_performance": probability_error_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,
@@ -6442,6 +6567,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
             "probability_edge_performance": probability_edge_performance,
+            "probability_error_performance": probability_error_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
             "betting_value_analysis": betting_value_analysis,

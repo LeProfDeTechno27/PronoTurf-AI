@@ -1220,6 +1220,46 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert slight_edge_segment["average_implied_probability"] == pytest.approx(0.171717, rel=1e-3)
     assert slight_edge_segment["average_odds"] == pytest.approx(7.166667, rel=1e-3)
 
+    probability_error_performance = metrics["probability_error_performance"]
+    assert set(probability_error_performance.keys()) == {
+        "error_10_20",
+        "error_35_50",
+        "error_50_plus",
+    }
+
+    tight_segment = probability_error_performance["error_10_20"]
+    assert tight_segment["label"] == "Fiable (10-20 pts)"
+    assert tight_segment["samples"] == 1
+    assert tight_segment["courses"] == 1
+    assert tight_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert tight_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert tight_segment["average_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["median_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["min_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["max_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+
+    fragile_segment = probability_error_performance["error_35_50"]
+    assert fragile_segment["label"] == "Fragile (35-50 pts)"
+    assert fragile_segment["samples"] == 2
+    assert fragile_segment["courses"] == 2
+    assert fragile_segment["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert fragile_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert fragile_segment["average_absolute_error"] == pytest.approx(0.425, rel=1e-3)
+    assert fragile_segment["median_absolute_error"] == pytest.approx(0.425, rel=1e-3)
+    assert fragile_segment["min_absolute_error"] == pytest.approx(0.40, rel=1e-3)
+    assert fragile_segment["max_absolute_error"] == pytest.approx(0.45, rel=1e-3)
+
+    critical_segment = probability_error_performance["error_50_plus"]
+    assert critical_segment["label"] == "À surveiller (> 50 pts)"
+    assert critical_segment["samples"] == 3
+    assert critical_segment["courses"] == 2
+    assert critical_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert critical_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert critical_segment["average_absolute_error"] == pytest.approx(0.7, rel=1e-3)
+    assert critical_segment["median_absolute_error"] == pytest.approx(0.7, rel=1e-3)
+    assert critical_segment["min_absolute_error"] == pytest.approx(0.65, rel=1e-3)
+    assert critical_segment["max_absolute_error"] == pytest.approx(0.75, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -1774,6 +1814,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_edge_performance"]["strong_positive_edge"]["average_edge"] == pytest.approx(
         0.219047, rel=1e-3
     )
+    assert set(result["probability_error_performance"].keys()) == {
+        "error_10_20",
+        "error_35_50",
+        "error_50_plus",
+    }
+    assert result["probability_error_performance"]["error_35_50"]["samples"] == 2
+    assert result["probability_error_performance"]["error_50_plus"]["average_absolute_error"] == pytest.approx(
+        0.7, rel=1e-3
+    )
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -1805,6 +1854,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
