@@ -73,6 +73,7 @@ def _seed_reference_data(db: Session) -> None:
         city="Paris",
         country="France",
         track_type=TrackType.PLAT,
+        track_length=1300,
     )
     hippodrome_trot = Hippodrome(
         code="TROT",
@@ -80,6 +81,7 @@ def _seed_reference_data(db: Session) -> None:
         city="Mons",
         country="Belgique",
         track_type=TrackType.TROT,
+        track_length=1825,
     )
     db.add_all([hippodrome_flat, hippodrome_trot])
     db.flush()
@@ -980,6 +982,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert track_type_performance["trot"]["reunions"] == 1
     assert track_type_performance["trot"]["hippodromes"] == 1
 
+    track_length_performance = metrics["track_length_performance"]
+    assert set(track_length_performance.keys()) == {"compact_loop", "extended_loop"}
+    compact_loop = track_length_performance["compact_loop"]
+    assert compact_loop["label"] == "Piste compacte (≤ 1 400 m)"
+    assert compact_loop["samples"] == 3
+    assert compact_loop["average_track_length"] == pytest.approx(1300.0, abs=1e-6)
+    assert compact_loop["share"] == pytest.approx(0.5, rel=1e-3)
+    extended_loop = track_length_performance["extended_loop"]
+    assert extended_loop["label"] == "Piste longue (> 1 700 m)"
+    assert extended_loop["samples"] == 3
+    assert extended_loop["average_track_length"] == pytest.approx(1825.0, abs=1e-6)
+
     prize_money_performance = metrics["prize_money_performance"]
     assert set(prize_money_performance.keys()) == {"low_prize", "medium_prize"}
     assert prize_money_performance["low_prize"]["samples"] == 3
@@ -1812,6 +1826,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["api_source_performance"]["turfinfo"]["label"] == "Turfinfo"
     assert result["api_source_performance"]["pmu_api"]["pronostics"] == 1
     assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
+    assert result["track_length_performance"]["compact_loop"]["label"] == "Piste compacte (≤ 1 400 m)"
+    assert result["track_length_performance"]["extended_loop"]["average_track_length"] == pytest.approx(
+        1825.0, abs=1e-6
+    )
     assert set(result["discipline_surface_performance"].keys()) == {
         "plat__pelouse",
         "trot_attele__sable",
@@ -1956,6 +1974,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
+        assert "track_length_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]

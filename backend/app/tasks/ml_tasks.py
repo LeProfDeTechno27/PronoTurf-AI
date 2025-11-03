@@ -2649,6 +2649,75 @@ def _summarise_track_type_performance(
     return track_metrics
 
 
+def _categorise_track_length(
+    track_length: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Classe la longueur des pistes pour identifier les profils de virages."""
+
+    if track_length is None:
+        return "unknown", "Longueur de piste inconnue", None
+
+    try:
+        value = int(track_length)
+    except (TypeError, ValueError):  # pragma: no cover - nettoyage défensif
+        return "unknown", "Longueur de piste inconnue", None
+
+    if value <= 1400:
+        return "compact_loop", "Piste compacte (≤ 1 400 m)", value
+
+    if value <= 1700:
+        return "standard_loop", "Piste standard (1 401-1 700 m)", value
+
+    return "extended_loop", "Piste longue (> 1 700 m)", value
+
+
+def _summarise_track_length_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble les métriques d'efficacité selon la longueur de la piste."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    ordering = {
+        "compact_loop": 0,
+        "standard_loop": 1,
+        "extended_loop": 2,
+        "unknown": 3,
+    }
+    length_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(
+        breakdown.items(), key=lambda item: (ordering.get(item[0], 99), item[0])
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        hippodromes: Set[int] = set(payload.get("hippodromes", set()))
+        lengths = [
+            int(value)
+            for value in payload.get("track_lengths", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["hippodromes"] = len(hippodromes)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["average_track_length"] = _safe_average(lengths)
+        summary["min_track_length"] = min(lengths) if lengths else None
+        summary["max_track_length"] = max(lengths) if lengths else None
+
+        length_metrics[segment] = summary
+
+    return length_metrics
+
+
 def _categorise_course_distance(distance: Optional[int]) -> str:
     """Classe les distances officielles en familles d'effort comparables."""
 
@@ -4769,6 +4838,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         lead_time_breakdown: Dict[str, Dict[str, object]] = {}
         race_order_breakdown: Dict[str, Dict[str, object]] = {}
         track_type_breakdown: Dict[str, Dict[str, object]] = {}
+        track_length_breakdown: Dict[str, Dict[str, object]] = {}
         race_category_breakdown: Dict[str, Dict[str, object]] = {}
         race_class_breakdown: Dict[str, Dict[str, object]] = {}
         value_bet_breakdown: Dict[str, Dict[str, object]] = {}
@@ -6300,6 +6370,36 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if hippodrome_id is not None:
                 track_type_bucket.setdefault("hippodromes", set()).add(hippodrome_id)
 
+            track_length_segment, track_length_label, track_length_value = _categorise_track_length(
+                getattr(hippodrome_entity, "track_length", None)
+            )
+            track_length_bucket = track_length_breakdown.setdefault(
+                track_length_segment,
+                {
+                    "label": track_length_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "hippodromes": set(),
+                    "track_lengths": [],
+                },
+            )
+            track_length_bucket["label"] = track_length_label
+            track_length_bucket["truths"].append(is_top3)
+            track_length_bucket["predictions"].append(predicted_label)
+            track_length_bucket["scores"].append(probability)
+            track_length_bucket.setdefault("courses", set()).add(course.course_id)
+            if reunion_entity is not None and getattr(reunion_entity, "reunion_id", None):
+                track_length_bucket.setdefault("reunions", set()).add(
+                    reunion_entity.reunion_id
+                )
+            if hippodrome_id is not None:
+                track_length_bucket.setdefault("hippodromes", set()).add(hippodrome_id)
+            if track_length_value is not None:
+                track_length_bucket.setdefault("track_lengths", []).append(track_length_value)
+
             # On conserve également une vue chronologique afin d'identifier les
             # journées où le modèle surperforme ou décroche brutalement.
             generation_day = (
@@ -6648,6 +6748,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         )
         hippodrome_performance = _summarise_hippodrome_performance(hippodrome_breakdown)
         track_type_performance = _summarise_track_type_performance(track_type_breakdown)
+        track_length_performance = _summarise_track_length_performance(
+            track_length_breakdown
+        )
         country_performance = _summarise_country_performance(country_breakdown)
         city_performance = _summarise_city_performance(city_breakdown)
         api_source_performance = _summarise_api_source_performance(api_source_breakdown)
@@ -6746,6 +6849,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "track_length_performance": track_length_performance,
             "country_performance": country_performance,
             "city_performance": city_performance,
             "api_source_performance": api_source_performance,
@@ -6824,6 +6928,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
             "track_type_performance": track_type_performance,
+            "track_length_performance": track_length_performance,
             "country_performance": country_performance,
             "city_performance": city_performance,
             "api_source_performance": api_source_performance,
@@ -6903,6 +7008,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "owner_jockey_performance": owner_jockey_performance,
             "recent_form_performance": recent_form_performance,
             "track_type_performance": track_type_performance,
+            "track_length_performance": track_length_performance,
             "city_performance": city_performance,
             "odds_band_performance": odds_band_performance,
             "value_bet_flag_performance": value_bet_flag_performance,
