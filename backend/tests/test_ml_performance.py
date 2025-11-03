@@ -6,6 +6,7 @@ import json
 import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from typing import Tuple
 
 import pytest
 from sqlalchemy import Column, ForeignKey, Integer, create_engine
@@ -378,6 +379,24 @@ def _seed_reference_data(db: Session) -> None:
     db.add(model)
 
 
+def _derive_season_key(target_date: date) -> Tuple[str, str]:
+    """Reproduit la catégorisation saisonnière utilisée par la tâche ML."""
+
+    month = target_date.month
+    year = target_date.year
+
+    if month in (12, 1, 2):
+        return f"{year:04d}-winter", f"Hiver {year}"
+
+    if month in (3, 4, 5):
+        return f"{year:04d}-spring", f"Printemps {year}"
+
+    if month in (6, 7, 8):
+        return f"{year:04d}-summer", f"Été {year}"
+
+    return f"{year:04d}-autumn", f"Automne {year}"
+
+
 def test_update_model_performance_with_results(in_memory_session: sessionmaker) -> None:
     """Vérifie le calcul des métriques et la mise à jour du modèle actif."""
 
@@ -723,6 +742,21 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert month_performance[current_month_key]["reunions"] >= 1
     assert sum(entry["samples"] for entry in month_performance.values()) == 6
     assert str(date.today().year) in month_performance[current_month_key]["label"]
+
+    season_performance = metrics["season_performance"]
+    season_key, season_label = _derive_season_key(date.today())
+    previous_key, previous_label = _derive_season_key(date.today() - timedelta(days=1))
+
+    assert season_key in season_performance
+    assert season_performance[season_key]["label"] == season_label
+    assert season_performance[season_key]["samples"] >= 3
+    assert season_performance[season_key]["courses"] >= 1
+
+    if previous_key != season_key:
+        assert previous_key in season_performance
+        assert season_performance[previous_key]["label"] == previous_label
+
+    assert sum(entry["samples"] for entry in season_performance.values()) == 6
 
     quarter_performance = metrics["quarter_performance"]
     current_quarter_index = ((date.today().month - 1) // 3) + 1
@@ -1882,6 +1916,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
     assert date.today().strftime("%Y-%m") in result["month_performance"]
+    season_key, season_label = _derive_season_key(date.today())
+    previous_key, previous_label = _derive_season_key(date.today() - timedelta(days=1))
+    assert season_key in result["season_performance"]
+    assert result["season_performance"][season_key]["label"] == season_label
+    if previous_key != season_key:
+        assert previous_key in result["season_performance"]
+        assert result["season_performance"][previous_key]["label"] == previous_label
     current_quarter_index = ((date.today().month - 1) // 3) + 1
     current_quarter_key = f"{date.today().year:04d}-Q{current_quarter_index}"
     assert current_quarter_key in result["quarter_performance"]
@@ -2005,6 +2046,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
