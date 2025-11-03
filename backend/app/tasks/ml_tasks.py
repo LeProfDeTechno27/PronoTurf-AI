@@ -4189,6 +4189,95 @@ def _summarise_win_probability_performance(
     return probability_metrics
 
 
+def _categorise_place_probability(
+    probability: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Regroupe une probabilité de place (top 3) en bandes métiers lisibles."""
+
+    if probability is None:
+        return "unknown", "Probabilité de place inconnue", None
+
+    try:
+        value = float(probability)
+    except (TypeError, ValueError):  # pragma: no cover - résilience en entrée
+        return "unknown", "Probabilité de place inconnue", None
+
+    value = max(0.0, min(value, 1.0))
+
+    bands: List[Tuple[float, str, str]] = [
+        (0.30, "under_30", "Probabilité de place < 30%"),
+        (0.40, "between_30_40", "Probabilité de place 30-40%"),
+        (0.50, "between_40_50", "Probabilité de place 40-50%"),
+        (0.60, "between_50_60", "Probabilité de place 50-60%"),
+        (0.70, "between_60_70", "Probabilité de place 60-70%"),
+        (0.80, "between_70_80", "Probabilité de place 70-80%"),
+    ]
+
+    for upper_bound, segment_key, label in bands:
+        if value < upper_bound:
+            return segment_key, label, value
+
+    return "at_least_80", "Probabilité de place ≥ 80%", value
+
+
+def _summarise_place_probability_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la calibration des probabilités de place par bande homogène."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    place_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        stored_probabilities = [
+            float(value)
+            for value in payload.get("place_probabilities", [])
+            if value is not None
+        ]
+
+        if stored_probabilities:
+            probability_sample = stored_probabilities
+        else:
+            probability_sample = [
+                float(value)
+                for value in scores
+                if value is not None
+            ]
+
+        courses: Set[int] = set(payload.get("courses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        summary["pronostics"] = len(pronostics)
+        summary["average_probability"] = _safe_average(probability_sample)
+        summary["min_probability"] = min(probability_sample) if probability_sample else None
+        summary["max_probability"] = max(probability_sample) if probability_sample else None
+        summary["observed_positive_rate"] = (
+            sum(truths) / len(truths) if truths else None
+        )
+
+        if summary["average_probability"] is not None and summary["observed_positive_rate"] is not None:
+            summary["average_calibration_gap"] = (
+                summary["average_probability"] - summary["observed_positive_rate"]
+            )
+        else:
+            summary["average_calibration_gap"] = None
+
+        place_metrics[segment] = summary
+
+    return place_metrics
+
+
 def _categorise_horse_gender(gender: Optional[object]) -> Tuple[str, str]:
     """Normalise le genre du cheval pour faciliter l'agrégation."""
 
@@ -4810,6 +4899,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         confidence_breakdown: Dict[str, Dict[str, List[float]]] = {}
         confidence_score_breakdown: Dict[str, Dict[str, object]] = {}
         win_probability_breakdown: Dict[str, Dict[str, object]] = {}
+        place_probability_breakdown: Dict[str, Dict[str, object]] = {}
         discipline_breakdown: Dict[str, Dict[str, object]] = {}
         discipline_surface_breakdown: Dict[str, Dict[str, object]] = {}
         distance_breakdown: Dict[str, Dict[str, object]] = {}
@@ -5008,6 +5098,36 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             probability_bucket.setdefault("probabilities", []).append(
                 normalized_probability if normalized_probability is not None else probability
             )
+            place_segment, place_label, normalized_place_probability = _categorise_place_probability(
+                getattr(prediction, "place_probability", None)
+            )
+            place_bucket = place_probability_breakdown.setdefault(
+                place_segment,
+                {
+                    "label": place_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "place_probabilities": [],
+                    "courses": set(),
+                    "pronostics": set(),
+                },
+            )
+            place_bucket["label"] = place_label
+            place_bucket["truths"].append(is_top3)
+            place_bucket["predictions"].append(predicted_label)
+            score_value = (
+                normalized_place_probability
+                if normalized_place_probability is not None
+                else probability
+            )
+            place_bucket.setdefault("scores", []).append(score_value)
+            place_bucket.setdefault("courses", set()).add(course.course_id)
+            place_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            if normalized_place_probability is not None:
+                place_bucket.setdefault("place_probabilities", []).append(
+                    normalized_place_probability
+                )
             version_label = pronostic.model_version or "unknown"
             model_versions[version_label] += 1
             version_bucket = model_version_breakdown.setdefault(
@@ -6646,6 +6766,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         win_probability_performance = _summarise_win_probability_performance(
             win_probability_breakdown
         )
+        place_probability_performance = _summarise_place_probability_performance(
+            place_probability_breakdown
+        )
         probability_edge_performance = _summarise_probability_edge_performance(
             probability_edge_breakdown
         )
@@ -6799,6 +6922,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "daily_performance": daily_performance,
@@ -6872,6 +6996,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "calibration_diagnostics": calibration_diagnostics,
@@ -6974,6 +7099,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
+            "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "calibration_diagnostics": calibration_diagnostics,

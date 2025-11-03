@@ -327,36 +327,42 @@ def _seed_reference_data(db: Session) -> None:
             pronostic_id=pronostic1.pronostic_id,
             partant_id=partants[0].partant_id,
             win_probability=Decimal("0.55"),
+            place_probability=Decimal("0.82"),
             confidence_level="high",
         ),
         PartantPrediction(
             pronostic_id=pronostic1.pronostic_id,
             partant_id=partants[1].partant_id,
             win_probability=Decimal("0.30"),
+            place_probability=Decimal("0.68"),
             confidence_level="medium",
         ),
         PartantPrediction(
             pronostic_id=pronostic1.pronostic_id,
             partant_id=partants[2].partant_id,
             win_probability=Decimal("0.15"),
+            place_probability=Decimal("0.28"),
             confidence_level="low",
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
             partant_id=partants[3].partant_id,
             win_probability=Decimal("0.25"),
+            place_probability=Decimal("0.74"),
             confidence_level="low",
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
             partant_id=partants[4].partant_id,
             win_probability=Decimal("0.40"),
+            place_probability=Decimal("0.36"),
             confidence_level="medium",
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
             partant_id=partants[5].partant_id,
             win_probability=Decimal("0.35"),
+            place_probability=Decimal("0.52"),
             confidence_level="medium",
         ),
     ]
@@ -435,6 +441,20 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert probability_bands["between_30_40"]["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
     assert probability_bands["between_50_60"]["average_probability"] == pytest.approx(0.55, rel=1e-3)
     assert calibration_diagnostics["bins"][1]["weight"] == pytest.approx(1 / 6, rel=1e-3)
+
+    place_bands = metrics["place_probability_performance"]
+    assert set(place_bands.keys()) >= {
+        "under_30",
+        "between_30_40",
+        "between_50_60",
+        "between_60_70",
+        "between_70_80",
+        "at_least_80",
+    }
+    assert place_bands["under_30"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert place_bands["at_least_80"]["observed_positive_rate"] == pytest.approx(1.0, abs=1e-6)
+    assert place_bands["between_60_70"]["average_probability"] == pytest.approx(0.68, rel=1e-3)
+    assert place_bands["between_60_70"]["share"] == pytest.approx(1 / 6, rel=1e-3)
 
     threshold_grid = metrics["threshold_sensitivity"]
     assert threshold_grid["0.20"]["recall"] == pytest.approx(1.0, rel=1e-3)
@@ -1943,6 +1963,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["reunion_number_performance"]["day_cards"]["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
     assert "win_probability_performance" in result
+    assert "place_probability_performance" in result
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -1964,6 +1985,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
