@@ -352,6 +352,102 @@ def _describe_calibration_quality(
     }
 
 
+def _decompose_brier_score(
+    calibration_rows: List[Dict[str, object]],
+    *,
+    base_rate: Optional[float],
+    brier_score: Optional[float],
+) -> Dict[str, Optional[float]]:
+    """Décompose la Brier score en composantes de Murphy pour guider les actions.
+
+    La décomposition distingue trois éléments :
+
+    - ``reliability`` mesure l'écart moyen entre probabilité prédite et fréquence
+      observée sur chaque quantile. Plus il est faible, meilleure est la
+      calibration.
+    - ``resolution`` capture la capacité du modèle à séparer des groupes avec des
+      fréquences observées différentes. Plus il est élevé, plus l'information
+      apportée par les probabilités est discriminante.
+    - ``uncertainty`` correspond à la variance intrinsèque du jeu de données
+      (proportion de victoires). Il sert de référence pour calculer un score de
+      compétence (« *skill score* »).
+
+    Les opérateurs peuvent ainsi identifier si une dérive de la Brier score
+    provient d'un manque de calibration (reliability), d'une perte de
+    différenciation (resolution) ou simplement d'une variation du taux de
+    gagnants (uncertainty). Lorsque le taux de gagnants est extrême (0 % ou 100
+    %), la composante d'incertitude annule toute interprétation et nous
+    neutralisons le *skill score*.
+    """
+
+    if not calibration_rows or base_rate is None or brier_score is None:
+        return {
+            "reliability": None,
+            "resolution": None,
+            "uncertainty": None,
+            "skill_score": None,
+            "bins": [],
+        }
+
+    total = sum(int(row.get("count", 0) or 0) for row in calibration_rows)
+    if not total:
+        return {
+            "reliability": None,
+            "resolution": None,
+            "uncertainty": base_rate * (1 - base_rate),
+            "skill_score": None,
+            "bins": [],
+        }
+
+    reliability = 0.0
+    resolution = 0.0
+    decomposition_rows: List[Dict[str, object]] = []
+
+    for row in calibration_rows:
+        count = int(row.get("count", 0) or 0)
+        if count <= 0:
+            continue
+
+        average_probability = row.get("average_probability")
+        empirical_rate = row.get("empirical_rate")
+        if average_probability is None or empirical_rate is None:
+            continue
+
+        weight = count / total
+        reliability_contrib = weight * (average_probability - empirical_rate) ** 2
+        resolution_contrib = weight * (empirical_rate - base_rate) ** 2
+
+        reliability += reliability_contrib
+        resolution += resolution_contrib
+
+        decomposition_rows.append(
+            {
+                "bin": row.get("bin"),
+                "count": count,
+                "weight": weight,
+                "average_probability": average_probability,
+                "empirical_rate": empirical_rate,
+                "reliability_contribution": reliability_contrib,
+                "resolution_contribution": resolution_contrib,
+            }
+        )
+
+    uncertainty = base_rate * (1 - base_rate)
+    skill_score: Optional[float]
+    if uncertainty and uncertainty > 0:
+        skill_score = 1 - (brier_score / uncertainty)
+    else:
+        skill_score = None
+
+    return {
+        "reliability": reliability if decomposition_rows else None,
+        "resolution": resolution if decomposition_rows else None,
+        "uncertainty": uncertainty,
+        "skill_score": skill_score,
+        "bins": decomposition_rows,
+    }
+
+
 def _build_gain_curve(
     scores: List[float],
     truths: List[int],
@@ -6295,7 +6391,14 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             except ValueError:
                 logloss = None
 
-        brier_score = sum((score - truth) ** 2 for score, truth in zip(y_scores, y_true)) / len(y_true)
+        brier_score: Optional[float] = None
+        positive_rate: Optional[float] = None
+        if y_true:
+            brier_score = (
+                sum((score - truth) ** 2 for score, truth in zip(y_scores, y_true))
+                / len(y_true)
+            )
+            positive_rate = sum(y_true) / len(y_true)
 
         cm = [
             [0, 0],
@@ -6349,6 +6452,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         # Résume l'ampleur des écarts de calibration pour suivre un indicateur
         # synthétique (ECE, biais signé, écart maximal) en plus du tableau brut.
         calibration_diagnostics = _describe_calibration_quality(calibration_table)
+        brier_decomposition = _decompose_brier_score(
+            calibration_table,
+            base_rate=positive_rate,
+            brier_score=brier_score,
+        )
         threshold_grid = _evaluate_threshold_grid(
             y_scores,
             y_true,
@@ -6552,6 +6660,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "roc_auc": roc_auc,
             "log_loss": logloss,
             "brier_score": brier_score,
+            "brier_decomposition": brier_decomposition,
             "confusion_matrix": {
                 "true_negative": cm[0][0],
                 "false_positive": cm[0][1],

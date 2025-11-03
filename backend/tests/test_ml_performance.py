@@ -392,6 +392,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["f1"] == pytest.approx(0.75, rel=1e-3)
     assert metrics["roc_auc"] == pytest.approx(0.625, rel=1e-3)
     assert metrics["brier_score"] == pytest.approx(0.31, rel=1e-2)
+    brier_components = metrics["brier_decomposition"]
+    assert brier_components["reliability"] == pytest.approx(0.24979, rel=1e-3)
+    assert brier_components["resolution"] == pytest.approx(0.13889, rel=1e-3)
+    assert brier_components["uncertainty"] == pytest.approx(2 / 9, rel=1e-3)
+    assert brier_components["skill_score"] == pytest.approx(-0.395, rel=1e-3)
     assert metrics["matthews_correlation"] == pytest.approx(0.25, rel=1e-3)
     assert metrics["specificity"] == pytest.approx(0.5, rel=1e-3)
     assert metrics["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
@@ -401,6 +406,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
 
     calibration_table = metrics["calibration_table"]
+    assert len(brier_components["bins"]) == len(calibration_table)
+    assert brier_components["bins"][0]["reliability_contribution"] == pytest.approx(0.00375, rel=1e-3)
     assert len(calibration_table) == 5
     assert calibration_table[0]["empirical_rate"] == pytest.approx(0.0, abs=1e-6)
     assert calibration_table[-1]["count"] == 2
@@ -1932,6 +1939,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
+        stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
+        assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
+        assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)
+        assert stored_brier["skill_score"] == pytest.approx(-0.395, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
