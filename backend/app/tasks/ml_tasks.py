@@ -4787,6 +4787,102 @@ def _summarise_weather_performance(
     return weather_metrics
 
 
+def _categorise_temperature_band(
+    temperature: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Projette une température en bandes lisibles pour le monitoring ML."""
+
+    if temperature is None:
+        return "temperature_unknown", "Température inconnue", None
+
+    try:
+        value = float(temperature)
+    except (TypeError, ValueError):  # pragma: no cover - résilience saisies atypiques
+        return "temperature_unknown", "Température inconnue", None
+
+    if value <= 0.0:
+        return "freezing", "Gel / ≤0°C", value
+
+    if value <= 7.0:
+        return "very_cold", "Très froid (1-7°C)", value
+
+    if value <= 14.0:
+        return "cool", "Frais (8-14°C)", value
+
+    if value <= 22.0:
+        return "mild", "Tempéré (15-22°C)", value
+
+    if value <= 28.0:
+        return "warm", "Chaud (23-28°C)", value
+
+    return "hot", "Caniculaire (>28°C)", value
+
+
+def _summarise_temperature_band_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Mesure la précision du modèle en fonction de la température ambiante."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    order_priority = {
+        "freezing": 0,
+        "very_cold": 1,
+        "cool": 2,
+        "mild": 3,
+        "warm": 4,
+        "hot": 5,
+        "temperature_unknown": 6,
+    }
+
+    temperature_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(
+        breakdown.items(), key=lambda item: (order_priority.get(item[0], 99), item[0])
+    ):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        temperatures = [
+            float(value)
+            for value in payload.get("temperatures", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment),
+                "share": (len(truths) / total_samples) if total_samples else None,
+                "courses": len(courses),
+                "reunions": len(reunions),
+                "observed_positive_rate": sum(truths) / len(truths) if truths else None,
+                "average_temperature": _safe_average(temperatures),
+                "min_temperature": min(temperatures) if temperatures else None,
+                "max_temperature": max(temperatures) if temperatures else None,
+            }
+        )
+
+        if temperatures:
+            ordered = sorted(temperatures)
+            midpoint = len(ordered) // 2
+            if len(ordered) % 2 == 0:
+                median_temperature = (ordered[midpoint - 1] + ordered[midpoint]) / 2
+            else:
+                median_temperature = ordered[midpoint]
+            summary["median_temperature"] = median_temperature
+        else:
+            summary["median_temperature"] = None
+
+        temperature_metrics[segment] = summary
+
+    return temperature_metrics
+
+
 def _summarise_rest_period_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -4920,6 +5016,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         recent_form_breakdown: Dict[str, Dict[str, object]] = {}
         equipment_breakdown: Dict[str, Dict[str, object]] = {}
         weather_breakdown: Dict[str, Dict[str, object]] = {}
+        temperature_band_breakdown: Dict[str, Dict[str, object]] = {}
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
         reunion_number_breakdown: Dict[str, Dict[str, object]] = {}
@@ -5464,6 +5561,34 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if weather_temperature is not None:
                 weather_bucket.setdefault("temperatures", []).append(weather_temperature)
+
+            temperature_segment, temperature_label, normalised_temperature = _categorise_temperature_band(
+                weather_temperature
+            )
+            temperature_bucket = temperature_band_breakdown.setdefault(
+                temperature_segment,
+                {
+                    "label": temperature_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "temperatures": [],
+                },
+            )
+            temperature_bucket["label"] = temperature_label
+            temperature_bucket["truths"].append(is_top3)
+            temperature_bucket["predictions"].append(predicted_label)
+            temperature_bucket["scores"].append(probability)
+            temperature_bucket.setdefault("courses", set()).add(course.course_id)
+            temperature_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if normalised_temperature is not None:
+                temperature_bucket.setdefault("temperatures", []).append(
+                    normalised_temperature
+                )
 
             betting_samples.append(
                 {
@@ -6793,6 +6918,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             discipline_surface_breakdown
         )
         weather_performance = _summarise_weather_performance(weather_breakdown)
+        temperature_band_performance = _summarise_temperature_band_performance(
+            temperature_band_breakdown
+        )
         prize_money_performance = _summarise_prize_money_performance(
             prize_money_breakdown
         )
@@ -6938,6 +7066,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
+            "temperature_band_performance": temperature_band_performance,
             "prize_money_performance": prize_money_performance,
             "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,
@@ -7019,6 +7148,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "surface_performance": surface_performance,
             "discipline_surface_performance": discipline_surface_performance,
             "weather_performance": weather_performance,
+            "temperature_band_performance": temperature_band_performance,
             "prize_money_performance": prize_money_performance,
             "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,
@@ -7121,6 +7251,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "draw_parity_performance": draw_parity_performance,
             "start_delay_performance": start_delay_performance,
             "weather_performance": weather_performance,
+            "temperature_band_performance": temperature_band_performance,
             "prize_money_performance": prize_money_performance,
             "prize_per_runner_performance": prize_per_runner_performance,
             "handicap_performance": handicap_performance,

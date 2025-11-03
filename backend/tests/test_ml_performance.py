@@ -992,6 +992,24 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert weather_performance["rain"]["reunions"] == 1
     assert weather_performance["rain"]["average_temperature"] == pytest.approx(9.0, rel=1e-3)
 
+    temperature_bands = metrics["temperature_band_performance"]
+    assert set(temperature_bands.keys()) == {"cool", "mild"}
+
+    cool_metrics = temperature_bands["cool"]
+    assert cool_metrics["label"] == "Frais (8-14°C)"
+    assert cool_metrics["samples"] == 3
+    assert cool_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert cool_metrics["average_temperature"] == pytest.approx(9.0, rel=1e-3)
+    assert cool_metrics["median_temperature"] == pytest.approx(9.0, rel=1e-3)
+
+    mild_metrics = temperature_bands["mild"]
+    assert mild_metrics["label"] == "Tempéré (15-22°C)"
+    assert mild_metrics["samples"] == 3
+    assert mild_metrics["courses"] == 1
+    assert mild_metrics["reunions"] == 1
+    assert mild_metrics["average_temperature"] == pytest.approx(18.0, rel=1e-3)
+    assert mild_metrics["median_temperature"] == pytest.approx(18.0, rel=1e-3)
+
     track_type_performance = metrics["track_type_performance"]
     assert set(track_type_performance.keys()) == {"flat", "trot"}
     assert track_type_performance["flat"]["label"] == "Piste plate"
@@ -1964,6 +1982,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
+    assert "temperature_band_performance" in result
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -1986,6 +2005,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
         assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
