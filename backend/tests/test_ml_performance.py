@@ -104,10 +104,30 @@ def _seed_reference_data(db: Session) -> None:
     db.add_all([reunion, reunion_evening])
     db.flush()
 
-    trainer_fr = Trainer(first_name="Anne", last_name="Durand", nationality="FR")
-    trainer_be = Trainer(first_name="Marc", last_name="Dupont", nationality="BE")
-    jockey_fr = Jockey(first_name="Leo", last_name="Martin", nationality="FR")
-    jockey_be = Jockey(first_name="Noah", last_name="Verbeeck", nationality="BE")
+    trainer_fr = Trainer(
+        first_name="Anne",
+        last_name="Durand",
+        nationality="FR",
+        career_starts=380,
+    )
+    trainer_be = Trainer(
+        first_name="Marc",
+        last_name="Dupont",
+        nationality="BE",
+        career_starts=1450,
+    )
+    jockey_fr = Jockey(
+        first_name="Leo",
+        last_name="Martin",
+        nationality="FR",
+        career_starts=120,
+    )
+    jockey_be = Jockey(
+        first_name="Noah",
+        last_name="Verbeeck",
+        nationality="BE",
+        career_starts=560,
+    )
     db.add_all([trainer_fr, trainer_be, jockey_fr, jockey_be])
     db.flush()
 
@@ -1658,6 +1678,66 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert second_trainer["share"] == pytest.approx(0.5, rel=1e-3)
     assert second_trainer["recall"] == pytest.approx(0.5, rel=1e-3)
 
+    jockey_experience = metrics["jockey_experience_performance"]
+    assert set(jockey_experience.keys()) == {
+        "jockey_experience_confirmed",
+        "jockey_experience_rookie",
+    }
+
+    rookie_jockey_segment = jockey_experience["jockey_experience_rookie"]
+    assert rookie_jockey_segment["label"] == "Jockey débutant (≤ 150 courses)"
+    assert rookie_jockey_segment["samples"] == 3
+    assert rookie_jockey_segment["courses"] == 1
+    assert rookie_jockey_segment["actors"] == 1
+    assert rookie_jockey_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert rookie_jockey_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert rookie_jockey_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert rookie_jockey_segment["average_career_starts"] == pytest.approx(120.0, rel=1e-3)
+    assert rookie_jockey_segment["min_career_starts"] == 120
+    assert rookie_jockey_segment["max_career_starts"] == 120
+
+    confirmed_jockey_segment = jockey_experience["jockey_experience_confirmed"]
+    assert confirmed_jockey_segment["label"] == "Jockey confirmé (401-800 courses)"
+    assert confirmed_jockey_segment["samples"] == 3
+    assert confirmed_jockey_segment["courses"] == 1
+    assert confirmed_jockey_segment["actors"] == 1
+    assert confirmed_jockey_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert confirmed_jockey_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert confirmed_jockey_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert confirmed_jockey_segment["average_career_starts"] == pytest.approx(560.0, rel=1e-3)
+    assert confirmed_jockey_segment["min_career_starts"] == 560
+    assert confirmed_jockey_segment["max_career_starts"] == 560
+
+    trainer_experience = metrics["trainer_experience_performance"]
+    assert set(trainer_experience.keys()) == {
+        "trainer_experience_progressing",
+        "trainer_experience_veteran",
+    }
+
+    progressing_trainer_segment = trainer_experience["trainer_experience_progressing"]
+    assert progressing_trainer_segment["label"] == "Entraîneur en progression (151-400 courses)"
+    assert progressing_trainer_segment["samples"] == 3
+    assert progressing_trainer_segment["courses"] == 1
+    assert progressing_trainer_segment["actors"] == 1
+    assert progressing_trainer_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert progressing_trainer_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert progressing_trainer_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert progressing_trainer_segment["average_career_starts"] == pytest.approx(380.0, rel=1e-3)
+    assert progressing_trainer_segment["min_career_starts"] == 380
+    assert progressing_trainer_segment["max_career_starts"] == 380
+
+    veteran_trainer_segment = trainer_experience["trainer_experience_veteran"]
+    assert veteran_trainer_segment["label"] == "Entraîneur vétéran (> 1 200 courses)"
+    assert veteran_trainer_segment["samples"] == 3
+    assert veteran_trainer_segment["courses"] == 1
+    assert veteran_trainer_segment["actors"] == 1
+    assert veteran_trainer_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert veteran_trainer_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert veteran_trainer_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert veteran_trainer_segment["average_career_starts"] == pytest.approx(1450.0, rel=1e-3)
+    assert veteran_trainer_segment["min_career_starts"] == 1450
+    assert veteran_trainer_segment["max_career_starts"] == 1450
+
     connection_leaderboard = metrics["jockey_trainer_performance"]
     assert len(connection_leaderboard) == 2
     assert {
@@ -1698,6 +1778,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["jockey_trainer_performance"][0]["label"] == "Leo Martin × Anne Durand"
     assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
     assert result["owner_trainer_performance"][0]["label"] == "Ecurie Horizon × Anne Durand"
+    assert set(result["jockey_experience_performance"].keys()) == {
+        "jockey_experience_confirmed",
+        "jockey_experience_rookie",
+    }
+    assert set(result["trainer_experience_performance"].keys()) == {
+        "trainer_experience_progressing",
+        "trainer_experience_veteran",
+    }
     assert result["owner_jockey_performance"][0]["label"] == "Ecurie Horizon × Leo Martin"
     assert set(result["start_delay_performance"].keys()) == {"heavy_delay", "on_time"}
     assert result["start_delay_performance"]["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
@@ -1911,6 +1999,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_experience_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_experience_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
 

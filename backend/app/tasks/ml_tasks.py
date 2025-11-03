@@ -1270,6 +1270,126 @@ def _summarise_probability_error_performance(
     return error_metrics
 
 
+def _categorise_experience_level(
+    career_starts: Optional[object],
+    *,
+    prefix: str,
+    display_name: str,
+) -> Tuple[str, str, Optional[int]]:
+    """Catégorise le volume de courses disputées pour un type d'acteur donné."""
+
+    if career_starts is None:
+        return f"{prefix}_experience_unknown", f"{display_name} - expérience inconnue", None
+
+    try:
+        value = int(career_starts)
+    except (TypeError, ValueError):  # pragma: no cover - robustesse vis-à-vis de valeurs corrompues
+        return f"{prefix}_experience_unknown", f"{display_name} - expérience inconnue", None
+
+    value = max(0, value)
+
+    if value <= 150:
+        return (
+            f"{prefix}_experience_rookie",
+            f"{display_name} débutant (≤ 150 courses)",
+            value,
+        )
+
+    if value <= 400:
+        return (
+            f"{prefix}_experience_progressing",
+            f"{display_name} en progression (151-400 courses)",
+            value,
+        )
+
+    if value <= 800:
+        return (
+            f"{prefix}_experience_confirmed",
+            f"{display_name} confirmé (401-800 courses)",
+            value,
+        )
+
+    if value <= 1200:
+        return (
+            f"{prefix}_experience_expert",
+            f"{display_name} expert (801-1 200 courses)",
+            value,
+        )
+
+    return (
+        f"{prefix}_experience_veteran",
+        f"{display_name} vétéran (> 1 200 courses)",
+        value,
+    )
+
+
+def _categorise_jockey_experience(
+    career_starts: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Découpe l'expérience d'un jockey en bandes exploitables pour le monitoring."""
+
+    return _categorise_experience_level(
+        career_starts,
+        prefix="jockey",
+        display_name="Jockey",
+    )
+
+
+def _categorise_trainer_experience(
+    career_starts: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Découpe l'expérience d'un entraîneur en bandes exploitables pour le monitoring."""
+
+    return _categorise_experience_level(
+        career_starts,
+        prefix="trainer",
+        display_name="Entraîneur",
+    )
+
+
+def _summarise_experience_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise la performance par niveau d'expérience (jockeys/entraîneurs)."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    experience_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        actors: Set[int] = set(payload.get("actors", set()))
+        starts = [
+            int(value)
+            for value in payload.get("career_starts", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment),
+                "share": (len(truths) / total_samples) if total_samples else None,
+                "courses": len(courses),
+                "actors": len(actors),
+                "observed_positive_rate": sum(truths) / len(truths) if truths else None,
+                "average_career_starts": _safe_average(starts),
+                "min_career_starts": min(starts) if starts else None,
+                "max_career_starts": max(starts) if starts else None,
+            }
+        )
+
+        experience_metrics[segment] = summary
+
+    return experience_metrics
+
+
 def _summarise_group_performance(
     truths: List[int],
     predicted: List[int],
@@ -4566,6 +4686,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         jockey_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_trainer_breakdown: Dict[str, Dict[str, object]] = {}
+        jockey_experience_breakdown: Dict[str, Dict[str, object]] = {}
+        trainer_experience_breakdown: Dict[str, Dict[str, object]] = {}
         jockey_nationality_breakdown: Dict[str, Dict[str, object]] = {}
         trainer_nationality_breakdown: Dict[str, Dict[str, object]] = {}
         hippodrome_breakdown: Dict[str, Dict[str, object]] = {}
@@ -5711,6 +5833,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             jockey_bucket.setdefault("courses", set()).add(course.course_id)
             jockey_bucket.setdefault("horses", set()).add(partant.horse_id)
 
+            (
+                jockey_exp_segment,
+                jockey_exp_label,
+                normalised_jockey_starts,
+            ) = _categorise_jockey_experience(
+                getattr(getattr(partant, "jockey", None), "career_starts", None)
+            )
+            jockey_experience_bucket = jockey_experience_breakdown.setdefault(
+                jockey_exp_segment,
+                {
+                    "label": jockey_exp_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "actors": set(),
+                    "career_starts": [],
+                },
+            )
+            jockey_experience_bucket["label"] = jockey_exp_label
+            jockey_experience_bucket["truths"].append(is_top3)
+            jockey_experience_bucket["predictions"].append(predicted_label)
+            jockey_experience_bucket["scores"].append(probability)
+            jockey_experience_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.jockey_id:
+                jockey_experience_bucket.setdefault("actors", set()).add(partant.jockey_id)
+            if normalised_jockey_starts is not None:
+                jockey_experience_bucket.setdefault("career_starts", []).append(
+                    int(normalised_jockey_starts)
+                )
+
             # Agrège également les performances par nationalité du jockey afin
             # de repérer d'éventuels biais liés aux profils internationaux.
             jockey_nat_key, jockey_nat_label = _normalise_nationality_label(
@@ -5764,6 +5917,37 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             trainer_bucket["scores"].append(probability)
             trainer_bucket.setdefault("courses", set()).add(course.course_id)
             trainer_bucket.setdefault("horses", set()).add(partant.horse_id)
+
+            (
+                trainer_exp_segment,
+                trainer_exp_label,
+                normalised_trainer_starts,
+            ) = _categorise_trainer_experience(
+                getattr(getattr(partant, "trainer", None), "career_starts", None)
+            )
+            trainer_experience_bucket = trainer_experience_breakdown.setdefault(
+                trainer_exp_segment,
+                {
+                    "label": trainer_exp_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "actors": set(),
+                    "career_starts": [],
+                },
+            )
+            trainer_experience_bucket["label"] = trainer_exp_label
+            trainer_experience_bucket["truths"].append(is_top3)
+            trainer_experience_bucket["predictions"].append(predicted_label)
+            trainer_experience_bucket["scores"].append(probability)
+            trainer_experience_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.trainer_id:
+                trainer_experience_bucket.setdefault("actors", set()).add(partant.trainer_id)
+            if normalised_trainer_starts is not None:
+                trainer_experience_bucket.setdefault("career_starts", []).append(
+                    int(normalised_trainer_starts)
+                )
 
             owner_trainer_identifier = f"{owner_key}__{trainer_identifier}"
             owner_trainer_label = f"{owner_label} × {trainer_label}"
@@ -6342,6 +6526,12 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         jockey_trainer_performance = _summarise_jockey_trainer_performance(
             jockey_trainer_breakdown
         )
+        jockey_experience_performance = _summarise_experience_performance(
+            jockey_experience_breakdown
+        )
+        trainer_experience_performance = _summarise_experience_performance(
+            trainer_experience_breakdown
+        )
         jockey_nationality_performance = _summarise_nationality_performance(
             jockey_nationality_breakdown
         )
@@ -6441,6 +6631,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_trainer_performance": jockey_trainer_performance,
+            "jockey_experience_performance": jockey_experience_performance,
+            "trainer_experience_performance": trainer_experience_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
@@ -6517,6 +6709,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_trainer_performance": jockey_trainer_performance,
+            "jockey_experience_performance": jockey_experience_performance,
+            "trainer_experience_performance": trainer_experience_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
@@ -6609,6 +6803,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
             "jockey_trainer_performance": jockey_trainer_performance,
+            "jockey_experience_performance": jockey_experience_performance,
+            "trainer_experience_performance": trainer_experience_performance,
             "jockey_nationality_performance": jockey_nationality_performance,
             "trainer_nationality_performance": trainer_nationality_performance,
             "hippodrome_performance": hippodrome_performance,
