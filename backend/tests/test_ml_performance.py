@@ -142,6 +142,7 @@ def _seed_reference_data(db: Session) -> None:
             birth_year=current_year - 4,
             owner="Ecurie Horizon",
             coat_color="Bai",
+            breed="Pur-Sang",
         ),
         Horse(
             name="Cheval B",
@@ -149,6 +150,7 @@ def _seed_reference_data(db: Session) -> None:
             birth_year=current_year - 3,
             owner="Ecurie Horizon",
             coat_color="Alezane",
+            breed="Anglo-Arabe",
         ),
         Horse(
             name="Cheval C",
@@ -156,6 +158,7 @@ def _seed_reference_data(db: Session) -> None:
             birth_year=current_year - 5,
             owner="Ecurie Equinoxe",
             coat_color="Bai brun",
+            breed="Pur sang",
         ),
         Horse(
             name="Cheval D",
@@ -163,6 +166,7 @@ def _seed_reference_data(db: Session) -> None:
             birth_year=current_year - 7,
             owner="Ecurie Equinoxe",
             coat_color="Gris Pommelé",
+            breed="Trotteur Français",
         ),
         Horse(
             name="Cheval E",
@@ -170,6 +174,7 @@ def _seed_reference_data(db: Session) -> None:
             birth_year=current_year - 9,
             owner="Ecurie Boreale",
             coat_color="Alezan brûlé",
+            breed="AQPS",
         ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
@@ -1455,6 +1460,71 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_coat_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
     assert unknown_coat_segment["input_examples"] == []
 
+    horse_breed_performance = metrics["horse_breed_performance"]
+    assert set(horse_breed_performance.keys()) == {
+        "anglo_arabe",
+        "aqps",
+        "pur_sang",
+        "trotteur_francais",
+        "unknown",
+    }
+
+    pur_sang_segment = horse_breed_performance["pur_sang"]
+    assert pur_sang_segment["label"] == "Pur-sang"
+    assert pur_sang_segment["samples"] == 2
+    assert pur_sang_segment["courses"] == 1
+    assert pur_sang_segment["horses"] == 2
+    assert pur_sang_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert pur_sang_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert pur_sang_segment["input_examples"] == ["Pur sang", "Pur-Sang"]
+
+    anglo_segment = horse_breed_performance["anglo_arabe"]
+    assert anglo_segment["label"] == "Anglo-arabe"
+    assert anglo_segment["samples"] == 1
+    assert anglo_segment["courses"] == 1
+    assert anglo_segment["horses"] == 1
+    assert anglo_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert anglo_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert anglo_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert anglo_segment["input_examples"] == ["Anglo-Arabe"]
+
+    trot_segment = horse_breed_performance["trotteur_francais"]
+    assert trot_segment["label"] == "Trotteur français"
+    assert trot_segment["samples"] == 1
+    assert trot_segment["courses"] == 1
+    assert trot_segment["horses"] == 1
+    assert trot_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert trot_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert trot_segment["input_examples"] == ["Trotteur Français"]
+
+    aqps_segment = horse_breed_performance["aqps"]
+    assert aqps_segment["label"] == "AQPS"
+    assert aqps_segment["samples"] == 1
+    assert aqps_segment["courses"] == 1
+    assert aqps_segment["horses"] == 1
+    assert aqps_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert aqps_segment["input_examples"] == ["AQPS"]
+
+    unknown_breed_segment = horse_breed_performance["unknown"]
+    assert unknown_breed_segment["label"] == "Race inconnue"
+    assert unknown_breed_segment["samples"] == 1
+    assert unknown_breed_segment["courses"] == 1
+    assert unknown_breed_segment["horses"] == 1
+    assert unknown_breed_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_breed_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_breed_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert unknown_breed_segment["input_examples"] == []
+
     owner_performance = metrics["owner_performance"]
     assert set(owner_performance.keys()) == {
         "ecurie_boreale",
@@ -2021,9 +2091,12 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["reunion_number_performance"]["morning_cards"]["samples"] == 3
     assert result["reunion_number_performance"]["day_cards"]["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
+    assert result["horse_breed_performance"]["pur_sang"]["samples"] == 2
+    assert result["horse_breed_performance"]["aqps"]["label"] == "AQPS"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "temperature_band_performance" in result
+    assert "horse_breed_performance" in result
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -2097,6 +2170,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_coat_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_breed_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
