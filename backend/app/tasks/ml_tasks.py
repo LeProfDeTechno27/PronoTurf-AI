@@ -385,88 +385,6 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
-def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
-    """Calcule un percentile (0-1) par interpolation linéaire."""
-
-    if not sorted_values:
-        return None
-
-    # On borne explicitement la valeur demandée pour éviter les dépassements.
-    percentile = max(0.0, min(1.0, percentile))
-
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
-    position = percentile * (len(sorted_values) - 1)
-    lower_index = int(position)
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-    weight = position - lower_index
-
-    lower_value = float(sorted_values[lower_index])
-    upper_value = float(sorted_values[upper_index])
-    return lower_value + (upper_value - lower_value) * weight
-
-
-def _summarise_probability_distribution(
-    truths: List[int], scores: List[float]
-) -> Dict[str, object]:
-    """Analyse la distribution des probabilités prédites et leur séparation.
-
-    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
-    - quelle est la dispersion des probabilités émises par le modèle ?
-    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
-      perdants ?
-    - quelle marge existe-t-il entre les médianes positives et négatives ?
-
-    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
-    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
-    des taux globaux stables.
-    """
-
-    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
-    cleaned_scores = [float(score) for score in scores if score is not None]
-    positives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 1
-    ]
-    negatives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 0
-    ]
-
-    def _build_stats(values: List[float]) -> Dict[str, object]:
-        """Construit les statistiques descriptives pour une liste de scores."""
-
-        if not values:
-            return {
-                "count": 0,
-                "average": None,
-                "median": None,
-                "p10": None,
-                "p90": None,
-                "min": None,
-                "max": None,
-                "std": None,
-            }
-
-        ordered = sorted(values)
-        mean_value = _safe_average(ordered)
-        std_value: Optional[float] = None
-        if mean_value is not None:
-            if len(ordered) == 1:
-                std_value = 0.0
-            else:
-                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
-                std_value = sqrt(variance)
-
-def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
-    """Calcule un percentile (0-1) par interpolation linéaire."""
-
-    if not sorted_values:
-        return None
-
     # On borne explicitement la valeur demandée pour éviter les dépassements.
     percentile = max(0.0, min(1.0, percentile))
 
@@ -1402,6 +1320,214 @@ def _summarise_place_probability_distribution(
         "surprising_losses": [
             _format_sample(record) for record in surprising_losses
         ],
+    }
+
+
+def _summarise_place_probability_gain_curve(
+    samples: List[Dict[str, object]],
+    *,
+    steps: int = 5,
+) -> Dict[str, object]:
+    """Construit une courbe de gain dédiée aux probabilités de place.
+
+    Cette vue complète l'analyse de calibration/distribution en illustrant la
+    capacité du modèle à capturer rapidement les chevaux qui terminent dans les
+    trois premiers lorsqu'on ne retient que les meilleures probabilités de
+    place. Elle expose également des exemples de réunions très performantes ou
+    nécessitant une revue.
+    """
+
+    if not samples:
+        return {
+            "samples": 0,
+            "positives": 0,
+            "curve": [],
+            "best_step": None,
+            "first_step": None,
+            "per_course": [],
+            "best_courses": [],
+            "courses_needing_attention": [],
+        }
+
+    cleaned: List[Dict[str, object]] = []
+    per_course: Dict[Tuple[Optional[int], str], Dict[str, object]] = {}
+
+    for sample in samples:
+        try:
+            probability = float(sample.get("probability", 0.0))
+        except (TypeError, ValueError):  # pragma: no cover - robustesse entrée
+            probability = 0.0
+
+        probability = min(max(probability, 0.0), 1.0)
+        outcome = 1 if sample.get("outcome") else 0
+        course_id = sample.get("course_id")
+        label = str(sample.get("course_label") or "Course inconnue")
+
+        course_key = (course_id, label)
+        course_payload = per_course.setdefault(
+            course_key,
+            {
+                "course_id": course_id,
+                "label": label,
+                "entries": [],
+            },
+        )
+
+        record = {
+            "probability": probability,
+            "outcome": outcome,
+            "horse_name": sample.get("horse_name"),
+            "final_position": sample.get("final_position"),
+            "predicted_position": sample.get("predicted_position"),
+            "horse_id": sample.get("horse_id"),
+        }
+        course_payload.setdefault("entries", []).append(record)
+        cleaned.append(record)
+
+    total_samples = len(cleaned)
+    total_positive = sum(int(entry["outcome"]) for entry in cleaned)
+
+    if total_samples == 0:
+        return {
+            "samples": 0,
+            "positives": total_positive,
+            "curve": [],
+            "best_step": None,
+            "first_step": None,
+            "per_course": [],
+            "best_courses": [],
+            "courses_needing_attention": [],
+        }
+
+    ordered = sorted(cleaned, key=lambda entry: entry["probability"], reverse=True)
+
+    curve: List[Dict[str, Optional[float]]] = []
+    cumulative_hits = 0
+
+    for step in range(1, steps + 1):
+        cutoff = max(1, ceil(total_samples * (step / steps)))
+        selection = ordered[:cutoff]
+        cumulative_hits = sum(int(entry["outcome"]) for entry in selection)
+
+        coverage = cutoff / total_samples if total_samples else None
+        cumulative_hit_rate = cumulative_hits / cutoff if cutoff else None
+        capture_rate: Optional[float] = None
+        if total_positive:
+            capture_rate = cumulative_hits / total_positive
+
+        lift: Optional[float] = None
+        if coverage and capture_rate is not None and coverage > 0:
+            lift = capture_rate / coverage
+
+        curve.append(
+            {
+                "step": step,
+                "coverage": coverage,
+                "observations": cutoff,
+                "cumulative_hit_rate": cumulative_hit_rate,
+                "capture_rate": capture_rate,
+                "lift": lift,
+                "captured_places": cumulative_hits,
+                "remaining_places": (
+                    total_positive - cumulative_hits if total_positive else None
+                ),
+            }
+        )
+
+    best_step = None
+    for point in curve:
+        lift = point.get("lift")
+        if lift is None:
+            continue
+        if best_step is None or lift > best_step.get("lift", 0.0):
+            best_step = dict(point)
+
+    def _format_example(entry: Dict[str, object]) -> Dict[str, object]:
+        """Construit une fiche compacte pour illustrer une sélection."""
+
+        return {
+            "horse_name": entry.get("horse_name"),
+            "probability": entry.get("probability"),
+            "final_position": entry.get("final_position"),
+            "predicted_position": entry.get("predicted_position"),
+        }
+
+    per_course_summary: List[Dict[str, object]] = []
+    for payload in per_course.values():
+        entries: List[Dict[str, object]] = sorted(
+            payload.get("entries", []),
+            key=lambda entry: entry["probability"],
+            reverse=True,
+        )
+        if not entries:
+            continue
+
+        total = len(entries)
+        positives = sum(int(entry["outcome"]) for entry in entries)
+        top_selection_size = max(1, ceil(total / steps))
+        top_selection = entries[:top_selection_size]
+        captured = sum(int(entry["outcome"]) for entry in top_selection)
+        missed_positives = (
+            sum(int(entry["outcome"]) for entry in entries[top_selection_size:])
+            if top_selection_size < total
+            else 0
+        )
+        capture_rate = captured / positives if positives else None
+
+        course_summary = {
+            "course_id": payload.get("course_id"),
+            "label": payload.get("label"),
+            "total_runners": total,
+            "positives": positives,
+            "top_selection_size": top_selection_size,
+            "captured": captured,
+            "missed_positives": int(missed_positives),
+            "capture_rate": capture_rate,
+            "coverage": top_selection_size / total if total else None,
+            "captured_examples": [
+                _format_example(entry)
+                for entry in top_selection
+                if entry.get("outcome") == 1
+            ][:3],
+            "missed_place_examples": [
+                _format_example(entry)
+                for entry in entries[top_selection_size:]
+                if entry.get("outcome") == 1
+            ][:3],
+        }
+        per_course_summary.append(course_summary)
+
+    best_courses = [
+        entry
+        for entry in sorted(
+            [item for item in per_course_summary if item.get("capture_rate") is not None],
+            key=lambda item: (item.get("capture_rate", 0.0), item.get("captured", 0)),
+            reverse=True,
+        )[:3]
+    ]
+
+    courses_needing_attention = [
+        entry
+        for entry in sorted(
+            per_course_summary,
+            key=lambda item: (
+                -int(item.get("missed_positives", 0)),
+                item.get("capture_rate") if item.get("capture_rate") is not None else float("inf"),
+            ),
+        )[:3]
+    ]
+
+    first_step = dict(curve[0]) if curve else None
+
+    return {
+        "samples": total_samples,
+        "positives": total_positive,
+        "curve": curve,
+        "best_step": best_step,
+        "first_step": first_step,
+        "per_course": per_course_summary,
+        "best_courses": best_courses,
+        "courses_needing_attention": courses_needing_attention,
     }
 
 
@@ -10003,6 +10129,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         place_probability_distribution = _summarise_place_probability_distribution(
             place_probability_samples
         )
+        place_probability_gain_curve = _summarise_place_probability_gain_curve(
+            place_probability_samples,
+            steps=5,
+        )
 
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
@@ -10486,6 +10616,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_performance": place_probability_performance,
             "place_probability_quality": place_probability_quality,
             "place_probability_distribution": place_probability_distribution,
+            "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
@@ -10582,6 +10713,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_performance": place_probability_performance,
             "place_probability_quality": place_probability_quality,
             "place_probability_distribution": place_probability_distribution,
+            "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
@@ -10706,6 +10838,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_quality": place_probability_quality,
             "place_probability_performance": place_probability_performance,
             "place_probability_distribution": place_probability_distribution,
+            "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,

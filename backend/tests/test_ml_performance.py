@@ -589,6 +589,31 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert surprising_losses[0]["probability"] == pytest.approx(0.36, rel=1e-3)
     assert surprising_losses[0]["horse_name"] == "Cheval E"
 
+    place_gain_curve = metrics["place_probability_gain_curve"]
+    assert place_gain_curve["samples"] == 6
+    assert place_gain_curve["positives"] == 4
+    first_step = place_gain_curve["first_step"]
+    assert first_step["step"] == 1
+    assert first_step["coverage"] == pytest.approx(1 / 3, rel=1e-3)
+    assert first_step["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+    best_step = place_gain_curve["best_step"]
+    assert best_step["step"] == 1
+    assert best_step["lift"] == pytest.approx(1.5, rel=1e-3)
+    gain_curve_steps = place_gain_curve["curve"]
+    assert len(gain_curve_steps) == 5
+    assert gain_curve_steps[2]["captured_places"] == 4
+    assert gain_curve_steps[2]["coverage"] == pytest.approx(4 / 6, rel=1e-3)
+    per_course_gain = {
+        entry["label"]: entry for entry in place_gain_curve["per_course"]
+    }
+    assert per_course_gain["R1C1"]["captured"] == 1
+    assert per_course_gain["R1C1"]["missed_positives"] == 1
+    assert per_course_gain["R1C1"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert per_course_gain["R1C2"]["captured_examples"][0]["probability"] == pytest.approx(
+        0.74,
+        rel=1e-3,
+    )
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2663,6 +2688,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_performance" in result
     assert "place_probability_quality" in result
     assert "place_probability_distribution" in result
+    assert "place_probability_gain_curve" in result
     assert "place_probability_calibration" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
@@ -2719,8 +2745,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
         stored_place_distribution = stored_metrics["last_evaluation"]["metrics"]["place_probability_distribution"]
         stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
+        stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"]["place_probability_gain_curve"]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+        assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
@@ -2777,6 +2805,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "place_probability_quality" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_calibration" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_distribution" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
