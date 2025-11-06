@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from math import ceil, sqrt
+from statistics import median
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -1551,6 +1552,116 @@ def _summarise_probability_margin_performance(
         margin_metrics[segment] = summary
 
     return margin_metrics
+
+
+def _summarise_winner_rankings(
+    winner_ranks: List[int],
+    total_courses: int,
+) -> Dict[str, Optional[float]]:
+    """Condense la position des vainqueurs dans le classement du modèle.
+
+    Cette synthèse fournit un complément indispensable aux indicateurs « Top 1 »
+    et « Top 3 » déjà exposés :
+
+    * ``mean_rank`` et ``median_rank`` révèlent la place typique du gagnant dans
+      le classement probabiliste ;
+    * ``mean_reciprocal_rank`` (MRR) mesure la qualité moyenne de ranking sur
+      l'ensemble des courses, en valorisant fortement les vainqueurs trouvés en
+      tête de liste ;
+    * ``share_top1`` et ``share_top3`` suivent la fréquence des gagnants situés
+      dans les toutes premières positions, normalisées par le volume total de
+      courses évaluées afin de suivre aisément l'évolution d'une exécution à
+      l'autre ;
+    * ``distribution`` conserve un histogramme ordonné des rangs observés pour
+      faciliter l'analyse terrain.
+    """
+
+    if not winner_ranks:
+        return {
+            "evaluated_courses": total_courses,
+            "mean_rank": None,
+            "median_rank": None,
+            "mean_reciprocal_rank": None,
+            "share_top1": None,
+            "share_top3": None,
+            "distribution": {},
+        }
+
+    distribution = Counter(winner_ranks)
+    evaluated = len(winner_ranks)
+    mean_rank = sum(winner_ranks) / evaluated
+    median_rank = float(median(winner_ranks))
+    mean_reciprocal_rank = sum(1.0 / rank for rank in winner_ranks) / evaluated
+
+    top1_share = (distribution.get(1, 0) / total_courses) if total_courses else None
+    top3_share = (
+        sum(count for rank, count in distribution.items() if rank <= 3) / total_courses
+        if total_courses
+        else None
+    )
+
+    return {
+        "evaluated_courses": total_courses,
+        "mean_rank": mean_rank,
+        "median_rank": median_rank,
+        "mean_reciprocal_rank": mean_reciprocal_rank,
+        "share_top1": top1_share,
+        "share_top3": top3_share,
+        "distribution": {
+            f"rank_{rank}": count for rank, count in sorted(distribution.items())
+        },
+    }
+
+
+def _summarise_topn_performance(
+    topn_tracking: Dict[int, Dict[str, object]],
+    total_courses: int,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Agrège les statistiques de réussite pour les ``Top N`` du modèle.
+
+    Cette synthèse complète les indicateurs globaux (Top 1 / Top 3) en conservant
+    un historique par taille de panier. Chaque entrée rapporte :
+
+    * la proportion de courses couvertes par le segment (``coverage_rate``) ;
+    * la fréquence à laquelle un gagnant ou un placé (Top 3) est capturé ;
+    * la probabilité moyenne/médiane proposée sur les chevaux retenus ;
+    * la meilleure position finale moyenne/médiane observée dans le segment ;
+    * les volumes exacts de courses et de sélections contribuant au calcul.
+    """
+
+    summary: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for top_n, payload in sorted(topn_tracking.items()):
+        courses = int(payload.get("courses", 0))
+        probabilities = [
+            float(value)
+            for value in payload.get("probabilities", [])
+            if value is not None
+        ]
+        best_finishes = [
+            float(value)
+            for value in payload.get("best_finishes", [])
+            if value is not None
+        ]
+        winner_hits = int(payload.get("winner_hits", 0))
+        place_hits = int(payload.get("place_hits", 0))
+
+        summary[f"top{top_n}"] = {
+            "label": f"Top {top_n}",
+            "courses_covered": courses,
+            "coverage_rate": (courses / total_courses) if total_courses else None,
+            "samples": len(probabilities),
+            "winner_hits": winner_hits,
+            "winner_hit_rate": (winner_hits / courses) if courses else None,
+            "top3_hits": place_hits,
+            "top3_hit_rate": (place_hits / courses) if courses else None,
+            "average_probability": _safe_average(probabilities),
+            "median_probability": float(median(probabilities)) if probabilities else None,
+            "best_finish_average": _safe_average(best_finishes),
+            "best_finish_median": float(median(best_finishes)) if best_finishes else None,
+        }
+
+    return summary
 
 
 def _categorise_experience_level(
@@ -5423,6 +5534,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_version_breakdown: Dict[str, Dict[str, object]] = {}
         course_stats: Dict[int, Dict[str, object]] = {}
         prediction_rank_breakdown: Dict[str, Dict[str, object]] = {}
+        topn_tracking: Dict[int, Dict[str, object]] = {}
         final_position_breakdown: Dict[str, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
@@ -7275,28 +7387,84 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         top3_course_hits = 0
         winner_probabilities: List[float] = []
         top3_probabilities: List[float] = []
+        winner_ranks: List[int] = []
 
         for data in course_stats.values():
-            predictions: List[Dict[str, object]] = data["predictions"]  # type: ignore[assignment]
-            sorted_predictions = sorted(predictions, key=lambda item: item["probability"], reverse=True)
+            predictions = data["predictions"]  # type: ignore[assignment]
+            sorted_predictions = sorted(
+                predictions, key=lambda item: item["probability"], reverse=True
+            )
             if not sorted_predictions:
                 continue
 
-            winner_entry = next((item for item in sorted_predictions if item["final_position"] == 1), None)
-            if winner_entry:
-                winner_probabilities.append(float(winner_entry["probability"]))
+            ranked_entries: List[Tuple[Dict[str, object], Optional[int]]] = []
+            for item in sorted_predictions:
+                final_position_raw = item.get("final_position")
+                try:
+                    final_position_value = (
+                        int(final_position_raw)
+                        if final_position_raw is not None
+                        else None
+                    )
+                except (TypeError, ValueError):  # pragma: no cover - sécurité sur données corrompues
+                    final_position_value = None
 
-            top1 = sorted_predictions[0]
-            if top1.get("final_position") == 1:
+                ranked_entries.append((item, final_position_value))
+
+            # Conserve des indicateurs par panier Top N (Top 1 → Top 5) afin de
+            # suivre la précision cumulative de la sélection du modèle.
+            top_limit = min(len(ranked_entries), 5)
+            for top_n in range(1, top_limit + 1):
+                bucket = topn_tracking.setdefault(
+                    top_n,
+                    {
+                        "courses": 0,
+                        "winner_hits": 0,
+                        "place_hits": 0,
+                        "probabilities": [],
+                        "best_finishes": [],
+                    },
+                )
+                bucket["courses"] += 1
+                top_subset = ranked_entries[:top_n]
+                bucket["probabilities"].extend(
+                    float(entry_data[0]["probability"]) for entry_data in top_subset
+                )
+                finish_positions = [
+                    pos for _, pos in top_subset if pos is not None
+                ]
+                if finish_positions:
+                    bucket["best_finishes"].append(min(finish_positions))
+                if any(pos == 1 for _, pos in top_subset if pos is not None):
+                    bucket["winner_hits"] += 1
+                if any(pos is not None and pos <= 3 for _, pos in top_subset):
+                    bucket["place_hits"] += 1
+
+            winner_rank: Optional[int] = None
+            for index, (item, final_position_value) in enumerate(ranked_entries, start=1):
+                if final_position_value == 1 and winner_rank is None:
+                    winner_rank = index
+                    winner_probabilities.append(float(item["probability"]))
+
+                if final_position_value is not None and final_position_value <= 3:
+                    top3_probabilities.append(float(item["probability"]))
+
+            if winner_rank is not None:
+                winner_ranks.append(winner_rank)
+
+            top1_position = ranked_entries[0][1]
+            if top1_position == 1:
                 top1_correct += 1
 
-            top3_predictions = sorted_predictions[:3]
-            if any(item.get("final_position") and int(item["final_position"]) <= 3 for item in top3_predictions):
+            top3_predictions = ranked_entries[:3]
+            if any(
+                final_position_value is not None and final_position_value <= 3
+                for _, final_position_value in top3_predictions
+            ):
                 top3_course_hits += 1
 
-            for item in sorted_predictions:
-                if item.get("final_position") and int(item["final_position"]) <= 3:
-                    top3_probabilities.append(float(item["probability"]))
+        winner_rank_metrics = _summarise_winner_rankings(winner_ranks, course_count)
+        topn_performance = _summarise_topn_performance(topn_tracking, course_count)
 
         calibration_table = _build_calibration_table(y_scores, y_true, bins=5)
         # Résume l'ampleur des écarts de calibration pour suivre un indicateur
@@ -7548,6 +7716,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_negative_probability": avg_negative_prob,
             "top1_accuracy": top1_correct / course_count if course_count else None,
             "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
+            "winner_rank_metrics": winner_rank_metrics,
+            "topn_performance": topn_performance,
             "average_winner_probability": _safe_average(winner_probabilities),
             "average_top3_probability": _safe_average(top3_probabilities),
             "calibration_table": calibration_table,
@@ -7641,6 +7811,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "metrics": metrics,
             "confidence_distribution": confidence_distribution,
             "model_version_breakdown": dict(model_versions),
+            "winner_rank_metrics": winner_rank_metrics,
+            "topn_performance": topn_performance,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "win_probability_performance": win_probability_performance,
@@ -7751,6 +7923,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "topn_performance": topn_performance,
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,

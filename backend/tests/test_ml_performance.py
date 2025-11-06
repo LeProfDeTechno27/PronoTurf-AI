@@ -437,6 +437,24 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["top1_accuracy"] == pytest.approx(0.5, rel=1e-3)
     assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
 
+    winner_rank_metrics = metrics["winner_rank_metrics"]
+    assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
+    assert winner_rank_metrics["median_rank"] == pytest.approx(2.0, rel=1e-3)
+    assert winner_rank_metrics["share_top1"] == pytest.approx(0.5, rel=1e-3)
+    assert winner_rank_metrics["share_top3"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_rank_metrics["distribution"]["rank_1"] == 1
+    assert winner_rank_metrics["distribution"]["rank_3"] == 1
+
+    topn_performance = metrics["topn_performance"]
+    assert set(topn_performance.keys()) == {"top1", "top2", "top3"}
+    assert topn_performance["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert topn_performance["top1"]["top3_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert topn_performance["top1"]["median_probability"] == pytest.approx(0.475, rel=1e-3)
+    assert topn_performance["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert topn_performance["top2"]["best_finish_average"] == pytest.approx(1.5, rel=1e-3)
+    assert topn_performance["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert topn_performance["top3"]["best_finish_average"] == pytest.approx(1.0, rel=1e-3)
+
     calibration_table = metrics["calibration_table"]
     assert len(brier_components["bins"]) == len(calibration_table)
     assert brier_components["bins"][0]["reliability_contribution"] == pytest.approx(0.00375, rel=1e-3)
@@ -2157,6 +2175,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
+    assert "topn_performance" in result
+    assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -2171,10 +2191,21 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
+        stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
+        assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
+        assert stored_winner_rank["distribution"]["rank_1"] == 1
+        assert stored_winner_rank["distribution"]["rank_3"] == 1
         stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
         assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
         assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)
         assert stored_brier["skill_score"] == pytest.approx(-0.395, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top1"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top3"] == pytest.approx(1.0, rel=1e-3)
+        stored_topn_metrics = stored_metrics["last_evaluation"]["metrics"]["topn_performance"]
+        assert stored_topn_metrics["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_topn_metrics["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+        stored_topn_summary = stored_metrics["last_evaluation"]["topn_performance"]
+        assert stored_topn_summary["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
