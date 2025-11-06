@@ -436,6 +436,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
     assert metrics["top1_accuracy"] == pytest.approx(0.5, rel=1e-3)
     assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert metrics["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
+    assert metrics["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
 
     winner_rank_metrics = metrics["winner_rank_metrics"]
     assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
@@ -2204,6 +2206,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
         stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
         assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_winner_rank["distribution"]["rank_1"] == 1

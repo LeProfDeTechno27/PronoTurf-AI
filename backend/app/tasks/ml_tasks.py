@@ -4,7 +4,7 @@ import json
 import logging
 from collections import Counter
 from datetime import date, datetime, time, timedelta
-from math import ceil, sqrt
+from math import ceil, sqrt, log2
 from statistics import median
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -247,6 +247,49 @@ def _compute_binary_classification_insights(
         "negative_predictive_value": negative_predictive_value,
         "balanced_accuracy": balanced_accuracy,
     }
+
+
+def _compute_normalised_dcg(
+    ranked_entries: List[Tuple[Dict[str, object], Optional[int]]],
+    cutoff: int,
+) -> Optional[float]:
+    """Calcule un NDCG@k binaire basé sur la position finale des partants.
+
+    Le score retourne ``1.0`` lorsque les chevaux réellement placés (≤ 3) sont
+    correctement classés dans les ``cutoff`` premiers pronostics, ``0`` quand ils
+    sont relégués en bas de liste. S'il n'existe aucune pertinence dans les
+    données (aucun podium identifié), la fonction renvoie ``1.0`` par convention
+    afin de ne pas pénaliser une réunion sans signal exploitable.
+    """
+
+    if not ranked_entries:
+        return None
+
+    effective_cutoff = max(1, cutoff)
+
+    # Transforme les positions finales en pertinence (1 si podium, 0 sinon).
+    relevances = [
+        1 if final_position is not None and final_position <= 3 else 0
+        for _, final_position in ranked_entries
+    ]
+
+    predicted_relevances = relevances[:effective_cutoff]
+    ideal_relevances = sorted(relevances, reverse=True)[:effective_cutoff]
+
+    def _dcg(values: List[int]) -> float:
+        """Calcule le Discounted Cumulative Gain d'une liste binaire."""
+
+        return sum(
+            relevance / log2(index + 2)
+            for index, relevance in enumerate(values)
+            if relevance
+        )
+
+    ideal_dcg = _dcg(ideal_relevances)
+    if ideal_dcg == 0:
+        return 1.0
+
+    return _dcg(predicted_relevances) / ideal_dcg
 
 
 def _build_calibration_table(
@@ -5597,6 +5640,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         course_stats: Dict[int, Dict[str, object]] = {}
         prediction_rank_breakdown: Dict[str, Dict[str, object]] = {}
         topn_tracking: Dict[int, Dict[str, object]] = {}
+        ndcg_at_3_scores: List[float] = []
+        ndcg_at_5_scores: List[float] = []
         final_position_breakdown: Dict[str, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
@@ -7531,6 +7576,14 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 if any(pos is not None and pos <= 3 for _, pos in top_subset):
                     bucket["place_hits"] += 1
 
+            ndcg_at_3_value = _compute_normalised_dcg(ranked_entries, 3)
+            if ndcg_at_3_value is not None:
+                ndcg_at_3_scores.append(ndcg_at_3_value)
+
+            ndcg_at_5_value = _compute_normalised_dcg(ranked_entries, 5)
+            if ndcg_at_5_value is not None:
+                ndcg_at_5_scores.append(ndcg_at_5_value)
+
             winner_rank: Optional[int] = None
             for index, (item, final_position_value) in enumerate(ranked_entries, start=1):
                 if final_position_value == 1 and winner_rank is None:
@@ -7808,6 +7861,8 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_negative_probability": avg_negative_prob,
             "top1_accuracy": top1_correct / course_count if course_count else None,
             "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
+            "ndcg_at_3": _safe_average(ndcg_at_3_scores),
+            "ndcg_at_5": _safe_average(ndcg_at_5_scores),
             "winner_rank_metrics": winner_rank_metrics,
             "topn_performance": topn_performance,
             "average_winner_probability": _safe_average(winner_probabilities),
