@@ -1443,6 +1443,116 @@ def _summarise_prediction_outcome_performance(
     return outcome_metrics
 
 
+def _categorise_probability_margin(
+    primary_probability: Optional[object],
+    secondary_probability: Optional[object],
+) -> Tuple[str, str, Optional[float]]:
+    """Classe l'écart entre les deux meilleurs pronostics d'une course."""
+
+    if primary_probability is None:
+        return "margin_unknown", "Marge inconnue", None
+
+    try:
+        top_probability = float(primary_probability)
+    except (TypeError, ValueError):  # pragma: no cover - robustesse face à des valeurs corrompues
+        return "margin_unknown", "Marge inconnue", None
+
+    # Lorsque la deuxième cote est absente (course mono-partant ou données incomplètes),
+    # on conserve un segment dédié afin de ne pas mélanger ces cas aux marges habituelles.
+    if secondary_probability is None:
+        return "margin_singleton", "Sans challenger déclaré", top_probability
+
+    try:
+        runner_up_probability = float(secondary_probability)
+    except (TypeError, ValueError):  # pragma: no cover - sécurité supplémentaire
+        return "margin_unknown", "Marge inconnue", None
+
+    margin = max(0.0, min(top_probability - runner_up_probability, 1.0))
+    # Arrondi technique pour éviter qu'un flottant représenté comme 0.0500000000001
+    # ne bascule dans la tranche supérieure alors qu'il devrait rester "≤ 5 pts".
+    margin = round(margin, 10)
+
+    if margin <= 0.05:
+        return "margin_tight", "Très serré (≤ 5 pts)", margin
+
+    if margin <= 0.10:
+        return "margin_close", "Serré (5-10 pts)", margin
+
+    if margin <= 0.20:
+        return "margin_buffered", "Dégagé (10-20 pts)", margin
+
+    return "margin_clear", "Très confortable (> 20 pts)", margin
+
+
+def _summarise_probability_margin_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Analyse la fiabilité des pronostics selon la marge sur le dauphin."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    margin_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = [float(value) for value in payload.get("scores", []) if value is not None]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        margins = [
+            float(value)
+            for value in payload.get("margins", [])
+            if value is not None
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment),
+                "share": (summary["samples"] / total_samples) if total_samples else None,
+                "courses": len(courses),
+                "horses": len(horses),
+                "observed_positive_rate": sum(truths) / len(truths) if truths else None,
+                "average_probability": _safe_average(scores),
+            }
+        )
+
+        if margins:
+            ordered_margins = sorted(margins)
+            midpoint = len(ordered_margins) // 2
+            if len(ordered_margins) % 2 == 0:
+                median_margin = (
+                    ordered_margins[midpoint - 1] + ordered_margins[midpoint]
+                ) / 2
+            else:
+                median_margin = ordered_margins[midpoint]
+
+            summary.update(
+                {
+                    "average_margin": _safe_average(margins),
+                    "median_margin": median_margin,
+                    "min_margin": ordered_margins[0],
+                    "max_margin": ordered_margins[-1],
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "average_margin": None,
+                    "median_margin": None,
+                    "min_margin": None,
+                    "max_margin": None,
+                }
+            )
+
+        margin_metrics[segment] = summary
+
+    return margin_metrics
+
+
 def _categorise_experience_level(
     career_starts: Optional[object],
     *,
@@ -5261,6 +5371,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         odds_band_breakdown: Dict[str, Dict[str, object]] = {}
         probability_edge_breakdown: Dict[str, Dict[str, object]] = {}
         probability_error_breakdown: Dict[str, Dict[str, object]] = {}
+        probability_margin_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         horse_coat_breakdown: Dict[str, Dict[str, object]] = {}
@@ -7034,6 +7145,51 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 reverse=True,
             )
 
+            # Calcule l'écart entre les deux meilleures probabilités pour suivre
+            # la stabilité du favori face à son dauphin. Ce tableau de bord
+            # permet de distinguer les courses remportées par un favori solide
+            # de celles où le modèle hésite entre plusieurs partants.
+            primary_probability = sorted_predictions[0].get("probability")
+            secondary_probability = (
+                sorted_predictions[1].get("probability")
+                if len(sorted_predictions) > 1
+                else None
+            )
+            (
+                margin_segment,
+                margin_label,
+                normalised_margin,
+            ) = _categorise_probability_margin(primary_probability, secondary_probability)
+            margin_bucket = probability_margin_breakdown.setdefault(
+                margin_segment,
+                {
+                    "label": margin_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "margins": [],
+                    "courses": set(),
+                    "horses": set(),
+                },
+            )
+            margin_bucket["label"] = margin_label
+            margin_bucket["truths"].append(int(sorted_predictions[0].get("truth", 0)))
+            margin_bucket["predictions"].append(
+                int(sorted_predictions[0].get("predicted_label", 0))
+            )
+            margin_bucket["scores"].append(float(primary_probability or 0.0))
+            margin_bucket.setdefault("courses", set()).add(int(course_id))
+
+            top_horse_id = sorted_predictions[0].get("horse_id")
+            if top_horse_id is not None:
+                try:
+                    margin_bucket.setdefault("horses", set()).add(int(top_horse_id))
+                except (TypeError, ValueError):  # pragma: no cover - sécurité défensive
+                    pass
+
+            if normalised_margin is not None:
+                margin_bucket.setdefault("margins", []).append(normalised_margin)
+
             for rank, sample in enumerate(sorted_predictions, start=1):
                 segment_key, segment_label = _categorise_prediction_rank(rank)
                 bucket = prediction_rank_breakdown.setdefault(
@@ -7252,6 +7408,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prediction_outcome_performance = _summarise_prediction_outcome_performance(
             prediction_outcome_breakdown
         )
+        probability_margin_performance = _summarise_probability_margin_performance(
+            probability_margin_breakdown
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -7409,6 +7568,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
+            "probability_margin_performance": probability_margin_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
@@ -7487,6 +7647,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
+            "probability_margin_performance": probability_margin_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
@@ -7594,6 +7755,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
+            "probability_margin_performance": probability_margin_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,

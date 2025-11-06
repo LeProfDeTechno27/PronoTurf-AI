@@ -1398,6 +1398,35 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert critical_segment["min_absolute_error"] == pytest.approx(0.65, rel=1e-3)
     assert critical_segment["max_absolute_error"] == pytest.approx(0.75, rel=1e-3)
 
+    probability_margin_performance = metrics["probability_margin_performance"]
+    assert set(probability_margin_performance.keys()) == {"margin_clear", "margin_tight"}
+
+    clear_margin_segment = probability_margin_performance["margin_clear"]
+    assert clear_margin_segment["label"] == "Très confortable (> 20 pts)"
+    assert clear_margin_segment["samples"] == 1
+    assert clear_margin_segment["courses"] == 1
+    assert clear_margin_segment["horses"] == 1
+    assert clear_margin_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert clear_margin_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert clear_margin_segment["average_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert clear_margin_segment["average_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["median_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["min_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["max_margin"] == pytest.approx(0.25, rel=1e-3)
+
+    tight_margin_segment = probability_margin_performance["margin_tight"]
+    assert tight_margin_segment["label"] == "Très serré (≤ 5 pts)"
+    assert tight_margin_segment["samples"] == 1
+    assert tight_margin_segment["courses"] == 1
+    assert tight_margin_segment["horses"] == 1
+    assert tight_margin_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert tight_margin_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert tight_margin_segment["average_probability"] == pytest.approx(0.40, rel=1e-3)
+    assert tight_margin_segment["average_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["median_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["min_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["max_margin"] == pytest.approx(0.05, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -2105,6 +2134,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_error_performance"]["error_50_plus"]["average_absolute_error"] == pytest.approx(
         0.7, rel=1e-3
     )
+    assert set(result["probability_margin_performance"].keys()) == {
+        "margin_clear",
+        "margin_tight",
+    }
+    assert result["probability_margin_performance"]["margin_clear"]["average_margin"] == pytest.approx(
+        0.25, rel=1e-3
+    )
+    assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
+        0.05, rel=1e-3
+    )
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -2150,6 +2189,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
