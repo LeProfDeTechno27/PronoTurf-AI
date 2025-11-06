@@ -1597,6 +1597,92 @@ def _summarise_probability_margin_performance(
     return margin_metrics
 
 
+def _categorise_favourite_alignment(
+    model_entry: Optional[Dict[str, object]],
+    pmu_entry: Optional[Dict[str, object]],
+) -> Tuple[str, str]:
+    """Identifie si le favori modèle est aligné avec le favori PMU."""
+
+    if pmu_entry is None:
+        return "pmu_missing", "Favori PMU indisponible"
+
+    if model_entry is None:
+        return "model_missing", "Favori modèle indisponible"
+
+    try:
+        model_horse = model_entry.get("horse_id")
+        pmu_horse = pmu_entry.get("horse_id")
+    except AttributeError:  # pragma: no cover - sécurité sur structures inattendues
+        return "pmu_missing", "Favori PMU indisponible"
+
+    if model_horse is not None and pmu_horse is not None and model_horse == pmu_horse:
+        return "aligned", "Favori modèle aligné sur les cotes PMU"
+
+    return "divergent", "Favori modèle différent du PMU"
+
+
+def _summarise_favourite_alignment_performance(
+    breakdown: Dict[str, Dict[str, object]],
+    total_courses: int,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Synthétise le comportement du favori modèle vs le favori marché."""
+
+    if not breakdown:
+        return {}
+
+    alignment_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        courses: Set[int] = set(payload.get("courses", set()))
+        course_count = len(courses)
+        pmu_courses = int(payload.get("pmu_courses", 0))
+
+        model_truths = [int(value) for value in payload.get("model_truths", [])]
+        model_predictions = [int(value) for value in payload.get("model_predictions", [])]
+        model_scores = [float(value) for value in payload.get("model_scores", [])]
+
+        summary = _summarise_group_performance(model_truths, model_predictions, model_scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment),
+                "courses": course_count,
+                "share": (course_count / total_courses) if total_courses else None,
+                "model_win_rate": (
+                    payload.get("model_wins", 0) / course_count if course_count else None
+                ),
+                "pmu_win_rate": (
+                    payload.get("pmu_wins", 0) / pmu_courses if pmu_courses else None
+                ),
+                "aligned_winner_rate": (
+                    payload.get("aligned_wins", 0) / course_count if course_count else None
+                ),
+                "average_model_probability": _safe_average(model_scores),
+                "average_pmu_probability": _safe_average(
+                    [float(value) for value in payload.get("pmu_scores", [])]
+                ),
+                "average_pmu_odds": _safe_average(
+                    [float(value) for value in payload.get("pmu_odds", [])]
+                ),
+                "average_probability_gap": _safe_average(
+                    [float(value) for value in payload.get("probability_gaps", [])]
+                ),
+                "average_pmu_rank_in_model": _safe_average(
+                    [float(value) for value in payload.get("pmu_ranks", [])]
+                ),
+            }
+        )
+
+        pmu_truths = [int(value) for value in payload.get("pmu_truths", [])]
+        summary["pmu_positive_rate"] = (
+            sum(pmu_truths) / len(pmu_truths) if pmu_truths else None
+        )
+
+        alignment_metrics[segment] = summary
+
+    return alignment_metrics
+
+
 def _summarise_winner_rankings(
     winner_ranks: List[int],
     total_courses: int,
@@ -5833,6 +5919,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         probability_edge_breakdown: Dict[str, Dict[str, object]] = {}
         probability_error_breakdown: Dict[str, Dict[str, object]] = {}
         probability_margin_breakdown: Dict[str, Dict[str, object]] = {}
+        favourite_alignment_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         horse_coat_breakdown: Dict[str, Dict[str, object]] = {}
@@ -6144,6 +6231,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     "truth": int(is_top3),
                     "predicted_label": int(predicted_label),
                     "horse_id": partant.horse_id,
+                    "odds": float(partant.odds_pmu)
+                    if partant.odds_pmu is not None
+                    else None,
                 }
             )
             # Stocke le nombre de partants observés afin de catégoriser ensuite
@@ -7760,6 +7850,97 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             if normalised_margin is not None:
                 margin_bucket.setdefault("margins", []).append(normalised_margin)
 
+            pmu_candidates = [
+                sample
+                for sample in predictions_payload
+                if sample.get("odds") is not None
+            ]
+            pmu_favourite: Optional[Dict[str, object]] = None
+            if pmu_candidates:
+                pmu_favourite = min(
+                    pmu_candidates,
+                    key=lambda item: float(item.get("odds", float("inf"))),
+                )
+
+            top_entry: Optional[Dict[str, object]] = sorted_predictions[0] if sorted_predictions else None
+            pmu_rank: Optional[int] = None
+            if (
+                pmu_favourite is not None
+                and pmu_favourite.get("horse_id") is not None
+                and sorted_predictions
+            ):
+                for rank_index, sample in enumerate(sorted_predictions, start=1):
+                    if sample.get("horse_id") == pmu_favourite.get("horse_id"):
+                        pmu_rank = rank_index
+                        break
+
+            alignment_segment, alignment_label = _categorise_favourite_alignment(
+                top_entry,
+                pmu_favourite,
+            )
+            alignment_bucket = favourite_alignment_breakdown.setdefault(
+                alignment_segment,
+                {
+                    "label": alignment_label,
+                    "courses": set(),
+                    "model_truths": [],
+                    "model_predictions": [],
+                    "model_scores": [],
+                    "model_wins": 0,
+                    "pmu_truths": [],
+                    "pmu_scores": [],
+                    "pmu_odds": [],
+                    "pmu_wins": 0,
+                    "pmu_courses": 0,
+                    "probability_gaps": [],
+                    "pmu_ranks": [],
+                    "aligned_wins": 0,
+                },
+            )
+            alignment_bucket["label"] = alignment_label
+            alignment_bucket.setdefault("courses", set()).add(int(course_id))
+
+            if top_entry is not None:
+                alignment_bucket.setdefault("model_truths", []).append(
+                    int(top_entry.get("truth", 0))
+                )
+                alignment_bucket.setdefault("model_predictions", []).append(
+                    int(top_entry.get("predicted_label", 0))
+                )
+                alignment_bucket.setdefault("model_scores", []).append(
+                    float(top_entry.get("probability", 0.0))
+                )
+                if top_entry.get("final_position") == 1:
+                    alignment_bucket["model_wins"] = alignment_bucket.get("model_wins", 0) + 1
+
+            if pmu_favourite is not None:
+                alignment_bucket["pmu_courses"] = alignment_bucket.get("pmu_courses", 0) + 1
+                alignment_bucket.setdefault("pmu_truths", []).append(
+                    int(pmu_favourite.get("truth", 0))
+                )
+                alignment_bucket.setdefault("pmu_scores", []).append(
+                    float(pmu_favourite.get("probability", 0.0))
+                )
+                odds_value = pmu_favourite.get("odds")
+                if odds_value is not None:
+                    alignment_bucket.setdefault("pmu_odds", []).append(float(odds_value))
+                if pmu_favourite.get("final_position") == 1:
+                    alignment_bucket["pmu_wins"] = alignment_bucket.get("pmu_wins", 0) + 1
+                if top_entry is not None:
+                    alignment_bucket.setdefault("probability_gaps", []).append(
+                        float(top_entry.get("probability", 0.0))
+                        - float(pmu_favourite.get("probability", 0.0))
+                    )
+                    if (
+                        top_entry.get("horse_id") == pmu_favourite.get("horse_id")
+                        and top_entry.get("final_position") == 1
+                    ):
+                        alignment_bucket["aligned_wins"] = alignment_bucket.get(
+                            "aligned_wins", 0
+                        ) + 1
+                if pmu_rank is not None:
+                    alignment_bucket.setdefault("pmu_ranks", []).append(float(pmu_rank))
+
             for rank, sample in enumerate(sorted_predictions, start=1):
                 segment_key, segment_label = _categorise_prediction_rank(rank)
                 bucket = prediction_rank_breakdown.setdefault(
@@ -7841,6 +8022,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         avg_negative_prob = _safe_average([score for score, label in zip(y_scores, y_pred) if label == 0])
 
         course_count = len(course_stats)
+        favourite_alignment_performance = _summarise_favourite_alignment_performance(
+            favourite_alignment_breakdown,
+            course_count,
+        )
         top1_correct = 0
         top3_course_hits = 0
         winner_probabilities: List[float] = []
@@ -8217,6 +8402,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "daily_performance": daily_performance,
@@ -8302,6 +8488,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
@@ -8415,6 +8602,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,

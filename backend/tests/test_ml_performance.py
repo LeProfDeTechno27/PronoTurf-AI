@@ -1486,6 +1486,41 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert tight_margin_segment["min_margin"] == pytest.approx(0.05, rel=1e-3)
     assert tight_margin_segment["max_margin"] == pytest.approx(0.05, rel=1e-3)
 
+    favourite_alignment = metrics["favourite_alignment_performance"]
+    assert set(favourite_alignment.keys()) == {"aligned", "divergent"}
+
+    aligned_segment = favourite_alignment["aligned"]
+    assert aligned_segment["label"] == "Favori modèle aligné sur les cotes PMU"
+    assert aligned_segment["courses"] == 1
+    assert aligned_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert aligned_segment["samples"] == 1
+    assert aligned_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["model_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["aligned_winner_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["average_model_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_odds"] == pytest.approx(3.0, rel=1e-3)
+    assert aligned_segment["average_probability_gap"] == pytest.approx(0.0, abs=1e-6)
+    assert aligned_segment["average_pmu_rank_in_model"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    divergent_segment = favourite_alignment["divergent"]
+    assert divergent_segment["label"] == "Favori modèle différent du PMU"
+    assert divergent_segment["courses"] == 1
+    assert divergent_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert divergent_segment["samples"] == 1
+    assert divergent_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["model_win_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert divergent_segment["aligned_winner_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["average_model_probability"] == pytest.approx(0.40, rel=1e-3)
+    assert divergent_segment["average_pmu_probability"] == pytest.approx(0.25, rel=1e-3)
+    assert divergent_segment["average_pmu_odds"] == pytest.approx(5.5, rel=1e-3)
+    assert divergent_segment["average_probability_gap"] == pytest.approx(0.15, rel=1e-3)
+    assert divergent_segment["average_pmu_rank_in_model"] == pytest.approx(3.0, rel=1e-3)
+    assert divergent_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -2300,6 +2335,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
         0.05, rel=1e-3
     )
+    assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
+    assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    assert result["favourite_alignment_performance"]["divergent"]["pmu_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
     rank_breakdown = result["rank_correlation_performance"]
     assert rank_breakdown["evaluated_courses"] == 2
     assert rank_breakdown["best_spearman"] == pytest.approx(1.0, abs=1e-6)
@@ -2379,6 +2421,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "favourite_alignment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rank_correlation_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
