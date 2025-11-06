@@ -3795,6 +3795,67 @@ def _summarise_value_bet_flag_performance(
     return flag_metrics
 
 
+def _categorise_year(
+    race_date: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Retourne l'année calendaire associée à la réunion analysée."""
+
+    if isinstance(race_date, datetime):
+        race_date = race_date.date()
+
+    if not isinstance(race_date, date):
+        return "unknown", "Année inconnue", None
+
+    year_value = race_date.year
+    segment = f"{year_value:04d}"
+    label = f"Année {year_value}"
+
+    return segment, label, year_value
+
+
+def _summarise_year_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble une vue des performances agrégées par année civile."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+
+    def _sort_key(item: Tuple[str, Dict[str, object]]) -> Tuple[int, str]:
+        payload = item[1]
+        year_value = payload.get("year")
+        return (
+            int(year_value) if isinstance(year_value, int) else 9999,
+            item[0],
+        )
+
+    year_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment, payload in sorted(breakdown.items(), key=_sort_key):
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        reunions: Set[int] = set(payload.get("reunions", set()))
+        dates: Set[str] = set(payload.get("dates", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["observed_positive_rate"] = sum(truths) / len(truths) if truths else None
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["label"] = payload.get("label", segment)
+        summary["year"] = payload.get("year")
+        summary["courses"] = len(courses)
+        summary["reunions"] = len(reunions)
+        summary["first_date"] = min(dates) if dates else None
+        summary["last_date"] = max(dates) if dates else None
+
+        year_metrics[segment] = summary
+
+    return year_metrics
+
+
 def _categorise_month(
     race_date: Optional[object],
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
@@ -5498,6 +5559,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         day_part_breakdown: Dict[str, Dict[str, object]] = {}
         weekday_breakdown: Dict[str, Dict[str, object]] = {}
         reunion_number_breakdown: Dict[str, Dict[str, object]] = {}
+        year_breakdown: Dict[str, Dict[str, object]] = {}
         month_breakdown: Dict[str, Dict[str, object]] = {}
         # Agrégation saisonnière pour offrir une lecture "hiver / printemps /"
         # "été / automne" complémentaire aux vues mensuelles et trimestrielles.
@@ -5925,6 +5987,35 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if isinstance(race_date, date):
                 weekday_bucket.setdefault("dates", set()).add(race_date.isoformat())
+
+            # En parallèle, on garde une vue annuelle afin d'observer la
+            # trajectoire globale du modèle sur plusieurs saisons sans se
+            # limiter aux découpages mensuels/ trimestriels. Les identifiants
+            # de course et de réunion sont conservés pour faciliter les
+            # investigations en cas de dérive sur une année spécifique.
+            year_segment, year_label, year_value = _categorise_year(race_date)
+            year_bucket = year_breakdown.setdefault(
+                year_segment,
+                {
+                    "label": year_label,
+                    "year": year_value,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "reunions": set(),
+                    "dates": set(),
+                },
+            )
+            year_bucket["truths"].append(is_top3)
+            year_bucket["predictions"].append(predicted_label)
+            year_bucket["scores"].append(probability)
+            year_bucket.setdefault("courses", set()).add(course.course_id)
+            year_bucket.setdefault("reunions", set()).add(
+                getattr(reunion_obj, "reunion_id", getattr(course, "reunion_id", None))
+            )
+            if isinstance(race_date, date):
+                year_bucket.setdefault("dates", set()).add(race_date.isoformat())
 
             # Alimente également un suivi mensuel pour détecter d'éventuelles
             # variations saisonnières (meeting d'hiver/été) dans la précision
@@ -7583,6 +7674,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
         lead_time_performance = _summarise_lead_time_performance(lead_time_breakdown)
+        year_performance = _summarise_year_performance(year_breakdown)
         month_performance = _summarise_month_performance(month_breakdown)
         season_performance = _summarise_season_performance(season_breakdown)
         quarter_performance = _summarise_quarter_performance(quarter_breakdown)
@@ -7743,6 +7835,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
+            "year_performance": year_performance,
             "month_performance": month_performance,
             "season_performance": season_performance,
             "quarter_performance": quarter_performance,
@@ -7831,6 +7924,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
+            "year_performance": year_performance,
             "month_performance": month_performance,
             "season_performance": season_performance,
             "quarter_performance": quarter_performance,
@@ -7938,6 +8032,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
             "lead_time_performance": lead_time_performance,
+            "year_performance": year_performance,
             "month_performance": month_performance,
             "season_performance": season_performance,
             "quarter_performance": quarter_performance,

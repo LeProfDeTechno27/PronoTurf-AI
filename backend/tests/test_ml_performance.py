@@ -778,6 +778,18 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert extended_notice["min_lead_hours"] == pytest.approx(10.0, rel=1e-3)
     assert extended_notice["max_lead_hours"] == pytest.approx(10.0, rel=1e-3)
 
+    year_performance = metrics["year_performance"]
+    current_year_key = date.today().strftime("%Y")
+    assert current_year_key in year_performance
+    current_year_metrics = year_performance[current_year_key]
+    assert current_year_metrics["label"] == f"Année {date.today().year}"
+    assert current_year_metrics["year"] == date.today().year
+    assert current_year_metrics["samples"] == 6
+    assert current_year_metrics["share"] == pytest.approx(1.0, rel=1e-3)
+    assert current_year_metrics["courses"] >= 1
+    assert current_year_metrics["reunions"] >= 1
+    assert current_year_metrics["first_date"] <= current_year_metrics["last_date"]
+
     month_performance = metrics["month_performance"]
     current_month_key = date.today().strftime("%Y-%m")
     assert current_month_key in month_performance
@@ -2052,6 +2064,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
     assert result["day_part_performance"]["afternoon"]["samples"] == 3
     assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
+    assert date.today().strftime("%Y") in result["year_performance"]
     assert date.today().strftime("%Y-%m") in result["month_performance"]
     season_key, season_label = _derive_season_key(date.today())
     previous_key, previous_label = _derive_season_key(date.today() - timedelta(days=1))
@@ -2239,6 +2252,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
         stored_confidence_levels = stored_metrics["last_evaluation"]["confidence_level_metrics"]
         assert stored_confidence_levels["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
+        assert "year_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "quarter_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
