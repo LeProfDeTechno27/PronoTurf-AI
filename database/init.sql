@@ -1,3 +1,7 @@
+-- Copyright (c) 2025 PronoTurf AI. All rights reserved.
+-- This source code is proprietary and confidential.
+-- Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 -- PronoTurf Database Initialization Script
 -- MySQL 8.0+
 -- This script creates all tables for the PronoTurf application

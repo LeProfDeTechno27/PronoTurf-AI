@@ -1,3 +1,7 @@
+# Copyright (c) 2025 PronoTurf AI. All rights reserved.
+# This source code is proprietary and confidential.
+# Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 """PronoTurf - Dashboard Streamlit avancé.
 
 Ce tableau de bord interactif repose sur des jeux de données synthétiques
@@ -945,4 +949,3 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
