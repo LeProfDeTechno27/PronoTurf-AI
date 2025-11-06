@@ -449,6 +449,32 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
     assert metrics["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
 
+    probability_distribution = metrics["probability_distribution_metrics"]
+    overall_distribution = probability_distribution["overall"]
+    assert overall_distribution["count"] == 6
+    assert overall_distribution["average"] == pytest.approx(1 / 3, rel=1e-3)
+    assert overall_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert overall_distribution["p10"] == pytest.approx(0.20, rel=1e-3)
+    assert overall_distribution["p90"] == pytest.approx(0.475, rel=1e-3)
+    assert overall_distribution["std"] == pytest.approx(0.1247, rel=1e-3)
+
+    positive_distribution = probability_distribution["positives"]
+    assert positive_distribution["count"] == 4
+    assert positive_distribution["average"] == pytest.approx(0.3625, rel=1e-3)
+    assert positive_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert positive_distribution["min"] == pytest.approx(0.25, rel=1e-3)
+    assert positive_distribution["max"] == pytest.approx(0.55, rel=1e-3)
+
+    negative_distribution = probability_distribution["negatives"]
+    assert negative_distribution["count"] == 2
+    assert negative_distribution["average"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["median"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["p10"] == pytest.approx(0.175, rel=1e-3)
+    assert negative_distribution["p90"] == pytest.approx(0.375, rel=1e-3)
+
+    assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+
     rank_correlation = metrics["rank_correlation_performance"]
     assert rank_correlation["tracked_courses"] == 2
     assert rank_correlation["evaluated_courses"] == 2
@@ -2354,6 +2380,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
         0.05, rel=1e-3
     )
+    assert "probability_distribution_metrics" in result
+    result_distribution = result["probability_distribution_metrics"]
+    assert result_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert result_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+    assert result_distribution["overall"]["count"] == 6
     assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
     assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
         1.0, rel=1e-3
@@ -2407,6 +2438,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
+        stored_probability_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "probability_distribution_metrics"
+        ]
+        assert stored_probability_distribution["overall"]["count"] == 6
+        assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
         stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
         assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_winner_rank["distribution"]["rank_1"] == 1
@@ -2436,6 +2472,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_rank_errors["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
@@ -2449,6 +2486,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]["metrics"]
         assert "favourite_alignment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rank_correlation_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]

@@ -249,6 +249,120 @@ def _compute_binary_classification_insights(
     }
 
 
+def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
+    """Calcule un percentile (0-1) par interpolation linéaire."""
+
+    if not sorted_values:
+        return None
+
+    # On borne explicitement la valeur demandée pour éviter les dépassements.
+    percentile = max(0.0, min(1.0, percentile))
+
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    position = percentile * (len(sorted_values) - 1)
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(sorted_values) - 1)
+    weight = position - lower_index
+
+    lower_value = float(sorted_values[lower_index])
+    upper_value = float(sorted_values[upper_index])
+    return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarise_probability_distribution(
+    truths: List[int], scores: List[float]
+) -> Dict[str, object]:
+    """Analyse la distribution des probabilités prédites et leur séparation.
+
+    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
+    - quelle est la dispersion des probabilités émises par le modèle ?
+    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
+      perdants ?
+    - quelle marge existe-t-il entre les médianes positives et négatives ?
+
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
+
+def _describe_calibration_quality(
+    calibration_rows: List[Dict[str, object]]
+) -> Dict[str, Optional[float]]:
+    """Synthétise les écarts de calibration observés sur les quantiles."""
+
+    if not calibration_rows:
+        return {
+            "count": len(ordered),
+            "average": mean_value,
+            "median": float(median(ordered)),
+            "p10": _compute_percentile(ordered, 0.10),
+            "p90": _compute_percentile(ordered, 0.90),
+            "min": float(ordered[0]),
+            "max": float(ordered[-1]),
+            "std": std_value,
+        }
+
+    overall_stats = _build_stats(cleaned_scores)
+    positive_stats = _build_stats(positives)
+    negative_stats = _build_stats(negatives)
+
+    average_gap: Optional[float] = None
+    if positive_stats["average"] is not None and negative_stats["average"] is not None:
+        average_gap = positive_stats["average"] - negative_stats["average"]
+
+    median_gap: Optional[float] = None
+    if positive_stats["median"] is not None and negative_stats["median"] is not None:
+        median_gap = positive_stats["median"] - negative_stats["median"]
+
+    return {
+        "overall": overall_stats,
+        "positives": positive_stats,
+        "negatives": negative_stats,
+        "average_gap": average_gap,
+        "median_gap": median_gap,
+    }
+
+
 def _compute_normalised_dcg(
     ranked_entries: List[Tuple[Dict[str, object], Optional[int]]],
     cutoff: int,
@@ -8142,6 +8256,14 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         avg_positive_prob = _safe_average([score for score, label in zip(y_scores, y_pred) if label == 1])
         avg_negative_prob = _safe_average([score for score, label in zip(y_scores, y_pred) if label == 0])
 
+        # Diagnostic complémentaire : on analyse la distribution des scores
+        # probabilistes afin d'identifier un éventuel recouvrement entre gagnants
+        # et perdants malgré des métriques globales satisfaisantes.
+        probability_distribution_metrics = _summarise_probability_distribution(
+            y_true,
+            y_scores,
+        )
+
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
             favourite_alignment_breakdown,
@@ -8534,6 +8656,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "positive_prediction_rate": positives / len(y_pred) if y_pred else 0.0,
             "average_positive_probability": avg_positive_prob,
             "average_negative_probability": avg_negative_prob,
+            "probability_distribution_metrics": probability_distribution_metrics,
             "top1_accuracy": top1_correct / course_count if course_count else None,
             "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
             "ndcg_at_3": _safe_average(ndcg_at_3_scores),
@@ -8644,6 +8767,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "topn_performance": topn_performance,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "probability_distribution_metrics": probability_distribution_metrics,
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
@@ -8758,6 +8882,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_distribution": confidence_distribution,
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
+            "probability_distribution_metrics": probability_distribution_metrics,
             "topn_performance": topn_performance,
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
