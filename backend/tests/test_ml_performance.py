@@ -525,6 +525,34 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert uncertain_courses[0]["runner_count"] == 14
     assert uncertain_courses[0]["normalised_entropy"] == pytest.approx(0.9835, rel=1e-3)
 
+    sharpness_metrics = metrics["probability_sharpness_performance"]
+    assert sharpness_metrics["samples"] == 2
+    sharpness_overall = sharpness_metrics["overall"]
+    assert sharpness_overall["courses"] == 2
+    assert sharpness_overall["average_std_dev"] == pytest.approx(0.11368, rel=1e-3)
+    assert sharpness_overall["min_std_dev"] == pytest.approx(0.06236, rel=1e-3)
+    assert sharpness_overall["max_std_dev"] == pytest.approx(0.16499, rel=1e-3)
+    assert sharpness_overall["average_range"] == pytest.approx(0.275, rel=1e-3)
+    assert sharpness_overall["average_coefficient_of_variation"] == pytest.approx(0.34103, rel=1e-3)
+
+    sharpness_buckets = sharpness_metrics["buckets"]
+    assert set(sharpness_buckets.keys()) == {"controlled", "volatile"}
+    controlled_bucket = sharpness_buckets["controlled"]
+    assert controlled_bucket["samples"] == 1
+    assert controlled_bucket["average_std_dev"] == pytest.approx(0.06236, rel=1e-3)
+    assert controlled_bucket["average_range"] == pytest.approx(0.15, rel=1e-3)
+    volatile_bucket = sharpness_buckets["volatile"]
+    assert volatile_bucket["samples"] == 1
+    assert volatile_bucket["average_std_dev"] == pytest.approx(0.16499, rel=1e-3)
+    assert volatile_bucket["average_range"] == pytest.approx(0.40, rel=1e-3)
+
+    least_dispersed = sharpness_metrics["least_dispersed_courses"]
+    assert least_dispersed[0]["label"] == "R1C2"
+    assert least_dispersed[0]["standard_deviation"] == pytest.approx(0.06236, rel=1e-3)
+    most_dispersed = sharpness_metrics["most_dispersed_courses"]
+    assert most_dispersed[0]["label"] == "R1C1"
+    assert most_dispersed[0]["standard_deviation"] == pytest.approx(0.16499, rel=1e-3)
+
     feature_summary = metrics["feature_contribution_summary"]
     assert feature_summary["prediction_samples"] == 6
     assert feature_summary["total_samples"] == 14
@@ -2500,12 +2528,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     )
     assert "probability_distribution_metrics" in result
     assert "probability_entropy_performance" in result
+    assert "probability_sharpness_performance" in result
     result_distribution = result["probability_distribution_metrics"]
     assert result_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
     assert result_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
     assert result_distribution["overall"]["count"] == 6
     result_entropy = result["probability_entropy_performance"]
     assert result_entropy["samples"] == 2
+    result_sharpness = result["probability_sharpness_performance"]
+    assert result_sharpness["samples"] == 2
     assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
     assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
         1.0, rel=1e-3
@@ -2572,6 +2603,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         ]
         assert stored_entropy_metrics["overall"]["average_normalised_entropy"] == pytest.approx(
             0.9353, rel=1e-3
+        )
+
+        stored_sharpness = stored_metrics["last_evaluation"]["metrics"].get(
+            "probability_sharpness_performance"
+        )
+        assert stored_sharpness is not None
+        assert stored_sharpness["overall"]["average_std_dev"] == pytest.approx(
+            0.11368, rel=1e-3
         )
 
         stored_probability_distribution = stored_metrics["last_evaluation"]["metrics"][
