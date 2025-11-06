@@ -237,6 +237,28 @@ def _compute_cohen_kappa(
     return (observed_accuracy - expected_accuracy) / denominator
 
 
+def _compute_gini_coefficient(roc_auc: Optional[float]) -> Optional[float]:
+    """Convertit l'AUC ROC en indice de Gini borné si la valeur source est fournie.
+
+    Le coefficient de Gini est fréquemment suivi dans le monitoring des modèles
+    de scoring pour exprimer la séparation entre positifs et négatifs. Il est
+    obtenu en multipliant l'aire sous la courbe ROC par deux puis en retranchant
+    ``1``. Lorsque l'AUC n'est pas définie (données mono-classe, librairie
+    absente...), la fonction renvoie ``None`` pour maintenir la cohérence avec
+    les autres diagnostics et éviter d'interpréter une valeur artificielle.
+    """
+
+    if roc_auc is None:
+        return None
+
+    gini = (2 * roc_auc) - 1
+    if gini > 1:
+        return 1.0
+    if gini < -1:
+        return -1.0
+    return gini
+
+
 def _compute_binary_classification_insights(
     true_negative: int,
     false_positive: int,
@@ -307,6 +329,61 @@ def _compute_percentile(sorted_values: List[float], percentile: float) -> Option
     lower_value = float(sorted_values[lower_index])
     upper_value = float(sorted_values[upper_index])
     return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarise_probability_distribution(
+    truths: List[int], scores: List[float]
+) -> Dict[str, object]:
+    """Analyse la distribution des probabilités prédites et leur séparation.
+
+    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
+    - quelle est la dispersion des probabilités émises par le modèle ?
+    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
+      perdants ?
+    - quelle marge existe-t-il entre les médianes positives et négatives ?
+
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
 
 
 def _summarise_probability_distribution(
@@ -8818,6 +8895,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             except ValueError:
                 logloss = None
 
+        # Convertit l'AUC en coefficient de Gini pour offrir une lecture métier
+        # familière (utilisée notamment dans le scoring crédit) tout en gérant le
+        # cas où l'AUC n'est pas définie.
+        gini_coefficient = _compute_gini_coefficient(roc_auc)
+
         brier_score: Optional[float] = None
         positive_rate: Optional[float] = None
         if y_true:
@@ -9282,6 +9364,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "recall": recall,
             "f1": f1,
             "roc_auc": roc_auc,
+            "gini_coefficient": gini_coefficient,
             "log_loss": logloss,
             "brier_score": brier_score,
             "brier_decomposition": brier_decomposition,
