@@ -143,6 +143,7 @@ def _seed_reference_data(db: Session) -> None:
             owner="Ecurie Horizon",
             coat_color="Bai",
             breed="Pur-Sang",
+            sire="Stallion Alpha",
         ),
         Horse(
             name="Cheval B",
@@ -151,6 +152,7 @@ def _seed_reference_data(db: Session) -> None:
             owner="Ecurie Horizon",
             coat_color="Alezane",
             breed="Anglo-Arabe",
+            sire="Stallion Alpha",
         ),
         Horse(
             name="Cheval C",
@@ -159,6 +161,7 @@ def _seed_reference_data(db: Session) -> None:
             owner="Ecurie Equinoxe",
             coat_color="Bai brun",
             breed="Pur sang",
+            sire="Stallion Brave",
         ),
         Horse(
             name="Cheval D",
@@ -167,6 +170,7 @@ def _seed_reference_data(db: Session) -> None:
             owner="Ecurie Equinoxe",
             coat_color="Gris Pommelé",
             breed="Trotteur Français",
+            sire="Stallion Brave",
         ),
         Horse(
             name="Cheval E",
@@ -175,6 +179,7 @@ def _seed_reference_data(db: Session) -> None:
             owner="Ecurie Boreale",
             coat_color="Alezan brûlé",
             breed="AQPS",
+            sire="Étalon Céleste",
         ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
@@ -1623,6 +1628,54 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_breed_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
     assert unknown_breed_segment["input_examples"] == []
 
+    horse_sire_performance = metrics["horse_sire_performance"]
+    assert set(horse_sire_performance.keys()) == {
+        "etalon_celeste",
+        "stallion_alpha",
+        "stallion_brave",
+        "unknown",
+    }
+
+    alpha_segment = horse_sire_performance["stallion_alpha"]
+    assert alpha_segment["label"] == "Stallion Alpha"
+    assert alpha_segment["samples"] == 2
+    assert alpha_segment["courses"] == 1
+    assert alpha_segment["horses"] == 2
+    assert alpha_segment["trainers"] == 1
+    assert alpha_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert alpha_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert alpha_segment["input_examples"] == ["Stallion Alpha"]
+
+    brave_segment = horse_sire_performance["stallion_brave"]
+    assert brave_segment["label"] == "Stallion Brave"
+    assert brave_segment["samples"] == 2
+    assert brave_segment["courses"] == 2
+    assert brave_segment["horses"] == 2
+    assert brave_segment["trainers"] == 2
+    assert brave_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert brave_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert brave_segment["input_examples"] == ["Stallion Brave"]
+
+    celestial_segment = horse_sire_performance["etalon_celeste"]
+    assert celestial_segment["label"] == "Étalon Céleste"
+    assert celestial_segment["samples"] == 1
+    assert celestial_segment["courses"] == 1
+    assert celestial_segment["horses"] == 1
+    assert celestial_segment["trainers"] == 1
+    assert celestial_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert celestial_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert celestial_segment["input_examples"] == ["Étalon Céleste"]
+
+    unknown_sire_segment = horse_sire_performance["unknown"]
+    assert unknown_sire_segment["label"] == "Père inconnu"
+    assert unknown_sire_segment["samples"] == 1
+    assert unknown_sire_segment["courses"] == 1
+    assert unknown_sire_segment["horses"] == 1
+    assert unknown_sire_segment["trainers"] == 1
+    assert unknown_sire_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_sire_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_sire_segment["input_examples"] == []
+
     owner_performance = metrics["owner_performance"]
     assert set(owner_performance.keys()) == {
         "ecurie_boreale",
@@ -2208,11 +2261,14 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
     assert result["horse_breed_performance"]["pur_sang"]["samples"] == 2
     assert result["horse_breed_performance"]["aqps"]["label"] == "AQPS"
+    assert result["horse_sire_performance"]["stallion_alpha"]["samples"] == 2
+    assert result["horse_sire_performance"]["unknown"]["label"] == "Père inconnu"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
+    assert "horse_sire_performance" in result
     assert "topn_performance" in result
     assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
     with in_memory_session() as check_session:
@@ -2235,6 +2291,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_winner_rank["distribution"]["rank_1"] == 1
         assert stored_winner_rank["distribution"]["rank_3"] == 1
+        sire_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_sire_performance"]
+        assert sire_metrics["stallion_alpha"]["samples"] == 2
+        assert sire_metrics["etalon_celeste"]["label"] == "Étalon Céleste"
         stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
         assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
         assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)

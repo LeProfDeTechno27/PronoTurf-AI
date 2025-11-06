@@ -5106,6 +5106,89 @@ def _summarise_horse_breed_performance(
     return breed_metrics
 
 
+def _normalise_sire_label(raw_sire: Optional[object]) -> Tuple[str, str]:
+    """Uniformise le nom du père pour agréger les performances par lignée."""
+
+    if raw_sire is None:
+        return "unknown", "Père inconnu"
+
+    sire_text = str(raw_sire).strip()
+    if not sire_text:
+        return "unknown", "Père inconnu"
+
+    normalized = (
+        sire_text.lower()
+        .replace("œ", "oe")
+        .replace("ê", "e")
+        .replace("é", "e")
+        .replace("è", "e")
+        .replace("ë", "e")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("î", "i")
+        .replace("ï", "i")
+        .replace("ô", "o")
+        .replace("û", "u")
+    )
+
+    slug = "".join(char if char.isalnum() else "_" for char in normalized)
+    slug = "_".join(part for part in slug.split("_") if part)
+
+    if not slug:
+        return "unknown", sire_text
+
+    return slug, sire_text
+
+
+def _summarise_sire_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Assemble un tableau de bord des performances par père déclaré."""
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    sire_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = list(payload.get("truths", []))
+        predicted = list(payload.get("predictions", []))
+        scores = list(payload.get("scores", []))
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        trainers: Set[int] = set(payload.get("trainers", set()))
+        raw_inputs = [
+            str(value).strip()
+            for value in payload.get("raw_inputs", [])
+            if isinstance(value, str) and value.strip()
+        ]
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary.update(
+            {
+                "label": payload.get("label", segment.title()),
+                "share": (
+                    summary["samples"] / total_samples if total_samples else None
+                ),
+                "courses": len(courses),
+                "horses": len(horses),
+                "observed_positive_rate": (
+                    sum(truths) / len(truths) if truths else None
+                ),
+                "input_examples": sorted(set(raw_inputs))[:3] if raw_inputs else [],
+            }
+        )
+
+        if trainers:
+            summary["trainers"] = len(trainers)
+
+        sire_metrics[segment] = summary
+
+    return sire_metrics
+
+
 def _summarise_horse_age_performance(
     breakdown: Dict[str, Dict[str, object]]
 ) -> Dict[str, Dict[str, Optional[float]]]:
@@ -5675,6 +5758,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
         horse_coat_breakdown: Dict[str, Dict[str, object]] = {}
         horse_breed_breakdown: Dict[str, Dict[str, object]] = {}
+        horse_sire_breakdown: Dict[str, Dict[str, object]] = {}
         owner_breakdown: Dict[str, Dict[str, object]] = {}
         owner_trainer_breakdown: Dict[str, Dict[str, object]] = {}
         owner_jockey_breakdown: Dict[str, Dict[str, object]] = {}
@@ -6689,6 +6773,35 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 age_bucket.setdefault("ages", []).append(int(horse_age))
 
             horse_entity = getattr(partant, "horse", None)
+            sire_key, sire_label = _normalise_sire_label(
+                getattr(horse_entity, "sire", None) if horse_entity else None
+            )
+            sire_bucket = horse_sire_breakdown.setdefault(
+                sire_key,
+                {
+                    "label": sire_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "trainers": set(),
+                    "raw_inputs": [],
+                },
+            )
+            sire_bucket["label"] = sire_label
+            sire_bucket["truths"].append(is_top3)
+            sire_bucket["predictions"].append(predicted_label)
+            sire_bucket["scores"].append(probability)
+            sire_bucket.setdefault("courses", set()).add(course.course_id)
+            if partant.horse_id:
+                sire_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if getattr(partant, "trainer_id", None):
+                sire_bucket.setdefault("trainers", set()).add(partant.trainer_id)
+            raw_sire_name = getattr(horse_entity, "sire", None)
+            if isinstance(raw_sire_name, str) and raw_sire_name.strip():
+                sire_bucket.setdefault("raw_inputs", []).append(raw_sire_name.strip())
+
             gender_key, gender_label = _categorise_horse_gender(
                 getattr(horse_entity, "gender", None)
             )
@@ -7874,6 +7987,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         horse_breed_performance = _summarise_horse_breed_performance(
             horse_breed_breakdown
         )
+        horse_sire_performance = _summarise_sire_performance(
+            horse_sire_breakdown
+        )
         owner_performance = _summarise_owner_performance(owner_breakdown)
         owner_trainer_performance = _summarise_owner_trainer_performance(
             owner_trainer_breakdown
@@ -8020,6 +8136,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "horse_gender_performance": horse_gender_performance,
             "horse_coat_performance": horse_coat_performance,
             "horse_breed_performance": horse_breed_performance,
+            "horse_sire_performance": horse_sire_performance,
             "owner_performance": owner_performance,
             "owner_trainer_performance": owner_trainer_performance,
             "owner_jockey_performance": owner_jockey_performance,
@@ -8109,6 +8226,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "horse_gender_performance": horse_gender_performance,
             "horse_coat_performance": horse_coat_performance,
             "horse_breed_performance": horse_breed_performance,
+            "horse_sire_performance": horse_sire_performance,
             "owner_performance": owner_performance,
             "owner_trainer_performance": owner_trainer_performance,
             "owner_jockey_performance": owner_jockey_performance,
@@ -8219,6 +8337,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "horse_gender_performance": horse_gender_performance,
             "horse_coat_performance": horse_coat_performance,
             "horse_breed_performance": horse_breed_performance,
+            "horse_sire_performance": horse_sire_performance,
             "owner_performance": owner_performance,
             "owner_trainer_performance": owner_trainer_performance,
             "owner_jockey_performance": owner_jockey_performance,
