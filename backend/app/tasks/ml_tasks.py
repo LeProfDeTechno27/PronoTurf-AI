@@ -325,6 +325,12 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+def _describe_calibration_quality(
+    calibration_rows: List[Dict[str, object]]
+) -> Dict[str, Optional[float]]:
+    """Synthétise les écarts de calibration observés sur les quantiles."""
+
+    if not calibration_rows:
         return {
             "count": len(ordered),
             "average": mean_value,
