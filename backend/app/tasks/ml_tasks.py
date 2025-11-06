@@ -199,6 +199,44 @@ def _compute_matthews_correlation(
     return numerator / denominator
 
 
+def _compute_cohen_kappa(
+    true_negative: int,
+    false_positive: int,
+    false_negative: int,
+    true_positive: int,
+) -> Optional[float]:
+    """Calcule le coefficient kappa de Cohen pour mesurer l'accord modèle/réalité.
+
+    Ce score mesure l'accord entre les prédictions binaires du modèle et les
+    observations, tout en corrigeant l'accord attendu par hasard. Lorsque le
+    dénominateur est nul (accord attendu parfait) ou qu'aucun échantillon n'est
+    disponible, la fonction retourne ``None`` pour éviter toute division par
+    zéro et signaler que la métrique n'est pas interprétable.
+    """
+
+    total = true_negative + false_positive + false_negative + true_positive
+    if total == 0:
+        return None
+
+    observed_accuracy = (true_negative + true_positive) / total
+
+    predicted_positive_rate = (true_positive + false_positive) / total
+    actual_positive_rate = (true_positive + false_negative) / total
+    predicted_negative_rate = (true_negative + false_negative) / total
+    actual_negative_rate = (true_negative + false_positive) / total
+
+    expected_accuracy = (
+        predicted_positive_rate * actual_positive_rate
+        + predicted_negative_rate * actual_negative_rate
+    )
+
+    denominator = 1 - expected_accuracy
+    if denominator == 0:
+        return None
+
+    return (observed_accuracy - expected_accuracy) / denominator
+
+
 def _compute_binary_classification_insights(
     true_negative: int,
     false_positive: int,
@@ -324,9 +362,6 @@ def _summarise_probability_distribution(
             else:
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
-
-def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
-    """Calcule un percentile (0-1) par interpolation linéaire."""
 
     if not sorted_values:
         return None
@@ -8804,6 +8839,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         tn, fp = cm[0][0], cm[0][1]
         fn, tp = cm[1][0], cm[1][1]
         matthews_correlation = _compute_matthews_correlation(tn, fp, fn, tp)
+        cohen_kappa = _compute_cohen_kappa(tn, fp, fn, tp)
         classification_insights = _compute_binary_classification_insights(tn, fp, fn, tp)
 
         positives = sum(y_pred)
@@ -9256,6 +9292,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 "true_positive": cm[1][1],
             },
             "matthews_correlation": matthews_correlation,
+            "cohen_kappa": cohen_kappa,
             "specificity": classification_insights["specificity"],
             "false_positive_rate": classification_insights["false_positive_rate"],
             "negative_predictive_value": classification_insights[
