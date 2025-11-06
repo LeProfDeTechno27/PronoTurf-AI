@@ -325,11 +325,6 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
-def _describe_calibration_quality(
-    calibration_rows: List[Dict[str, object]]
-) -> Dict[str, Optional[float]]:
-    """Synthétise les écarts de calibration observés sur les quantiles."""
-
     if not calibration_rows:
         return {
             "count": len(ordered),
@@ -3118,6 +3113,115 @@ def _summarise_owner_performance(
         owner_metrics[segment] = summary
 
     return owner_metrics
+
+
+def _categorise_predicted_position(
+    predicted_position: Optional[object],
+) -> Tuple[str, str, Optional[int]]:
+    """Normalise la position de classement annoncée par le modèle.
+
+    Le modèle peut renseigner ``predicted_position`` pour indiquer le rang
+    théorique du partant dans le classement final. Cette fonction convertit la
+    valeur brute en (clé technique, libellé lisible, rang entier) afin de
+    simplifier l'agrégation statistique et la réutilisation dans les tableaux
+    de bord.
+    """
+
+    if predicted_position is None:
+        return "predicted_unknown", "Position prédite inconnue", None
+
+    try:
+        value = int(predicted_position)
+    except (TypeError, ValueError):  # pragma: no cover - tolérance entrées libres
+        return "predicted_unknown", "Position prédite inconnue", None
+
+    if value <= 0:
+        return "predicted_unknown", "Position prédite inconnue", None
+
+    if value == 1:
+        return "predicted_1", "Modèle : vainqueur annoncé", value
+
+    if value == 2:
+        return "predicted_2", "Modèle : podium assuré (rang 2)", value
+
+    if value == 3:
+        return "predicted_3", "Modèle : podium élargi (rang 3)", value
+
+    if value <= 5:
+        return "predicted_4_5", "Modèle : outsiders proches (rangs 4-5)", value
+
+    return "predicted_6_plus", "Modèle : sélection élargie (rang 6+)", value
+
+
+def _summarise_predicted_position_performance(
+    breakdown: Dict[str, Dict[str, object]]
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Dresse un tableau de bord par position prédite par le modèle.
+
+    On y retrouve les métriques de classification classiques mais également
+    l'écart moyen/median entre le rang annoncé et l'arrivée officielle afin de
+    détecter les segments où le modèle surestime ou sous-estime systématiquement
+    ses sélections.
+    """
+
+    if not breakdown:
+        return {}
+
+    total_samples = sum(len(payload.get("truths", [])) for payload in breakdown.values())
+    position_metrics: Dict[str, Dict[str, Optional[float]]] = {}
+
+    for segment in sorted(breakdown.keys()):
+        payload = breakdown[segment]
+        truths = [int(value) for value in payload.get("truths", [])]
+        predicted = [int(value) for value in payload.get("predictions", [])]
+        scores = [float(score) for score in payload.get("scores", [])]
+        final_positions = [int(pos) for pos in payload.get("final_positions", [])]
+        predicted_positions = [int(pos) for pos in payload.get("predicted_positions", [])]
+        rank_errors = [float(err) for err in payload.get("rank_errors", [])]
+        courses: Set[int] = set(payload.get("courses", set()))
+        horses: Set[int] = set(payload.get("horses", set()))
+        pronostics: Set[int] = set(payload.get("pronostics", set()))
+
+        summary = _summarise_group_performance(truths, predicted, scores)
+        summary["label"] = payload.get("label", segment)
+        summary["share"] = (len(truths) / total_samples) if total_samples else None
+        summary["courses"] = len(courses)
+        if horses:
+            summary["horses"] = len(horses)
+        if pronostics:
+            summary["pronostics"] = len(pronostics)
+        summary["observed_positive_rate"] = sum(truths) / len(truths) if truths else None
+
+        summary["average_predicted_position"] = _safe_average(predicted_positions)
+        summary["average_final_position"] = _safe_average(final_positions)
+
+        if predicted_positions:
+            summary["median_predicted_position"] = median(predicted_positions)
+        else:
+            summary["median_predicted_position"] = None
+
+        if final_positions:
+            summary["median_final_position"] = median(final_positions)
+            summary["best_final_position"] = min(final_positions)
+            summary["worst_final_position"] = max(final_positions)
+        else:
+            summary["median_final_position"] = None
+            summary["best_final_position"] = None
+            summary["worst_final_position"] = None
+
+        if rank_errors:
+            absolute_errors = [abs(value) for value in rank_errors]
+            summary["average_rank_error"] = _safe_average(absolute_errors)
+            summary["median_rank_error"] = median(absolute_errors)
+            summary["signed_bias"] = _safe_average(rank_errors)
+        else:
+            summary["average_rank_error"] = None
+            summary["median_rank_error"] = None
+            summary["signed_bias"] = None
+
+        position_metrics[segment] = summary
+
+    return position_metrics
 
 
 def _categorise_prediction_rank(rank: Optional[int]) -> Tuple[str, str]:
@@ -6320,6 +6424,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         model_version_breakdown: Dict[str, Dict[str, object]] = {}
         course_stats: Dict[int, Dict[str, object]] = {}
         prediction_rank_breakdown: Dict[str, Dict[str, object]] = {}
+        predicted_position_breakdown: Dict[str, Dict[str, object]] = {}
         topn_tracking: Dict[int, Dict[str, object]] = {}
         rank_error_breakdown: Dict[str, Dict[str, object]] = {}
         ndcg_at_3_scores: List[float] = []
@@ -6337,8 +6442,62 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         for prediction, partant, pronostic, course in predictions_with_results:
             probability = float(prediction.win_probability)
             probability = max(0.0, min(probability, 1.0))
-            is_top3 = 1 if partant.final_position and partant.final_position <= 3 else 0
+
+            final_position_raw = getattr(partant, "final_position", None)
+            final_position_value: Optional[int]
+            if final_position_raw is not None:
+                try:
+                    final_position_value = int(final_position_raw)
+                except (TypeError, ValueError):  # pragma: no cover - sécurité entrée
+                    final_position_value = None
+            else:
+                final_position_value = None
+
+            is_top3 = 1 if final_position_value is not None and final_position_value <= 3 else 0
             predicted_label = 1 if probability >= probability_threshold else 0
+
+            (
+                predicted_position_segment,
+                predicted_position_label,
+                normalised_predicted_position,
+            ) = _categorise_predicted_position(
+                getattr(prediction, "predicted_position", None)
+            )
+            predicted_position_bucket = predicted_position_breakdown.setdefault(
+                predicted_position_segment,
+                {
+                    "label": predicted_position_label,
+                    "truths": [],
+                    "predictions": [],
+                    "scores": [],
+                    "final_positions": [],
+                    "predicted_positions": [],
+                    "rank_errors": [],
+                    "courses": set(),
+                    "horses": set(),
+                    "pronostics": set(),
+                },
+            )
+            predicted_position_bucket["label"] = predicted_position_label
+            predicted_position_bucket.setdefault("truths", []).append(is_top3)
+            predicted_position_bucket.setdefault("predictions", []).append(predicted_label)
+            predicted_position_bucket.setdefault("scores", []).append(probability)
+            predicted_position_bucket.setdefault("courses", set()).add(course.course_id)
+            predicted_position_bucket.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+            if getattr(partant, "horse_id", None) is not None:
+                predicted_position_bucket.setdefault("horses", set()).add(partant.horse_id)
+            if normalised_predicted_position is not None:
+                predicted_position_bucket.setdefault("predicted_positions", []).append(
+                    normalised_predicted_position
+                )
+            if final_position_value is not None:
+                predicted_position_bucket.setdefault("final_positions", []).append(
+                    final_position_value
+                )
+                if normalised_predicted_position is not None:
+                    predicted_position_bucket.setdefault("rank_errors", []).append(
+                        float(final_position_value - normalised_predicted_position)
+                    )
 
             correlation_bucket = rank_correlation_tracking.setdefault(
                 course.course_id,
@@ -6352,10 +6511,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             )
             if getattr(course, "course_name", None):
                 correlation_bucket["label"] = str(course.course_name)
-            if getattr(partant, "final_position", None) is not None:
+            if final_position_value is not None:
                 correlation_bucket.setdefault("probabilities", []).append(probability)
                 correlation_bucket.setdefault("finish_positions", []).append(
-                    int(partant.final_position)
+                    final_position_value
                 )
 
             # Mesure l'écart absolu entre la probabilité annoncée et l'issue réelle
@@ -6584,11 +6743,12 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             course_entry["predictions"].append(
                 {
                     "probability": probability,
-                    "final_position": partant.final_position,
+                    "final_position": final_position_value,
                     "is_top3": bool(is_top3),
                     "truth": int(is_top3),
                     "predicted_label": int(predicted_label),
                     "horse_id": partant.horse_id,
+                    "predicted_position": normalised_predicted_position,
                     "odds": float(partant.odds_pmu)
                     if partant.odds_pmu is not None
                     else None,
@@ -6605,9 +6765,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             # Ventile les observations selon la position d'arrivée réelle pour
             # identifier les segments (gagnant, podium, au-delà) où le modèle
             # réussit ou échoue le plus fréquemment.
-            if getattr(partant, "final_position", None) is not None:
+            if final_position_value is not None:
                 final_segment, final_label = _categorise_final_position(
-                    partant.final_position
+                    final_position_value
                 )
                 final_bucket = final_position_breakdown.setdefault(
                     final_segment,
@@ -6626,7 +6786,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 final_bucket.setdefault("predictions", []).append(predicted_label)
                 final_bucket.setdefault("scores", []).append(probability)
                 final_bucket.setdefault("positions", []).append(
-                    int(partant.final_position)
+                    final_position_value
                 )
                 final_bucket.setdefault("courses", set()).add(course.course_id)
                 if getattr(partant, "horse_id", None) is not None:
@@ -6990,11 +7150,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 {
                     "probability": probability,
                     "odds": float(partant.odds_pmu) if partant.odds_pmu is not None else None,
-                    "is_winner": bool(partant.final_position == 1),
+                    "is_winner": bool(final_position_value == 1),
                     "course_id": course.course_id,
                     "partant_id": partant.partant_id,
                     "horse_name": partant.horse.name if getattr(partant, "horse", None) else None,
-                    "final_position": partant.final_position,
+                    "final_position": final_position_value,
                 }
             )
 
@@ -8772,6 +8932,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         prediction_rank_performance = _summarise_prediction_rank_performance(
             prediction_rank_breakdown
         )
+        predicted_position_performance = _summarise_predicted_position_performance(
+            predicted_position_breakdown
+        )
         final_position_performance = _summarise_final_position_performance(
             final_position_breakdown
         )
@@ -8905,6 +9068,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "predicted_position_performance": predicted_position_performance,
             "final_position_performance": final_position_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
@@ -9000,6 +9164,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "rest_period_performance": rest_period_performance,
             "model_version_performance": model_version_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "predicted_position_performance": predicted_position_performance,
             "final_position_performance": final_position_performance,
             "jockey_performance": jockey_performance,
             "trainer_performance": trainer_performance,
@@ -9122,6 +9287,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "hippodrome_performance": hippodrome_performance,
             "country_performance": country_performance,
             "prediction_rank_performance": prediction_rank_performance,
+            "predicted_position_performance": predicted_position_performance,
             "final_position_performance": final_position_performance,
             "api_source_performance": api_source_performance,
             "value_bet_courses": sum(1 for data in course_stats.values() if data["value_bet_detected"]),

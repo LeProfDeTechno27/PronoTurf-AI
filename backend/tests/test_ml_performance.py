@@ -344,6 +344,7 @@ def _seed_reference_data(db: Session) -> None:
             partant_id=partants[0].partant_id,
             win_probability=Decimal("0.55"),
             place_probability=Decimal("0.82"),
+            predicted_position=1,
             confidence_level="high",
         ),
         PartantPrediction(
@@ -351,6 +352,7 @@ def _seed_reference_data(db: Session) -> None:
             partant_id=partants[1].partant_id,
             win_probability=Decimal("0.30"),
             place_probability=Decimal("0.68"),
+            predicted_position=3,
             confidence_level="medium",
         ),
         PartantPrediction(
@@ -358,6 +360,7 @@ def _seed_reference_data(db: Session) -> None:
             partant_id=partants[2].partant_id,
             win_probability=Decimal("0.15"),
             place_probability=Decimal("0.28"),
+            predicted_position=5,
             confidence_level="low",
         ),
         PartantPrediction(
@@ -365,6 +368,7 @@ def _seed_reference_data(db: Session) -> None:
             partant_id=partants[3].partant_id,
             win_probability=Decimal("0.25"),
             place_probability=Decimal("0.74"),
+            predicted_position=2,
             confidence_level="low",
         ),
         PartantPrediction(
@@ -372,6 +376,7 @@ def _seed_reference_data(db: Session) -> None:
             partant_id=partants[4].partant_id,
             win_probability=Decimal("0.40"),
             place_probability=Decimal("0.36"),
+            predicted_position=6,
             confidence_level="medium",
         ),
         PartantPrediction(
@@ -2092,6 +2097,39 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert third_rank_segment["best_final_position"] == 1
     assert third_rank_segment["worst_final_position"] == 4
 
+    predicted_position_performance = metrics["predicted_position_performance"]
+    assert set(predicted_position_performance.keys()) == {
+        "predicted_1",
+        "predicted_2",
+        "predicted_3",
+        "predicted_4_5",
+        "predicted_6_plus",
+        "predicted_unknown",
+    }
+
+    predicted_leader = predicted_position_performance["predicted_1"]
+    assert predicted_leader["samples"] == 1
+    assert predicted_leader["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert predicted_leader["average_rank_error"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_leader["signed_bias"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_leader["average_predicted_position"] == pytest.approx(1.0, abs=1e-6)
+
+    predicted_runner_up = predicted_position_performance["predicted_2"]
+    assert predicted_runner_up["samples"] == 1
+    assert predicted_runner_up["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_runner_up["average_rank_error"] == pytest.approx(1.0, abs=1e-6)
+    assert predicted_runner_up["signed_bias"] == pytest.approx(-1.0, abs=1e-6)
+
+    predicted_longshot = predicted_position_performance["predicted_6_plus"]
+    assert predicted_longshot["samples"] == 1
+    assert predicted_longshot["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_longshot["average_rank_error"] == pytest.approx(2.0, abs=1e-6)
+
+    predicted_unknown = predicted_position_performance["predicted_unknown"]
+    assert predicted_unknown["samples"] == 1
+    assert predicted_unknown["average_predicted_position"] is None
+    assert predicted_unknown["median_final_position"] == pytest.approx(2.0, abs=1e-6)
+
     jockey_leaderboard = metrics["jockey_performance"]
     assert len(jockey_leaderboard) == 2
     assert {entry["label"] for entry in jockey_leaderboard} == {
@@ -2228,6 +2266,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert set(result["prediction_rank_performance"].keys()) == {"rank_1", "rank_2", "rank_3"}
     assert result["prediction_rank_performance"]["rank_2"]["average_rank"] == pytest.approx(2.0, rel=1e-3)
+    assert "predicted_position_performance" in result
+    assert set(result["predicted_position_performance"].keys()) == {
+        "predicted_1",
+        "predicted_2",
+        "predicted_3",
+        "predicted_4_5",
+        "predicted_6_plus",
+        "predicted_unknown",
+    }
+    assert result["predicted_position_performance"]["predicted_unknown"]["samples"] == 1
 
     assert result["jockey_performance"][0]["label"] == "Leo Martin"
     assert result["jockey_performance"][1]["label"] == "Noah Verbeeck"
@@ -2570,6 +2618,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_rank_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "predicted_position_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "final_position_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
