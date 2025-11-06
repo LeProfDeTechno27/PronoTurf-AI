@@ -144,6 +144,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Bai",
             breed="Pur-Sang",
             sire="Stallion Alpha",
+            dam="Mare Alpha",
         ),
         Horse(
             name="Cheval B",
@@ -153,6 +154,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Alezane",
             breed="Anglo-Arabe",
             sire="Stallion Alpha",
+            dam="Mare Alpha",
         ),
         Horse(
             name="Cheval C",
@@ -162,6 +164,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Bai brun",
             breed="Pur sang",
             sire="Stallion Brave",
+            dam="Mare Bravée",
         ),
         Horse(
             name="Cheval D",
@@ -171,6 +174,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Gris Pommelé",
             breed="Trotteur Français",
             sire="Stallion Brave",
+            dam="Mare Bravee",
         ),
         Horse(
             name="Cheval E",
@@ -180,6 +184,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Alezan brûlé",
             breed="AQPS",
             sire="Étalon Céleste",
+            dam="Mère Stella",
         ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
@@ -1676,6 +1681,54 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_sire_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
     assert unknown_sire_segment["input_examples"] == []
 
+    horse_dam_performance = metrics["horse_dam_performance"]
+    assert set(horse_dam_performance.keys()) == {
+        "mare_alpha",
+        "mare_bravee",
+        "mere_stella",
+        "unknown",
+    }
+
+    dam_alpha_segment = horse_dam_performance["mare_alpha"]
+    assert dam_alpha_segment["label"] == "Mare Alpha"
+    assert dam_alpha_segment["samples"] == 2
+    assert dam_alpha_segment["courses"] == 1
+    assert dam_alpha_segment["horses"] == 2
+    assert dam_alpha_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert dam_alpha_segment["input_examples"] == ["Mare Alpha"]
+
+    dam_bravee_segment = horse_dam_performance["mare_bravee"]
+    assert dam_bravee_segment["label"] == "Mare Bravee"
+    assert dam_bravee_segment["samples"] == 2
+    assert dam_bravee_segment["courses"] == 2
+    assert dam_bravee_segment["horses"] == 2
+    assert dam_bravee_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert set(dam_bravee_segment["input_examples"]) == {"Mare Bravée", "Mare Bravee"}
+
+    dam_stella_segment = horse_dam_performance["mere_stella"]
+    assert dam_stella_segment["label"] == "Mère Stella"
+    assert dam_stella_segment["samples"] == 1
+    assert dam_stella_segment["courses"] == 1
+    assert dam_stella_segment["horses"] == 1
+    assert dam_stella_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_stella_segment["input_examples"] == ["Mère Stella"]
+
+    dam_unknown_segment = horse_dam_performance["unknown"]
+    assert dam_unknown_segment["label"] == "Mère inconnue"
+    assert dam_unknown_segment["samples"] == 1
+    assert dam_unknown_segment["courses"] == 1
+    assert dam_unknown_segment["horses"] == 1
+    assert dam_unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_unknown_segment["input_examples"] == []
+
     owner_performance = metrics["owner_performance"]
     assert set(owner_performance.keys()) == {
         "ecurie_boreale",
@@ -2263,12 +2316,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_breed_performance"]["aqps"]["label"] == "AQPS"
     assert result["horse_sire_performance"]["stallion_alpha"]["samples"] == 2
     assert result["horse_sire_performance"]["unknown"]["label"] == "Père inconnu"
+    assert result["horse_dam_performance"]["mare_alpha"]["samples"] == 2
+    assert result["horse_dam_performance"]["unknown"]["label"] == "Mère inconnue"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
     assert "horse_sire_performance" in result
+    assert "horse_dam_performance" in result
     assert "topn_performance" in result
     assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
     with in_memory_session() as check_session:
@@ -2294,6 +2350,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         sire_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_sire_performance"]
         assert sire_metrics["stallion_alpha"]["samples"] == 2
         assert sire_metrics["etalon_celeste"]["label"] == "Étalon Céleste"
+        dam_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_dam_performance"]
+        assert dam_metrics["mare_alpha"]["samples"] == 2
+        assert dam_metrics["unknown"]["label"] == "Mère inconnue"
         stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
         assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
         assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)
@@ -2365,6 +2424,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_coat_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_breed_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_dam_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
