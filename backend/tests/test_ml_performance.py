@@ -466,6 +466,26 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert probability_bands["between_50_60"]["average_probability"] == pytest.approx(0.55, rel=1e-3)
     assert calibration_diagnostics["bins"][1]["weight"] == pytest.approx(1 / 6, rel=1e-3)
 
+    outcome_breakdown = metrics["prediction_outcome_performance"]
+    assert set(outcome_breakdown.keys()) == {
+        "false_negative",
+        "false_positive",
+        "true_negative",
+        "true_positive",
+    }
+    assert outcome_breakdown["true_positive"]["samples"] == 3
+    assert outcome_breakdown["false_positive"]["samples"] == 1
+    assert outcome_breakdown["false_negative"]["samples"] == 1
+    assert outcome_breakdown["true_negative"]["samples"] == 1
+    assert outcome_breakdown["true_positive"]["accuracy_within_segment"] == pytest.approx(
+        1.0,
+        rel=1e-3,
+    )
+    assert outcome_breakdown["false_positive"]["accuracy_within_segment"] == pytest.approx(
+        0.0,
+        rel=1e-3,
+    )
+
     place_bands = metrics["place_probability_performance"]
     assert set(place_bands.keys()) >= {
         "under_30",
@@ -2096,6 +2116,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "temperature_band_performance" in result
+    assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
@@ -2129,6 +2150,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
         assert "track_length_performance" in stored_metrics["last_evaluation"]["metrics"]
