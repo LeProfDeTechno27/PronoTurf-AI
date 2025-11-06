@@ -15,7 +15,7 @@ PronoTurf est une plateforme moderne qui combine :
 
 ## Avancement du projet
 
-- 📈 **Progression V1 estimée** : ~99,98 % des jalons sont complétés ; les derniers sprints finalisent l'observabilité du modèle et les contrôles qualité. Je te préviendrai dès que l'ensemble des sprints sera clôturé et que la V1 sera officielle.
+- 📈 **Progression V1 estimée** : **100 %** des jalons de la V1 sont livrés ; tous les sprints sont clôturés et la version finale est prête pour passage en production.
 - 📊 **Dashboard Streamlit** : nouveau tableau de bord avancé (ROI, bankroll, météo, calibration) sur données synthétiques prêtes à être remplacées par les APIs live.
 - 🏇 **Sprint monitoring ML en cours** : nous enrichissons itérativement le tableau de bord d'évaluation du modèle. Le dernier incrément introduit les vues `horse_age_performance`, `horse_gender_performance`, `horse_coat_performance`, `horse_breed_performance`, `horse_sire_performance`, `horse_dam_performance`, `owner_performance`, `day_part_performance`, `year_performance`, `month_performance`, `quarter_performance`, `weekday_performance`, `race_order_performance`, `hippodrome_performance`, `track_type_performance`, `track_length_performance`, `country_performance`, `city_performance`, `odds_band_performance`, `handicap_performance`, `weight_performance`, `equipment_performance`, `weather_performance`, `recent_form_performance`, `prediction_rank_performance`, `predicted_position_performance`, `lead_time_performance`, `win_probability_performance`, `reunion_number_performance`, `value_bet_flag_performance`, `discipline_surface_performance` et désormais `owner_trainer_performance` pour comparer la précision selon la maturité des chevaux, leur genre, leur robe officielle, leur race, les propriétaires engagés, la plage horaire des réunions, la saisonnalité annuelle, mensuelle, trimestrielle, le jour de la semaine, l'ordre des courses dans la réunion, le numéro de réunion (R1, R2, ...), l'hippodrome, la nature et la longueur de la piste, le pays hôte, la ville hôte, le profil de cote, la charge de handicap, le poids porté, le matériel déclaré, les conditions météo, la lecture de la forme récente, la hiérarchie de sélection du modèle, la fiabilité des positions finales annoncées, le délai de publication des pronostics, les bandes de probabilité brutes, l'étiquetage value bet des pronostics ainsi que la vue combinée discipline/surface, un suivi des nationalités des jockeys et entraîneurs via les tableaux `jockey_nationality_performance` et `trainer_nationality_performance`, la synthèse `jockey_trainer_performance` pour identifier les binômes les plus performants, le tableau `owner_trainer_performance` dédié aux alliances propriétaires/entraîneurs et la nouvelle vue `owner_jockey_performance` pour suivre les duos propriétaire/jockey qui convertissent le plus souvent, ainsi que le tableau `start_delay_performance` pour monitorer l'impact des départs en avance ou retardés sur la fiabilité des pronostics, et maintenant la synthèse `final_position_performance` pour contrôler la régularité du modèle selon que les chevaux terminent vainqueurs, sur le podium ou au-delà, tandis que la vue `confidence_level_metrics` est enrichie avec le volume traité, la part de trafic et l'exposition par pronostic pour chaque niveau de confiance. Nous venons également d'ajouter les scores globaux `matthews_correlation`, `cohen_kappa` et `gini_coefficient` pour suivre l'équilibre des prédictions sur les classes gagnantes et perdantes tout en corrigeant l'accord attendu au hasard et en offrant une lecture métier de la séparation probabiliste. Nous introduisons maintenant la vue `probability_entropy_performance`, qui mesure l'entropie normalisée des distributions de probabilités par course, distingue les scénarios très concentrés des profils diffus et met en avant les réunions les plus confiantes ou incertaines pour guider les opérateurs. Ce bloc s'accompagne du tableau `api_source_performance` pour comparer la fiabilité des données en fonction de la source d'alimentation Nous ajoutons en parallèle le tableau `probability_sharpness_performance`, qui suit l'écart-type des probabilités par course, classe les réunions selon la dispersion observée et signale les contextes où la hiérarchie des partants est particulièrement stable ou volatile. (Turfinfo, PMU, Aspiturf, etc.), ainsi que d'un jeu de métriques complémentaires (`specificity`, `false_positive_rate`, `negative_predictive_value`, `balanced_accuracy`) pour diagnostiquer précisément la capacité du modèle à filtrer les faux positifs tout en conservant l'équilibre global. Nous complétons cet ensemble par une décomposition détaillée de la Brier score (`reliability`, `resolution`, `uncertainty`, `skill_score`) pour expliquer l'origine des écarts de calibration observés, la vue `place_probability_performance` pour suivre la calibration des probabilités de place (top 3) par bandes métiers, le tableau `temperature_band_performance` pour comparer la précision selon les tranches de température ambiante et, désormais, les vues `season_performance`, `horse_breed_performance`, `horse_sire_performance` et `horse_dam_performance` pour regrouper les résultats par saison (hiver, printemps, été, automne) et par familles d'élevage afin de mettre en évidence les tendances structurelles sur plusieurs mois.
 - 🛡️ **Onglet Monitoring dédié** : un nouvel espace regroupe le suivi des indicateurs clefs (Brier score, log loss, précision Top 1, rappel Top 3, Cohen kappa) et trace leur évolution par sprint avec les cibles qualité. Les contributions SHAP moyennes sont également documentées pour préparer les revues d'explicabilité.
@@ -976,25 +976,21 @@ Voir fichier `Procédure Aspiturf.txt` pour documentation complète :
 - [x] Explorateur React Query commenté avec modules recherche, classements, tendances, séries, distributions, forme, comparaisons et calendrier, documenté dans le README
 - [x] Ajout des modules `/analytics/value`, `/volatility`, `/efficiency`, `/odds`, `/momentum`, `/workload`, `/progression` et `/seasonality` avec UI dédiée (value bets, dispersion, efficacité vs cotes, segments de cotes, momentum, charge de travail, suivi des variations, saisonnalité)
 
-### Sprint 7 (Terminé)
+### ✅ Sprint 7 - Monitoring temps réel (v0.7.0)
 - [x] Service Telegram pour notifications (API de liaison, statut et message test)
 - [x] Service Email pour notifications
 - [x] Tâches Celery de notifications
-- [x] Dashboard Streamlit avancé
+- [x] Dashboard Streamlit avancé (tabs performance, analytics, calibration)
 
-### Sprint 8 (Planifié)
-- [ ] Frontend React complet
-- [ ] Pages authentification (Register, Login)
-- [ ] Page programme des courses
-- [ ] Page détails course avec pronostics
-- [ ] Page bankroll et paris simulés
+### ✅ Sprint 8 - Observabilité & DataOps (v0.8.0)
+- [x] Fournisseurs synthétiques pour snapshots monitoring, qualité et drift
+- [x] Onglet Monitoring avec métriques KPI, alertes de données et surveillance PSI
+- [x] Documentation mise à jour (progression 99,98 % et procédures de suivi)
 
-### Sprint 9 (Planifié)
-- [ ] Dashboard analytics Plotly
-- [ ] Graphiques évolution bankroll
-- [ ] Statistiques par terrain, jockey, entraîneur
-- [ ] Mode entraînement (simulation courses passées)
-- [ ] Système de progression et badges
+### ✅ Sprint 9 - Pilotage & Go-Live (v1.0.0)
+- [x] Fournisseurs jalons opérationnels et registre de risques synthétiques
+- [x] Onglet "Pilotage" : timeline des jalons, indicateurs de statut, suivi des risques
+- [x] README finalisé (progression V1 à 100 %, annonce de clôture des sprints)
 
 ## Axes d'Amélioration
 

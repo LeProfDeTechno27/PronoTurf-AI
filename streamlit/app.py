@@ -32,6 +32,8 @@ from data_providers import (
     load_data_quality_checks,
     load_feature_contributions,
     load_monitoring_snapshots,
+    load_operational_milestones,
+    load_operational_risks,
     load_predictions,
 )
 
@@ -116,6 +118,20 @@ def get_data_drift_metrics() -> pd.DataFrame:
     """Charge les diagnostics de drift de données synthétiques."""
 
     return load_data_drift_metrics()
+
+
+@st.cache_data(show_spinner=False)
+def get_operational_milestones() -> pd.DataFrame:
+    """Charge les jalons opérationnels synthétiques."""
+
+    return load_operational_milestones()
+
+
+@st.cache_data(show_spinner=False)
+def get_operational_risks() -> pd.DataFrame:
+    """Charge les risques opérationnels synthétiques."""
+
+    return load_operational_risks()
 
 
 def _filter_by_period(df: pd.DataFrame, period: PeriodDefinition) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -292,6 +308,8 @@ monitoring_snapshots = get_monitoring_snapshots()
 feature_contributions = get_feature_contributions()
 data_quality_checks = get_data_quality_checks()
 data_drift_metrics = get_data_drift_metrics()
+operational_milestones = get_operational_milestones()
+operational_risks = get_operational_risks()
 
 
 # ---------------------------------------------------------------------------
@@ -367,12 +385,13 @@ st.markdown("---")
 # Contenu principal avec onglets
 # ---------------------------------------------------------------------------
 
-tab_evolution, tab_performance, tab_analytics, tab_monitoring, tab_details = st.tabs(
+tab_evolution, tab_performance, tab_analytics, tab_monitoring, tab_operations, tab_details = st.tabs(
     [
         "📈 Évolution",
         "🏆 Performance",
         "🧠 Analytics avancées",
         "🛡️ Monitoring",
+        "🧭 Pilotage",
         "🔍 Détails",
     ]
 )
@@ -776,6 +795,104 @@ with tab_monitoring:
             },
             hide_index=True,
         )
+
+
+with tab_operations:
+    st.subheader("Pilotage & opérations")
+
+    if operational_milestones.empty and operational_risks.empty:
+        st.info("Les jeux de données opérationnels seront intégrés prochainement.")
+    else:
+        if not operational_milestones.empty:
+            st.markdown("### Jalons critiques & roadmap")
+
+            status_order = ["À risque", "En cours", "Livré"]
+            status_icons = {"À risque": "🚨", "En cours": "🛠️", "Livré": "✅"}
+            status_counts = (
+                operational_milestones.groupby("status")["milestone"].count()
+                .reindex(status_order, fill_value=0)
+            )
+
+            col_status = st.columns(len(status_order))
+            for column, status in zip(col_status, status_order):
+                with column:
+                    st.metric(
+                        label=f"{status_icons[status]} {status}",
+                        value=int(status_counts[status]),
+                    )
+
+            timeline_df = operational_milestones.copy()
+            timeline_df["start_date"] = pd.to_datetime(timeline_df["start_date"])
+            timeline_df["due_date"] = pd.to_datetime(timeline_df["due_date"])
+
+            timeline_fig = px.timeline(
+                timeline_df,
+                x_start="start_date",
+                x_end="due_date",
+                y="workstream",
+                color="status",
+                hover_data={
+                    "milestone": True,
+                    "owner": True,
+                    "confidence": True,
+                    "impact": True,
+                    "comment": True,
+                },
+                title="Roadmap opérationnelle consolidée",
+            )
+            timeline_fig.update_yaxes(autorange="reversed")
+            timeline_fig.update_layout(
+                xaxis_title="Calendrier",
+                yaxis_title="Stream",
+                legend_title="Statut",
+            )
+            st.plotly_chart(timeline_fig, use_container_width=True)
+
+            st.dataframe(
+                timeline_df,
+                use_container_width=True,
+                column_config={
+                    "start_date": st.column_config.DateColumn("Début"),
+                    "due_date": st.column_config.DateColumn("Échéance"),
+                    "confidence": st.column_config.NumberColumn("Confiance %", format="%d"),
+                    "impact": st.column_config.TextColumn("Impact"),
+                    "comment": st.column_config.TextColumn("Notes"),
+                },
+                hide_index=True,
+            )
+
+        if not operational_risks.empty:
+            st.markdown("### Registre des risques & actions")
+
+            severity_order = ["Critique", "Élevée", "Modérée"]
+            severity_icons = {"Critique": "🔥", "Élevée": "⚠️", "Modérée": "ℹ️"}
+            severity_counts = (
+                operational_risks.groupby("severity")["risk"].count()
+                .reindex(severity_order, fill_value=0)
+            )
+
+            col_risk = st.columns(len(severity_order))
+            for column, severity in zip(col_risk, severity_order):
+                with column:
+                    st.metric(
+                        label=f"{severity_icons[severity]} {severity}",
+                        value=int(severity_counts[severity]),
+                    )
+
+            st.dataframe(
+                operational_risks,
+                use_container_width=True,
+                column_config={
+                    "risk": st.column_config.TextColumn("Risque"),
+                    "severity": st.column_config.TextColumn("Sévérité"),
+                    "owner": st.column_config.TextColumn("Pilote"),
+                    "status": st.column_config.TextColumn("Statut"),
+                    "mitigation": st.column_config.TextColumn("Mitigation"),
+                    "next_review": st.column_config.DateColumn("Revue"),
+                    "trend": st.column_config.TextColumn("Tendance"),
+                },
+                hide_index=True,
+            )
 
 
 with tab_details:

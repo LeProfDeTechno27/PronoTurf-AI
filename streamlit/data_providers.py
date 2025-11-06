@@ -95,6 +95,34 @@ class DriftDescriptor:
     comment: str
 
 
+@dataclass(frozen=True)
+class OperationalMilestone:
+    """Capture the lifecycle of an operational milestone for the roadmap."""
+
+    workstream: str
+    milestone: str
+    owner: str
+    status: str
+    start_date: date
+    due_date: date
+    confidence: int
+    impact: str
+    comment: str
+
+
+@dataclass(frozen=True)
+class OperationalRisk:
+    """Describe a potential delivery risk surfaced during the sprint."""
+
+    risk: str
+    severity: str
+    owner: str
+    status: str
+    mitigation: str
+    next_review: date
+    trend: str
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data factories
 # ---------------------------------------------------------------------------
@@ -207,6 +235,95 @@ def _iterate_prediction_rows() -> Iterable[Dict[str, object]]:
                 "value_score": round(probability * (1.8 + rank * 0.3), 3),
                 "course_label": f"R{(idx % 6) + 1}C{(idx % 10) + 1}",
             }
+
+
+def _build_operational_milestones() -> Tuple[OperationalMilestone, ...]:
+    """Return a deterministic set of operational milestones for the roadmap."""
+
+    today = date.today()
+
+    return (
+        OperationalMilestone(
+            workstream="Monitoring",  # Completion of monitoring dashboards
+            milestone="Stabilisation pipeline PSI",
+            owner="L. Garnier",
+            status="Livré",
+            start_date=today - timedelta(days=21),
+            due_date=today - timedelta(days=2),
+            confidence=98,
+            impact="Qualité modèle",
+            comment="Pipeline PSI validé en préproduction et basculé en run.",
+        ),
+        OperationalMilestone(
+            workstream="Data Quality",
+            milestone="Runbook alerting data",
+            owner="S. Dupont",
+            status="En cours",
+            start_date=today - timedelta(days=5),
+            due_date=today + timedelta(days=4),
+            confidence=85,
+            impact="Fiabilisation",
+            comment="Documentation et escalade PagerDuty en cours de relecture.",
+        ),
+        OperationalMilestone(
+            workstream="MLOps",
+            milestone="Automatisation retrain mensuel",
+            owner="H. Martin",
+            status="À risque",
+            start_date=today - timedelta(days=3),
+            due_date=today + timedelta(days=9),
+            confidence=70,
+            impact="Scalabilité",
+            comment="Validation sécurité des credentials GitOps encore bloquante.",
+        ),
+        OperationalMilestone(
+            workstream="Produit",
+            milestone="Go-live dashboard V1",
+            owner="P. Leroy",
+            status="Livré",
+            start_date=today - timedelta(days=10),
+            due_date=today,
+            confidence=100,
+            impact="Stakeholders",
+            comment="Conduite du changement finalisée, ateliers utilisateurs faits.",
+        ),
+    )
+
+
+def _build_operational_risks() -> Tuple[OperationalRisk, ...]:
+    """Create a small register of operational risks to surface in the UI."""
+
+    today = date.today()
+
+    return (
+        OperationalRisk(
+            risk="Latence API pronostics",
+            severity="Critique",
+            owner="SRE Team",
+            status="Mitigation en cours",
+            mitigation="Canary deploy du cache Redis et ajout observabilité APM.",
+            next_review=today + timedelta(days=2),
+            trend="En amélioration",
+        ),
+        OperationalRisk(
+            risk="Rafraîchissement données courses étrangères",
+            severity="Élevée",
+            owner="DataOps",
+            status="Surveillance",
+            mitigation="Scripts d'ingestion externalisés vers Airflow nocturne.",
+            next_review=today + timedelta(days=5),
+            trend="Stable",
+        ),
+        OperationalRisk(
+            risk="Rotation secrets d'entraînement",
+            severity="Modérée",
+            owner="Security",
+            status="Planifié",
+            mitigation="Procédure Vault automatisée à valider par le RSSI.",
+            next_review=today + timedelta(days=8),
+            trend="À suivre",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +691,52 @@ def load_data_drift_metrics() -> pd.DataFrame:
 
     return _build_data_drift_rows()
 
+
+
+def load_operational_milestones() -> pd.DataFrame:
+    """Expose operational milestones to drive the Pilotage tab."""
+
+    rows = [
+        {
+            "workstream": milestone.workstream,
+            "milestone": milestone.milestone,
+            "owner": milestone.owner,
+            "status": milestone.status,
+            "start_date": pd.Timestamp(milestone.start_date),
+            "due_date": pd.Timestamp(milestone.due_date),
+            "confidence": milestone.confidence,
+            "impact": milestone.impact,
+            "comment": milestone.comment,
+        }
+        for milestone in _build_operational_milestones()
+    ]
+
+    frame = pd.DataFrame.from_records(rows)
+    frame.sort_values("due_date", inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
+
+
+def load_operational_risks() -> pd.DataFrame:
+    """Expose the operational risk register for the dashboard."""
+
+    rows = [
+        {
+            "risk": risk.risk,
+            "severity": risk.severity,
+            "owner": risk.owner,
+            "status": risk.status,
+            "mitigation": risk.mitigation,
+            "next_review": pd.Timestamp(risk.next_review),
+            "trend": risk.trend,
+        }
+        for risk in _build_operational_risks()
+    ]
+
+    frame = pd.DataFrame.from_records(rows)
+    severity_order = {"Critique": 0, "Élevée": 1, "Modérée": 2}
+    frame["_severity_order"] = frame["severity"].map(severity_order)
+    frame.sort_values(["_severity_order", "next_review"], inplace=True)
+    frame.drop(columns="_severity_order", inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
