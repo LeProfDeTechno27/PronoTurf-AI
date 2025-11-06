@@ -499,6 +499,26 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
     assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
 
+    place_quality = metrics["place_probability_quality"]
+    assert place_quality["samples"] == 6
+    assert place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
+    assert place_quality["log_loss"] == pytest.approx(0.38566, rel=1e-3)
+    assert place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert place_quality["average_calibration_gap"] == pytest.approx(-0.1, rel=1e-3)
+    assert place_quality["average_absolute_error"] == pytest.approx(0.3133333333, rel=1e-3)
+    assert place_quality["median_absolute_error"] == pytest.approx(0.3, rel=1e-3)
+    assert place_quality["max_absolute_error"] == pytest.approx(0.48, rel=1e-3)
+    per_course_quality = place_quality["per_course"]
+    assert len(per_course_quality) == 2
+    assert any(course["label"] == "R1C1" and course["samples"] == 3 for course in per_course_quality)
+    overconfident = place_quality["overconfident_predictions"]
+    assert overconfident and overconfident[0]["probability"] == pytest.approx(0.36, rel=1e-3)
+    underconfident = place_quality["underconfident_predictions"]
+    assert underconfident and underconfident[0]["probability"] == pytest.approx(0.52, rel=1e-3)
+
+    entropy_metrics = metrics["probability_entropy_performance"]
+
     entropy_metrics = metrics["probability_entropy_performance"]
     assert entropy_metrics["samples"] == 2
     overall_entropy = entropy_metrics["overall"]
@@ -2569,6 +2589,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_dam_performance"]["unknown"]["label"] == "Mère inconnue"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
+    assert "place_probability_quality" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2617,6 +2638,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
             "probability_distribution_metrics"
         ]
         assert stored_probability_distribution["overall"]["count"] == 6
+        stored_place_quality = stored_metrics["last_evaluation"]["metrics"]["place_probability_quality"]
+        assert stored_place_quality["samples"] == 6
+        assert stored_place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
+        assert stored_place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+        assert stored_place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
         stored_feature_summary = stored_metrics["last_evaluation"]["metrics"][
             "feature_contribution_summary"
@@ -2668,6 +2694,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_quality" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
