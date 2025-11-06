@@ -672,6 +672,33 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     )
     assert place_precision_recall["missed_positive_examples"] == []
 
+    place_roc = metrics["place_probability_roc"]
+    assert place_roc["samples"] == 6
+    assert place_roc["positives"] == 4
+    assert place_roc["negatives"] == 2
+    assert place_roc["auc"] == pytest.approx(1.0, rel=1e-6)
+
+    roc_points = place_roc["curve"]
+    assert len(roc_points) >= 3
+    assert roc_points[0]["threshold"] is None
+    assert roc_points[0]["true_positive_rate"] == pytest.approx(0.0, rel=1e-6)
+    assert any(
+        point["true_positive_rate"] == pytest.approx(1.0, rel=1e-6)
+        for point in roc_points
+    )
+
+    best_roc_point = place_roc["best_point"]
+    assert best_roc_point is not None
+    assert best_roc_point["threshold"] == pytest.approx(0.52, rel=1e-3)
+    assert best_roc_point["youden_j"] == pytest.approx(1.0, rel=1e-6)
+
+    assert place_roc["recommended_threshold"] == pytest.approx(0.52, rel=1e-3)
+    assert [example["probability"] for example in place_roc["examples_above_recommended_threshold"]] == pytest.approx(
+        [0.82, 0.74, 0.68],
+        rel=1e-3,
+    )
+    assert place_roc["missed_positive_examples"] == []
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2750,6 +2777,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_calibration" in result
     assert "place_probability_thresholds" in result
     assert "place_probability_precision_recall" in result
+    assert "place_probability_roc" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2814,6 +2842,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         stored_place_precision_recall = stored_metrics["last_evaluation"]["metrics"][
             "place_probability_precision_recall"
         ]
+        assert "place_probability_roc" in result["metrics"]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
@@ -2886,6 +2915,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "place_probability_gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_thresholds" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_precision_recall" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_roc" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
