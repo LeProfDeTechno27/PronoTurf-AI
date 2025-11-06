@@ -325,6 +325,7 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+    if not calibration_rows:
         return {
             "count": len(ordered),
             "average": mean_value,
