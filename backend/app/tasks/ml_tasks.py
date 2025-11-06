@@ -385,91 +385,6 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
-def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
-    """Calcule un percentile (0-1) par interpolation linéaire."""
-
-    if not sorted_values:
-        return None
-
-    # On borne explicitement la valeur demandée pour éviter les dépassements.
-    percentile = max(0.0, min(1.0, percentile))
-
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
-    position = percentile * (len(sorted_values) - 1)
-    lower_index = int(position)
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-    weight = position - lower_index
-
-    lower_value = float(sorted_values[lower_index])
-    upper_value = float(sorted_values[upper_index])
-    return lower_value + (upper_value - lower_value) * weight
-
-
-def _summarise_probability_distribution(
-    truths: List[int], scores: List[float]
-) -> Dict[str, object]:
-    """Analyse la distribution des probabilités prédites et leur séparation.
-
-    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
-    - quelle est la dispersion des probabilités émises par le modèle ?
-    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
-      perdants ?
-    - quelle marge existe-t-il entre les médianes positives et négatives ?
-
-    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
-    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
-    des taux globaux stables.
-    """
-
-    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
-    cleaned_scores = [float(score) for score in scores if score is not None]
-    positives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 1
-    ]
-    negatives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 0
-    ]
-
-    def _build_stats(values: List[float]) -> Dict[str, object]:
-        """Construit les statistiques descriptives pour une liste de scores."""
-
-        if not values:
-            return {
-                "count": 0,
-                "average": None,
-                "median": None,
-                "p10": None,
-                "p90": None,
-                "min": None,
-                "max": None,
-                "std": None,
-            }
-
-        ordered = sorted(values)
-        mean_value = _safe_average(ordered)
-        std_value: Optional[float] = None
-        if mean_value is not None:
-            if len(ordered) == 1:
-                std_value = 0.0
-            else:
-                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
-                std_value = sqrt(variance)
-
-    position = percentile * (len(sorted_values) - 1)
-    lower_index = int(position)
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-    weight = position - lower_index
-
-    lower_value = float(sorted_values[lower_index])
-    upper_value = float(sorted_values[upper_index])
-    return lower_value + (upper_value - lower_value) * weight
-
 
 def _summarise_probability_distribution(
     truths: List[int], scores: List[float]
@@ -2183,6 +2098,212 @@ def _build_place_probability_roc_curve(
         "examples_above_recommended_threshold": examples_above_threshold,
         "missed_positive_examples": missed_positive_examples,
     }
+
+
+def _summarise_place_probability_ks(
+    samples: List[Dict[str, object]]
+) -> Dict[str, object]:
+    """Mesure la séparation des probabilités de place via la statistique KS."""
+
+    baseline_payload: Dict[str, object] = {
+        "samples": 0,
+        "courses": 0,
+        "positives": 0,
+        "negatives": 0,
+        "ks_statistic": None,
+        "ks_threshold": None,
+        "curve": [],
+        "top_divergence_courses": [],
+        "low_divergence_courses": [],
+        "top_positive_examples": [],
+        "top_negative_examples": [],
+    }
+
+    if not samples:
+        return baseline_payload
+
+    cleaned_samples: List[Dict[str, object]] = []
+    probabilities: List[float] = []
+    truths: List[int] = []
+    per_course: Dict[object, Dict[str, object]] = {}
+
+    for sample in samples:
+        probability_raw = sample.get("probability")
+        outcome_raw = sample.get("outcome")
+
+        try:
+            probability = float(probability_raw)
+        except (TypeError, ValueError):  # pragma: no cover - entrée corrompue
+            continue
+
+        try:
+            outcome = int(outcome_raw)
+        except (TypeError, ValueError):  # pragma: no cover - entrée corrompue
+            continue
+
+        if outcome not in (0, 1):  # pragma: no cover - validation défensive
+            continue
+
+        course_identifier: Optional[int]
+        course_raw = sample.get("course_id")
+        try:
+            course_identifier = int(course_raw) if course_raw is not None else None
+        except (TypeError, ValueError):  # pragma: no cover - sécurité sur données texte
+            course_identifier = None
+
+        course_label = sample.get("course_label")
+        if not course_label:
+            if course_identifier is not None:
+                course_label = f"Course {course_identifier}"
+            else:
+                course_label = "Course inconnue"
+
+        record = {
+            "course": course_label,
+            "course_id": course_identifier,
+            "probability": probability,
+            "outcome": outcome,
+            "horse_name": sample.get("horse_name"),
+            "final_position": sample.get("final_position"),
+            "predicted_position": sample.get("predicted_position"),
+        }
+
+        cleaned_samples.append(record)
+        probabilities.append(probability)
+        truths.append(outcome)
+
+        bucket_key: object = course_identifier if course_identifier is not None else course_label
+        bucket = per_course.setdefault(
+            bucket_key,
+            {
+                "course_id": course_identifier,
+                "label": course_label,
+                "samples": 0,
+                "positives": 0,
+                "negatives": 0,
+                "positive_probabilities": [],
+                "negative_probabilities": [],
+            },
+        )
+        bucket["label"] = course_label
+        bucket["samples"] = bucket.get("samples", 0) + 1
+
+        if outcome == 1:
+            bucket["positives"] = bucket.get("positives", 0) + 1
+            bucket.setdefault("positive_probabilities", []).append(probability)
+        else:
+            bucket["negatives"] = bucket.get("negatives", 0) + 1
+            bucket.setdefault("negative_probabilities", []).append(probability)
+
+    positives = sum(truths)
+    negatives = len(truths) - positives
+
+    payload = dict(baseline_payload)
+    payload.update(
+        {
+            "samples": len(cleaned_samples),
+            "courses": len(per_course),
+            "positives": positives,
+            "negatives": negatives,
+        }
+    )
+
+    if not cleaned_samples or positives == 0 or negatives == 0:
+        return payload
+
+    ks_details = _compute_ks_analysis(
+        probabilities,
+        truths,
+        sample_points=12,
+    )
+
+    course_summaries: List[Dict[str, object]] = []
+    for bucket in per_course.values():
+        positive_avg = _safe_average(bucket.get("positive_probabilities", []))
+        negative_avg = _safe_average(bucket.get("negative_probabilities", []))
+        gap: Optional[float] = None
+        if positive_avg is not None and negative_avg is not None:
+            gap = positive_avg - negative_avg
+
+        course_summaries.append(
+            {
+                "course_id": bucket.get("course_id"),
+                "label": bucket.get("label"),
+                "samples": bucket.get("samples", 0),
+                "positives": bucket.get("positives", 0),
+                "negatives": bucket.get("negatives", 0),
+                "average_positive_probability": positive_avg,
+                "average_negative_probability": negative_avg,
+                "average_gap": gap,
+            }
+        )
+
+    informative_courses = [
+        course
+        for course in course_summaries
+        if course.get("average_gap") is not None
+    ]
+
+    top_divergence_courses = sorted(
+        informative_courses,
+        key=lambda item: (
+            abs(float(item.get("average_gap", 0.0))),
+            str(item.get("label") or ""),
+        ),
+        reverse=True,
+    )[:3]
+
+    low_divergence_courses = sorted(
+        informative_courses,
+        key=lambda item: (
+            abs(float(item.get("average_gap", 0.0))),
+            str(item.get("label") or ""),
+        ),
+    )[:3]
+
+    def _format_example(record: Dict[str, object]) -> Dict[str, object]:
+        """Uniformise l'affichage des exemples positifs/négatifs."""
+
+        return {
+            "course": record.get("course"),
+            "horse_name": record.get("horse_name"),
+            "probability": record.get("probability"),
+            "outcome": record.get("outcome"),
+            "final_position": record.get("final_position"),
+            "predicted_position": record.get("predicted_position"),
+        }
+
+    top_positive_examples = [
+        _format_example(record)
+        for record in sorted(
+            (sample for sample in cleaned_samples if sample.get("outcome") == 1),
+            key=lambda item: float(item.get("probability", 0.0)),
+            reverse=True,
+        )[:3]
+    ]
+
+    top_negative_examples = [
+        _format_example(record)
+        for record in sorted(
+            (sample for sample in cleaned_samples if sample.get("outcome") == 0),
+            key=lambda item: float(item.get("probability", 0.0)),
+            reverse=True,
+        )[:3]
+    ]
+
+    payload.update(
+        {
+            "ks_statistic": ks_details.get("ks_statistic"),
+            "ks_threshold": ks_details.get("ks_threshold"),
+            "curve": ks_details.get("curve", []),
+            "top_divergence_courses": top_divergence_courses,
+            "low_divergence_courses": low_divergence_courses,
+            "top_positive_examples": top_positive_examples,
+            "top_negative_examples": top_negative_examples,
+        }
+    )
+
+    return payload
 
 
 def _categorise_probability_sharpness(
@@ -10798,6 +10919,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         place_probability_roc = _build_place_probability_roc_curve(
             place_probability_samples
         )
+        place_probability_ks = _summarise_place_probability_ks(
+            place_probability_samples
+        )
 
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
@@ -11286,6 +11410,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_thresholds": place_probability_thresholds,
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
+            "place_probability_ks": place_probability_ks,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11386,6 +11511,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_thresholds": place_probability_thresholds,
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
+            "place_probability_ks": place_probability_ks,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11514,6 +11640,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_thresholds": place_probability_thresholds,
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
+            "place_probability_ks": place_probability_ks,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,

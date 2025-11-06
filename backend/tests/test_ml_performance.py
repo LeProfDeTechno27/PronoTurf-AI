@@ -699,6 +699,32 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     )
     assert place_roc["missed_positive_examples"] == []
 
+    place_ks = metrics["place_probability_ks"]
+    assert place_ks["samples"] == 6
+    assert place_ks["positives"] == 4
+    assert place_ks["negatives"] == 2
+    assert place_ks["ks_statistic"] == pytest.approx(1.0, rel=1e-6)
+    assert place_ks["ks_threshold"] == pytest.approx(0.52, rel=1e-3)
+    assert place_ks["curve"]
+
+    divergence_by_label = {
+        entry["label"]: entry for entry in place_ks["top_divergence_courses"]
+    }
+    assert divergence_by_label["R1C1"]["average_gap"] == pytest.approx(0.47, rel=1e-3)
+    assert divergence_by_label["R1C1"]["positives"] == 2
+
+    low_divergence_by_label = {
+        entry["label"]: entry for entry in place_ks["low_divergence_courses"]
+    }
+    assert low_divergence_by_label["R1C2"]["average_gap"] == pytest.approx(0.27, rel=1e-3)
+
+    assert [
+        example["probability"] for example in place_ks["top_positive_examples"]
+    ] == pytest.approx([0.82, 0.74, 0.68], rel=1e-3)
+    assert [
+        example["probability"] for example in place_ks["top_negative_examples"]
+    ] == pytest.approx([0.36, 0.28], rel=1e-3)
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2778,6 +2804,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_thresholds" in result
     assert "place_probability_precision_recall" in result
     assert "place_probability_roc" in result
+    assert "place_probability_ks" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2842,7 +2869,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         stored_place_precision_recall = stored_metrics["last_evaluation"]["metrics"][
             "place_probability_precision_recall"
         ]
+        stored_place_ks = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_ks"
+        ]
         assert "place_probability_roc" in result["metrics"]
+        assert "place_probability_ks" in result["metrics"]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
@@ -2856,6 +2887,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
             0.36, rel=1e-3
         )
         assert stored_place_precision_recall["average_precision"] == pytest.approx(1.0, rel=1e-6)
+        assert stored_place_ks["ks_statistic"] == pytest.approx(1.0, rel=1e-6)
+        assert stored_place_ks["ks_threshold"] == pytest.approx(0.52, rel=1e-3)
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
