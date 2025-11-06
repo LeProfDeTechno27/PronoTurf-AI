@@ -1,0 +1,2915 @@
+"""Tests unitaires pour la tâche d'évaluation des performances ML."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from typing import Tuple
+
+import pytest
+from sqlalchemy import Column, ForeignKey, Integer, create_engine
+from sqlalchemy.orm import Session, relationship, sessionmaker
+
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("CORS_ORIGINS", "[]")
+
+from app.core.database import Base
+from app.core import database as core_database
+
+if not hasattr(core_database, "SessionLocal"):
+    core_database.SessionLocal = lambda: None  # type: ignore[attr-defined]
+
+
+class PerformanceHistorique(Base):
+    """Stub minimal pour satisfaire la relation déclarée sur ``Horse``."""
+
+    __tablename__ = "performance_historique"
+
+    performance_id = Column(Integer, primary_key=True, autoincrement=True)
+    horse_id = Column(Integer, ForeignKey("horses.horse_id"), nullable=False)
+
+    horse = relationship("Horse", back_populates="performances")
+from app.models.course import Course, CourseStatus, Discipline, SurfaceType, StartType
+from app.models.hippodrome import Hippodrome, TrackType
+from app.models.horse import Gender, Horse
+from app.models.jockey import Jockey
+from app.models.ml_model import MLModel
+from app.models.partant import Partant
+from app.models.partant_prediction import PartantPrediction
+from app.models.pronostic import Pronostic
+from app.models.reunion import Reunion, ReunionStatus
+from app.models.trainer import Trainer
+from app.tasks import ml_tasks
+
+
+@pytest.fixture()
+def in_memory_session(monkeypatch: pytest.MonkeyPatch) -> sessionmaker:
+    """Configure une base SQLite en mémoire et remplace ``SessionLocal``."""
+
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    TestingSessionLocal = sessionmaker(bind=engine)
+
+    Base.metadata.create_all(bind=engine)
+
+    def _session_local() -> Session:
+        return TestingSessionLocal()
+
+    monkeypatch.setattr(ml_tasks, "SessionLocal", _session_local)
+
+    yield TestingSessionLocal
+
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def _seed_reference_data(db: Session) -> None:
+    """Insère les entités de base nécessaires aux tests."""
+
+    hippodrome_flat = Hippodrome(
+        code="TEST",
+        name="Hippodrome Test",
+        city="Paris",
+        country="France",
+        track_type=TrackType.PLAT,
+        track_length=1300,
+    )
+    hippodrome_trot = Hippodrome(
+        code="TROT",
+        name="Hippodrome Trot",
+        city="Mons",
+        country="Belgique",
+        track_type=TrackType.TROT,
+        track_length=1825,
+    )
+    db.add_all([hippodrome_flat, hippodrome_trot])
+    db.flush()
+
+    today = date.today()
+    reunion = Reunion(
+        hippodrome_id=hippodrome_flat.hippodrome_id,
+        reunion_date=today - timedelta(days=1),
+        reunion_number=1,
+        status=ReunionStatus.COMPLETED,
+        api_source="Turfinfo",
+        weather_conditions={"condition": "Ensoleillé", "temperature": 18},
+    )
+    reunion_evening = Reunion(
+        hippodrome_id=hippodrome_trot.hippodrome_id,
+        reunion_date=today,
+        reunion_number=4,
+        status=ReunionStatus.COMPLETED,
+        api_source="PMU_API",
+        weather_conditions={"condition": "Pluie battante", "temperature": 9},
+    )
+    db.add_all([reunion, reunion_evening])
+    db.flush()
+
+    trainer_fr = Trainer(
+        first_name="Anne",
+        last_name="Durand",
+        nationality="FR",
+        career_starts=380,
+    )
+    trainer_be = Trainer(
+        first_name="Marc",
+        last_name="Dupont",
+        nationality="BE",
+        career_starts=1450,
+    )
+    jockey_fr = Jockey(
+        first_name="Leo",
+        last_name="Martin",
+        nationality="FR",
+        career_starts=120,
+    )
+    jockey_be = Jockey(
+        first_name="Noah",
+        last_name="Verbeeck",
+        nationality="BE",
+        career_starts=560,
+    )
+    db.add_all([trainer_fr, trainer_be, jockey_fr, jockey_be])
+    db.flush()
+
+    current_year = date.today().year
+    horses = [
+        Horse(
+            name="Cheval A",
+            gender=Gender.MALE,
+            birth_year=current_year - 4,
+            owner="Ecurie Horizon",
+            coat_color="Bai",
+            breed="Pur-Sang",
+            sire="Stallion Alpha",
+            dam="Mare Alpha",
+        ),
+        Horse(
+            name="Cheval B",
+            gender=Gender.FEMALE,
+            birth_year=current_year - 3,
+            owner="Ecurie Horizon",
+            coat_color="Alezane",
+            breed="Anglo-Arabe",
+            sire="Stallion Alpha",
+            dam="Mare Alpha",
+        ),
+        Horse(
+            name="Cheval C",
+            gender=Gender.MALE,
+            birth_year=current_year - 5,
+            owner="Ecurie Equinoxe",
+            coat_color="Bai brun",
+            breed="Pur sang",
+            sire="Stallion Brave",
+            dam="Mare Bravée",
+        ),
+        Horse(
+            name="Cheval D",
+            gender=Gender.MALE,
+            birth_year=current_year - 7,
+            owner="Ecurie Equinoxe",
+            coat_color="Gris Pommelé",
+            breed="Trotteur Français",
+            sire="Stallion Brave",
+            dam="Mare Bravee",
+        ),
+        Horse(
+            name="Cheval E",
+            gender=Gender.FEMALE,
+            birth_year=current_year - 9,
+            owner="Ecurie Boreale",
+            coat_color="Alezan brûlé",
+            breed="AQPS",
+            sire="Étalon Céleste",
+            dam="Mère Stella",
+        ),
+        Horse(name="Cheval F", gender=Gender.MALE),
+    ]
+    db.add_all(horses)
+    db.flush()
+
+    course1 = Course(
+        reunion_id=reunion.reunion_id,
+        course_number=1,
+        course_name="R1C1",
+        discipline=Discipline.PLAT,
+        distance=1400,
+        prize_money=Decimal("10000"),
+        race_category="Groupe",
+        race_class="A",
+        surface_type=SurfaceType.PELOUSE,
+        start_type=StartType.STALLE,
+        scheduled_time=time(14, 0),
+        actual_start_time=time(14, 3),
+        status=CourseStatus.FINISHED,
+        number_of_runners=8,
+    )
+    course2 = Course(
+        reunion_id=reunion_evening.reunion_id,
+        course_number=7,
+        course_name="R1C2",
+        discipline=Discipline.TROT_ATTELE,
+        distance=3000,
+        prize_money=Decimal("8000"),
+        race_category="Classe",
+        race_class="B",
+        surface_type=SurfaceType.SABLE,
+        start_type=StartType.AUTOSTART,
+        scheduled_time=time(20, 30),
+        actual_start_time=time(20, 55),
+        status=CourseStatus.FINISHED,
+        number_of_runners=14,
+    )
+    db.add_all([course1, course2])
+    db.flush()
+
+    pronostic1 = Pronostic(
+        course_id=course1.course_id,
+        model_version="v1.0",
+        gagnant_predicted=None,
+        place_predicted=None,
+        tierce_predicted=None,
+        quarte_predicted=None,
+        quinte_predicted=None,
+        confidence_score=Decimal("0.55"),
+        value_bet_detected=True,
+        generated_at=datetime.combine(date.today() - timedelta(days=1), time(11, 0)),
+    )
+    pronostic2 = Pronostic(
+        course_id=course2.course_id,
+        model_version="v2.0",
+        gagnant_predicted=None,
+        place_predicted=None,
+        tierce_predicted=None,
+        quarte_predicted=None,
+        quinte_predicted=None,
+        confidence_score=Decimal("0.40"),
+        value_bet_detected=False,
+        generated_at=datetime.combine(date.today(), time(10, 30)),
+    )
+    db.add_all([pronostic1, pronostic2])
+    db.flush()
+
+    partants = [
+        Partant(
+            course_id=course1.course_id,
+            horse_id=horses[0].horse_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
+            numero_corde=1,
+            poids_porte=Decimal("52.5"),
+            final_position=1,
+            odds_pmu=Decimal("3.0"),
+            days_since_last_race=10,
+            handicap_value=8,
+            equipment={"items": ["Oeillères"]},
+            recent_form="1-1-2",
+        ),
+        Partant(
+            course_id=course1.course_id,
+            horse_id=horses[1].horse_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
+            numero_corde=5,
+            poids_porte=Decimal("55.0"),
+            final_position=2,
+            odds_pmu=Decimal("4.0"),
+            days_since_last_race=25,
+            handicap_value=16,
+            equipment={"items": ["Licol"]},
+            recent_form="3-4-5",
+        ),
+        Partant(
+            course_id=course1.course_id,
+            horse_id=horses[2].horse_id,
+            jockey_id=jockey_fr.jockey_id,
+            trainer_id=trainer_fr.trainer_id,
+            numero_corde=8,
+            poids_porte=Decimal("58.5"),
+            final_position=4,
+            odds_pmu=Decimal("12.0"),
+            days_since_last_race=75,
+            handicap_value=26,
+            equipment={"items": ["Bonnet", "Mors"]},
+            recent_form="6-7-8",
+        ),
+        Partant(
+            course_id=course2.course_id,
+            horse_id=horses[3].horse_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
+            numero_corde=2,
+            poids_porte=Decimal("60.0"),
+            final_position=1,
+            odds_pmu=Decimal("5.5"),
+            days_since_last_race=45,
+            handicap_value=34,
+            equipment={"items": []},
+            recent_form="2-3-2",
+        ),
+        Partant(
+            course_id=course2.course_id,
+            horse_id=horses[4].horse_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
+            numero_corde=8,
+            poids_porte=Decimal("62.0"),
+            final_position=4,
+            odds_pmu=Decimal("7.0"),
+            days_since_last_race=210,
+            handicap_value=12,
+            equipment=None,
+            recent_form="9-10-11",
+        ),
+        Partant(
+            course_id=course2.course_id,
+            horse_id=horses[5].horse_id,
+            jockey_id=jockey_be.jockey_id,
+            trainer_id=trainer_be.trainer_id,
+            numero_corde=13,
+            final_position=2,
+            odds_pmu=Decimal("6.0"),
+            equipment={"items": ["Œillères australiennes"]},
+        ),
+    ]
+    db.add_all(partants)
+    db.flush()
+
+    predictions = [
+        PartantPrediction(
+            pronostic_id=pronostic1.pronostic_id,
+            partant_id=partants[0].partant_id,
+            win_probability=Decimal("0.55"),
+            place_probability=Decimal("0.82"),
+            predicted_position=1,
+            confidence_level="high",
+            shap_contributions={
+                "draw_bias": "0.12",
+                "recent_form": "0.05",
+                "ground_state": "-0.02",
+            },
+        ),
+        PartantPrediction(
+            pronostic_id=pronostic1.pronostic_id,
+            partant_id=partants[1].partant_id,
+            win_probability=Decimal("0.30"),
+            place_probability=Decimal("0.68"),
+            predicted_position=3,
+            confidence_level="medium",
+            shap_values=[
+                {"feature": "draw_bias", "value": -0.03},
+                {"feature": "recent_form", "value": 0.01},
+                {"feature": "pace_projection", "value": 0.07},
+            ],
+        ),
+        PartantPrediction(
+            pronostic_id=pronostic1.pronostic_id,
+            partant_id=partants[2].partant_id,
+            win_probability=Decimal("0.15"),
+            place_probability=Decimal("0.28"),
+            predicted_position=5,
+            confidence_level="low",
+            shap_contributions='[{"feature": "draw_bias", "value": -0.08}, {"feature": "ground_state", "value": 0.02}]',
+        ),
+        PartantPrediction(
+            pronostic_id=pronostic2.pronostic_id,
+            partant_id=partants[3].partant_id,
+            win_probability=Decimal("0.25"),
+            place_probability=Decimal("0.74"),
+            predicted_position=2,
+            confidence_level="low",
+            shap_contributions={"pace_projection": 0.05, "distance_profile": -0.04},
+        ),
+        PartantPrediction(
+            pronostic_id=pronostic2.pronostic_id,
+            partant_id=partants[4].partant_id,
+            win_probability=Decimal("0.40"),
+            place_probability=Decimal("0.36"),
+            predicted_position=6,
+            confidence_level="medium",
+            shap_values=[
+                {"feature": "pace_projection", "value": -0.02},
+                {"feature": "ground_state", "value": 0.01},
+            ],
+        ),
+        PartantPrediction(
+            pronostic_id=pronostic2.pronostic_id,
+            partant_id=partants[5].partant_id,
+            win_probability=Decimal("0.35"),
+            place_probability=Decimal("0.52"),
+            confidence_level="medium",
+            shap_contributions={"draw_bias": 0.04, "distance_profile": -0.01},
+        ),
+    ]
+    db.add_all(predictions)
+
+    model = MLModel(
+        model_name="horse_racing_gradient_boosting",
+        version="20250101",
+        algorithm="GradientBoosting",
+        file_path="model.pkl",
+        is_active=True,
+    )
+    db.add(model)
+
+
+def _derive_season_key(target_date: date) -> Tuple[str, str]:
+    """Reproduit la catégorisation saisonnière utilisée par la tâche ML."""
+
+    month = target_date.month
+    year = target_date.year
+
+    if month in (12, 1, 2):
+        return f"{year:04d}-winter", f"Hiver {year}"
+
+    if month in (3, 4, 5):
+        return f"{year:04d}-spring", f"Printemps {year}"
+
+    if month in (6, 7, 8):
+        return f"{year:04d}-summer", f"Été {year}"
+
+    return f"{year:04d}-autumn", f"Automne {year}"
+
+
+def test_update_model_performance_with_results(in_memory_session: sessionmaker) -> None:
+    """Vérifie le calcul des métriques et la mise à jour du modèle actif."""
+
+    session = in_memory_session()
+    _seed_reference_data(session)
+    session.commit()
+    session.close()
+
+    result = ml_tasks.update_model_performance.run(days_back=2, probability_threshold=0.3)
+
+    assert result["status"] == "success"
+    assert result["evaluated_samples"] == 6
+    assert result["courses_evaluated"] == 2
+    assert result["value_bet_courses"] == 1
+
+    metrics = result["metrics"]
+    assert metrics["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+    assert metrics["precision"] == pytest.approx(0.75, rel=1e-3)
+    assert metrics["recall"] == pytest.approx(0.75, rel=1e-3)
+    assert metrics["f1"] == pytest.approx(0.75, rel=1e-3)
+    assert metrics["roc_auc"] == pytest.approx(0.625, rel=1e-3)
+    assert metrics["gini_coefficient"] == pytest.approx(0.25, rel=1e-3)
+    assert metrics["brier_score"] == pytest.approx(0.31, rel=1e-2)
+    brier_components = metrics["brier_decomposition"]
+    assert brier_components["reliability"] == pytest.approx(0.24979, rel=1e-3)
+    assert brier_components["resolution"] == pytest.approx(0.13889, rel=1e-3)
+    assert brier_components["uncertainty"] == pytest.approx(2 / 9, rel=1e-3)
+    assert brier_components["skill_score"] == pytest.approx(-0.395, rel=1e-3)
+    assert metrics["matthews_correlation"] == pytest.approx(0.25, rel=1e-3)
+    assert metrics["cohen_kappa"] == pytest.approx(0.25, rel=1e-3)
+    assert metrics["specificity"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
+    assert metrics["top1_accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert metrics["course_top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert metrics["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
+    assert metrics["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
+
+    probability_distribution = metrics["probability_distribution_metrics"]
+    overall_distribution = probability_distribution["overall"]
+    assert overall_distribution["count"] == 6
+    assert overall_distribution["average"] == pytest.approx(1 / 3, rel=1e-3)
+    assert overall_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert overall_distribution["p10"] == pytest.approx(0.20, rel=1e-3)
+    assert overall_distribution["p90"] == pytest.approx(0.475, rel=1e-3)
+    assert overall_distribution["std"] == pytest.approx(0.1247, rel=1e-3)
+
+    positive_distribution = probability_distribution["positives"]
+    assert positive_distribution["count"] == 4
+    assert positive_distribution["average"] == pytest.approx(0.3625, rel=1e-3)
+    assert positive_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert positive_distribution["min"] == pytest.approx(0.25, rel=1e-3)
+    assert positive_distribution["max"] == pytest.approx(0.55, rel=1e-3)
+
+    negative_distribution = probability_distribution["negatives"]
+    assert negative_distribution["count"] == 2
+    assert negative_distribution["average"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["median"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["p10"] == pytest.approx(0.175, rel=1e-3)
+    assert negative_distribution["p90"] == pytest.approx(0.375, rel=1e-3)
+
+    assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+
+    place_quality = metrics["place_probability_quality"]
+    assert place_quality["samples"] == 6
+    assert place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
+    assert place_quality["log_loss"] == pytest.approx(0.38566, rel=1e-3)
+    assert place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert place_quality["average_calibration_gap"] == pytest.approx(-0.1, rel=1e-3)
+    assert place_quality["average_absolute_error"] == pytest.approx(0.3133333333, rel=1e-3)
+    assert place_quality["median_absolute_error"] == pytest.approx(0.3, rel=1e-3)
+    assert place_quality["max_absolute_error"] == pytest.approx(0.48, rel=1e-3)
+    per_course_quality = place_quality["per_course"]
+    assert len(per_course_quality) == 2
+    assert any(course["label"] == "R1C1" and course["samples"] == 3 for course in per_course_quality)
+    overconfident = place_quality["overconfident_predictions"]
+    assert overconfident and overconfident[0]["probability"] == pytest.approx(0.36, rel=1e-3)
+    underconfident = place_quality["underconfident_predictions"]
+    assert underconfident and underconfident[0]["probability"] == pytest.approx(0.52, rel=1e-3)
+
+    place_calibration = metrics["place_probability_calibration"]
+    assert place_calibration["samples"] == 6
+    overall_place_calibration = place_calibration["overall"]
+    assert overall_place_calibration["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert overall_place_calibration["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert overall_place_calibration["average_calibration_gap"] == pytest.approx(-0.1, rel=1e-3)
+    calibration_bins = {entry["label"]: entry for entry in place_calibration["bins"]}
+    assert calibration_bins["20-30%"]["calibration_gap"] == pytest.approx(0.28, rel=1e-3)
+    assert calibration_bins["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
+    assert calibration_bins["80-90%"]["samples"] == 1
+    assert place_calibration["most_overconfident_bins"][0]["label"] == "30-40%"
+    assert place_calibration["most_underconfident_bins"][0]["label"] == "50-60%"
+
+    place_distribution = metrics["place_probability_distribution"]
+    assert place_distribution["samples"] == 6
+
+    overall_place_distribution = place_distribution["overall"]
+    assert overall_place_distribution["count"] == 6
+    assert overall_place_distribution["average"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert overall_place_distribution["median"] == pytest.approx(0.6, rel=1e-3)
+    assert overall_place_distribution["min"] == pytest.approx(0.28, rel=1e-3)
+    assert overall_place_distribution["max"] == pytest.approx(0.82, rel=1e-3)
+    assert overall_place_distribution["p10"] == pytest.approx(0.32, rel=1e-3)
+    assert overall_place_distribution["p90"] == pytest.approx(0.78, rel=1e-3)
+    assert overall_place_distribution["std"] == pytest.approx(0.19754, rel=1e-3)
+
+    positive_place_distribution = place_distribution["positives"]
+    assert positive_place_distribution["count"] == 4
+    assert positive_place_distribution["average"] == pytest.approx(0.69, rel=1e-3)
+    assert positive_place_distribution["median"] == pytest.approx(0.71, rel=1e-3)
+    assert positive_place_distribution["p10"] == pytest.approx(0.568, rel=1e-3)
+    assert positive_place_distribution["p90"] == pytest.approx(0.796, rel=1e-3)
+    assert positive_place_distribution["std"] == pytest.approx(0.11, rel=1e-3)
+
+    negative_place_distribution = place_distribution["negatives"]
+    assert negative_place_distribution["count"] == 2
+    assert negative_place_distribution["average"] == pytest.approx(0.32, rel=1e-3)
+    assert negative_place_distribution["median"] == pytest.approx(0.32, rel=1e-3)
+    assert negative_place_distribution["p10"] == pytest.approx(0.288, rel=1e-3)
+    assert negative_place_distribution["p90"] == pytest.approx(0.352, rel=1e-3)
+    assert negative_place_distribution["std"] == pytest.approx(0.04, rel=1e-3)
+
+    assert place_distribution["average_gap"] == pytest.approx(0.37, rel=1e-3)
+    assert place_distribution["median_gap"] == pytest.approx(0.39, rel=1e-3)
+
+    per_course_distribution = place_distribution["per_course"]
+    assert len(per_course_distribution) == 2
+    course_labels = {entry["label"]: entry for entry in per_course_distribution}
+    r1c1_distribution = course_labels["R1C1"]
+    assert r1c1_distribution["samples"] == 3
+    assert r1c1_distribution["average_probability"] == pytest.approx(0.5933333333, rel=1e-3)
+    assert r1c1_distribution["median_probability"] == pytest.approx(0.68, rel=1e-3)
+    assert r1c1_distribution["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert r1c1_distribution["positive_samples"] == 2
+    assert r1c1_distribution["horses"] == 3
+    assert r1c1_distribution["pronostics"] == 1
+
+    top_predictions = place_distribution["top_predictions"]
+    assert [entry["probability"] for entry in top_predictions] == pytest.approx(
+        [0.82, 0.74, 0.68],
+        rel=1e-3,
+    )
+    assert top_predictions[0]["horse_name"] == "Cheval A"
+
+    surprising_winners = place_distribution["surprising_winners"]
+    assert surprising_winners[0]["probability"] == pytest.approx(0.52, rel=1e-3)
+    assert surprising_winners[0]["horse_name"] == "Cheval F"
+
+    surprising_losses = place_distribution["surprising_losses"]
+    assert surprising_losses[0]["probability"] == pytest.approx(0.36, rel=1e-3)
+    assert surprising_losses[0]["horse_name"] == "Cheval E"
+
+    place_gain_curve = metrics["place_probability_gain_curve"]
+    assert place_gain_curve["samples"] == 6
+    assert place_gain_curve["positives"] == 4
+    first_step = place_gain_curve["first_step"]
+    assert first_step["step"] == 1
+    assert first_step["coverage"] == pytest.approx(1 / 3, rel=1e-3)
+    assert first_step["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+    best_step = place_gain_curve["best_step"]
+    assert best_step["step"] == 1
+    assert best_step["lift"] == pytest.approx(1.5, rel=1e-3)
+    gain_curve_steps = place_gain_curve["curve"]
+    assert len(gain_curve_steps) == 5
+    assert gain_curve_steps[2]["captured_places"] == 4
+    assert gain_curve_steps[2]["coverage"] == pytest.approx(4 / 6, rel=1e-3)
+    per_course_gain = {
+        entry["label"]: entry for entry in place_gain_curve["per_course"]
+    }
+    assert per_course_gain["R1C1"]["captured"] == 1
+    assert per_course_gain["R1C1"]["missed_positives"] == 1
+    assert per_course_gain["R1C1"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert per_course_gain["R1C2"]["captured_examples"][0]["probability"] == pytest.approx(
+        0.74,
+        rel=1e-3,
+    )
+
+    entropy_metrics = metrics["probability_entropy_performance"]
+
+    entropy_metrics = metrics["probability_entropy_performance"]
+    assert entropy_metrics["samples"] == 2
+    overall_entropy = entropy_metrics["overall"]
+    assert overall_entropy["courses"] == 2
+    assert overall_entropy["average_entropy"] == pytest.approx(1.4824, rel=1e-3)
+    assert overall_entropy["average_normalised_entropy"] == pytest.approx(0.9353, rel=1e-3)
+    assert overall_entropy["min_normalised_entropy"] == pytest.approx(0.8871, rel=1e-3)
+    assert overall_entropy["max_normalised_entropy"] == pytest.approx(0.9835, rel=1e-3)
+
+    entropy_buckets = entropy_metrics["buckets"]
+    assert set(entropy_buckets.keys()) == {"diffuse"}
+    diffuse_bucket = entropy_buckets["diffuse"]
+    assert diffuse_bucket["samples"] == 2
+    assert diffuse_bucket["average_normalised_entropy"] == pytest.approx(0.9353, rel=1e-3)
+    assert diffuse_bucket["average_runner_count"] == pytest.approx(11.0, rel=1e-3)
+
+    confident_courses = entropy_metrics["most_confident_courses"]
+    assert confident_courses[0]["label"] == "R1C1"
+    assert confident_courses[0]["runner_count"] == 8
+    assert confident_courses[0]["normalised_entropy"] == pytest.approx(0.8871, rel=1e-3)
+
+    uncertain_courses = entropy_metrics["most_uncertain_courses"]
+    assert uncertain_courses[0]["label"] == "R1C2"
+    assert uncertain_courses[0]["runner_count"] == 14
+    assert uncertain_courses[0]["normalised_entropy"] == pytest.approx(0.9835, rel=1e-3)
+
+    sharpness_metrics = metrics["probability_sharpness_performance"]
+    assert sharpness_metrics["samples"] == 2
+    sharpness_overall = sharpness_metrics["overall"]
+    assert sharpness_overall["courses"] == 2
+    assert sharpness_overall["average_std_dev"] == pytest.approx(0.11368, rel=1e-3)
+    assert sharpness_overall["min_std_dev"] == pytest.approx(0.06236, rel=1e-3)
+    assert sharpness_overall["max_std_dev"] == pytest.approx(0.16499, rel=1e-3)
+    assert sharpness_overall["average_range"] == pytest.approx(0.275, rel=1e-3)
+    assert sharpness_overall["average_coefficient_of_variation"] == pytest.approx(0.34103, rel=1e-3)
+
+    sharpness_buckets = sharpness_metrics["buckets"]
+    assert set(sharpness_buckets.keys()) == {"controlled", "volatile"}
+    controlled_bucket = sharpness_buckets["controlled"]
+    assert controlled_bucket["samples"] == 1
+    assert controlled_bucket["average_std_dev"] == pytest.approx(0.06236, rel=1e-3)
+    assert controlled_bucket["average_range"] == pytest.approx(0.15, rel=1e-3)
+    volatile_bucket = sharpness_buckets["volatile"]
+    assert volatile_bucket["samples"] == 1
+    assert volatile_bucket["average_std_dev"] == pytest.approx(0.16499, rel=1e-3)
+    assert volatile_bucket["average_range"] == pytest.approx(0.40, rel=1e-3)
+
+    least_dispersed = sharpness_metrics["least_dispersed_courses"]
+    assert least_dispersed[0]["label"] == "R1C2"
+    assert least_dispersed[0]["standard_deviation"] == pytest.approx(0.06236, rel=1e-3)
+    most_dispersed = sharpness_metrics["most_dispersed_courses"]
+    assert most_dispersed[0]["label"] == "R1C1"
+    assert most_dispersed[0]["standard_deviation"] == pytest.approx(0.16499, rel=1e-3)
+
+    feature_summary = metrics["feature_contribution_summary"]
+    assert feature_summary["prediction_samples"] == 6
+    assert feature_summary["total_samples"] == 14
+    draw_feature = feature_summary["features"]["draw_bias"]
+    assert draw_feature["average_contribution"] == pytest.approx(0.0125, rel=1e-4)
+    assert draw_feature["average_absolute_contribution"] == pytest.approx(0.0675, rel=1e-4)
+    assert draw_feature["positive_share"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_feature["negative_share"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_feature["max_contribution"] == pytest.approx(0.12, rel=1e-4)
+    assert draw_feature["min_contribution"] == pytest.approx(-0.08, rel=1e-4)
+    top_features = feature_summary["top_features"]
+    assert top_features[0]["feature"] == "draw_bias"
+    assert top_features[1]["feature"] == "pace_projection"
+
+    rank_correlation = metrics["rank_correlation_performance"]
+    assert rank_correlation["tracked_courses"] == 2
+    assert rank_correlation["evaluated_courses"] == 2
+    assert rank_correlation["courses_missing_results"] == 0
+    assert rank_correlation["average_spearman"] == pytest.approx(0.0, abs=1e-6)
+    assert rank_correlation["median_spearman"] == pytest.approx(0.0, abs=1e-6)
+    assert rank_correlation["best_spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert rank_correlation["worst_spearman"] == pytest.approx(-1.0, abs=1e-6)
+    assert len(rank_correlation["course_details"]) == 2
+    detail_by_label = {
+        detail["label"]: detail for detail in rank_correlation["course_details"].values()
+    }
+    assert detail_by_label["R1C1"]["spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert detail_by_label["R1C1"]["runner_count"] == 3
+    assert detail_by_label["R1C2"]["spearman"] == pytest.approx(-1.0, abs=1e-6)
+    assert detail_by_label["R1C2"]["runner_count"] == 3
+
+    rank_error_metrics = metrics["rank_error_metrics"]
+    assert rank_error_metrics["tracked_courses"] == 2
+    assert rank_error_metrics["evaluated_courses"] == 2
+    assert rank_error_metrics["samples"] == 6
+    assert rank_error_metrics["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_metrics["median_absolute_error"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["rmse"] == pytest.approx((14 / 6) ** 0.5, rel=1e-3)
+    assert rank_error_metrics["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+    assert rank_error_metrics["perfect_predictions"] == 3
+    assert rank_error_metrics["perfect_share"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["average_bias"] == pytest.approx(-1 / 3, rel=1e-3)
+    details_by_label = {
+        detail["label"]: detail for detail in rank_error_metrics["course_details"].values()
+    }
+    assert details_by_label["R1C1"]["mean_absolute_error"] == pytest.approx(1 / 3, rel=1e-3)
+    assert details_by_label["R1C1"]["perfect_share"] == pytest.approx(2 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["mean_absolute_error"] == pytest.approx(5 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+
+    rank_error_distribution = metrics["rank_error_distribution"]
+    assert rank_error_distribution["rank_error_exact"]["samples"] == 3
+    assert rank_error_distribution["rank_error_exact"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_distribution["rank_error_exact"]["winner_rate"] == pytest.approx(1 / 3, rel=1e-3)
+    assert rank_error_distribution["rank_error_exact"]["course_share"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_one"]["average_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_one"]["median_signed_error"] == pytest.approx(-1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_two_three"]["samples"] == 2
+    assert rank_error_distribution["rank_error_two_three"]["average_signed_error"] == pytest.approx(-0.5, rel=1e-3)
+    assert rank_error_distribution["rank_error_two_three"]["top3_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    winner_rank_metrics = metrics["winner_rank_metrics"]
+    assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
+    assert winner_rank_metrics["median_rank"] == pytest.approx(2.0, rel=1e-3)
+    assert winner_rank_metrics["share_top1"] == pytest.approx(0.5, rel=1e-3)
+    assert winner_rank_metrics["share_top3"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_rank_metrics["distribution"]["rank_1"] == 1
+    assert winner_rank_metrics["distribution"]["rank_3"] == 1
+
+    topn_performance = metrics["topn_performance"]
+    assert set(topn_performance.keys()) == {"top1", "top2", "top3"}
+    assert topn_performance["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert topn_performance["top1"]["top3_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert topn_performance["top1"]["median_probability"] == pytest.approx(0.475, rel=1e-3)
+    assert topn_performance["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert topn_performance["top2"]["best_finish_average"] == pytest.approx(1.5, rel=1e-3)
+    assert topn_performance["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert topn_performance["top3"]["best_finish_average"] == pytest.approx(1.0, rel=1e-3)
+
+    calibration_table = metrics["calibration_table"]
+    assert len(brier_components["bins"]) == len(calibration_table)
+    assert brier_components["bins"][0]["reliability_contribution"] == pytest.approx(0.00375, rel=1e-3)
+    assert len(calibration_table) == 5
+    assert calibration_table[0]["empirical_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert calibration_table[-1]["count"] == 2
+    assert calibration_table[-1]["empirical_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    calibration_diagnostics = metrics["calibration_diagnostics"]
+    assert calibration_diagnostics["expected_calibration_error"] == pytest.approx(0.38333, rel=1e-3)
+    assert calibration_diagnostics["maximum_calibration_gap"] == pytest.approx(0.75, rel=1e-3)
+    assert calibration_diagnostics["weighted_bias"] == pytest.approx(1 / 3, rel=1e-3)
+    assert len(calibration_diagnostics["bins"]) == len(calibration_table)
+    assert calibration_diagnostics["bins"][0]["calibration_gap"] == pytest.approx(-0.15, rel=1e-3)
+
+    probability_bands = metrics["win_probability_performance"]
+    assert set(probability_bands.keys()) >= {
+        "under_20",
+        "between_20_30",
+        "between_30_40",
+        "between_40_50",
+        "between_50_60",
+    }
+    assert probability_bands["under_20"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert probability_bands["between_30_40"]["samples"] == 2
+    assert probability_bands["between_30_40"]["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert probability_bands["between_50_60"]["average_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert calibration_diagnostics["bins"][1]["weight"] == pytest.approx(1 / 6, rel=1e-3)
+
+    outcome_breakdown = metrics["prediction_outcome_performance"]
+    assert set(outcome_breakdown.keys()) == {
+        "false_negative",
+        "false_positive",
+        "true_negative",
+        "true_positive",
+    }
+    assert outcome_breakdown["true_positive"]["samples"] == 3
+    assert outcome_breakdown["false_positive"]["samples"] == 1
+    assert outcome_breakdown["false_negative"]["samples"] == 1
+    assert outcome_breakdown["true_negative"]["samples"] == 1
+    assert outcome_breakdown["true_positive"]["accuracy_within_segment"] == pytest.approx(
+        1.0,
+        rel=1e-3,
+    )
+    assert outcome_breakdown["false_positive"]["accuracy_within_segment"] == pytest.approx(
+        0.0,
+        rel=1e-3,
+    )
+
+    place_bands = metrics["place_probability_performance"]
+    assert set(place_bands.keys()) >= {
+        "under_30",
+        "between_30_40",
+        "between_50_60",
+        "between_60_70",
+        "between_70_80",
+        "at_least_80",
+    }
+    assert place_bands["under_30"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert place_bands["at_least_80"]["observed_positive_rate"] == pytest.approx(1.0, abs=1e-6)
+    assert place_bands["between_60_70"]["average_probability"] == pytest.approx(0.68, rel=1e-3)
+    assert place_bands["between_60_70"]["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    threshold_grid = metrics["threshold_sensitivity"]
+    assert threshold_grid["0.20"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert threshold_grid["0.20"]["precision"] == pytest.approx(0.8, rel=1e-3)
+    assert threshold_grid["0.40"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert threshold_grid["0.50"]["precision"] == pytest.approx(1.0, rel=1e-3)
+
+    threshold_recommendations = metrics["threshold_recommendations"]
+    sweep = [(float(threshold), values) for threshold, values in threshold_grid.items()]
+    assert len(threshold_recommendations["grid"]) == len(sweep)
+
+    best_f1_threshold, best_f1_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("f1") is not None
+        ),
+        key=lambda item: (item[1]["f1"], -item[0]),
+    )
+    assert threshold_recommendations["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
+    assert threshold_recommendations["best_f1"]["f1"] == pytest.approx(best_f1_metrics["f1"], rel=1e-3)
+    assert threshold_recommendations["best_f1"]["precision"] == pytest.approx(best_f1_metrics["precision"], rel=1e-3)
+    assert threshold_recommendations["best_f1"]["recall"] == pytest.approx(best_f1_metrics["recall"], rel=1e-3)
+
+    best_precision_threshold, best_precision_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("precision") is not None
+        ),
+        key=lambda item: (item[1]["precision"], -item[0]),
+    )
+    assert threshold_recommendations["maximize_precision"]["threshold"] == pytest.approx(best_precision_threshold, rel=1e-3)
+    assert threshold_recommendations["maximize_precision"]["precision"] == pytest.approx(best_precision_metrics["precision"], rel=1e-3)
+
+    best_recall_threshold, best_recall_metrics = max(
+        (
+            (threshold, values)
+            for threshold, values in sweep
+            if values.get("recall") is not None
+        ),
+        key=lambda item: (item[1]["recall"], -item[0]),
+    )
+    assert threshold_recommendations["maximize_recall"]["threshold"] == pytest.approx(best_recall_threshold, rel=1e-3)
+    assert threshold_recommendations["maximize_recall"]["recall"] == pytest.approx(best_recall_metrics["recall"], rel=1e-3)
+
+    gain_curve = metrics["gain_curve"]
+    assert len(gain_curve) == 5
+    assert gain_curve[0]["observations"] == 2
+    assert gain_curve[0]["coverage"] == pytest.approx(2 / 6, rel=1e-3)
+    assert gain_curve[0]["capture_rate"] == pytest.approx(0.25, rel=1e-3)
+    assert gain_curve[-1]["cumulative_hit_rate"] == pytest.approx(4 / 6, rel=1e-3)
+    assert gain_curve[-1]["capture_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    lift_analysis = metrics["lift_analysis"]
+    assert lift_analysis["baseline_rate"] == pytest.approx(4 / 6, rel=1e-3)
+    assert len(lift_analysis["buckets"]) == 5
+    assert lift_analysis["buckets"][0]["lift"] == pytest.approx(1.5, rel=1e-3)
+    assert lift_analysis["buckets"][1]["lift"] == pytest.approx(0.0, abs=1e-6)
+    assert lift_analysis["buckets"][0]["cumulative_capture"] == pytest.approx(0.25, rel=1e-3)
+    assert lift_analysis["buckets"][-1]["cumulative_coverage"] == pytest.approx(1.0, rel=1e-6)
+
+    assert metrics["average_precision"] == pytest.approx(0.8041666, rel=1e-3)
+
+    betting_value = metrics["betting_value_analysis"]
+    assert betting_value["priced_samples"] == 6
+    assert betting_value["bets_considered"] == 4
+    assert betting_value["actual_win_rate"] == pytest.approx(0.25, rel=1e-3)
+    assert betting_value["realized_roi"] == pytest.approx(-0.25, rel=1e-3)
+    assert betting_value["expected_value_per_bet"] == pytest.approx(0.9375, rel=1e-3)
+    assert betting_value["average_edge"] == pytest.approx(0.1767857, rel=1e-3)
+    assert betting_value["average_implied_probability"] == pytest.approx(0.223214, rel=1e-3)
+    assert betting_value["average_predicted_probability"] == pytest.approx(0.4, rel=1e-3)
+    assert len(betting_value["best_value_candidates"]) == 3
+    assert betting_value["best_value_candidates"][0]["edge"] == pytest.approx(0.2571428, rel=1e-3)
+    assert betting_value["best_value_candidates"][0]["won"] is False
+
+    odds_alignment = metrics["odds_alignment"]
+    assert odds_alignment["priced_samples"] == 6
+    assert odds_alignment["usable_samples"] == 6
+    assert odds_alignment["pearson_correlation"] == pytest.approx(0.765364, rel=1e-3)
+    assert odds_alignment["mean_probability_gap"] == pytest.approx(0.140331, rel=1e-3)
+    assert odds_alignment["mean_absolute_error"] == pytest.approx(0.140331, rel=1e-3)
+    assert odds_alignment["root_mean_squared_error"] == pytest.approx(0.1624147, rel=1e-3)
+    assert odds_alignment["average_predicted_probability"] == pytest.approx(1 / 3, rel=1e-3)
+    assert odds_alignment["average_implied_probability"] == pytest.approx(0.1930014, rel=1e-3)
+    assert odds_alignment["average_overround"] == pytest.approx(-0.4209956, rel=1e-3)
+    assert odds_alignment["median_overround"] == pytest.approx(-0.4209956, rel=1e-3)
+    assert odds_alignment["courses_with_overlay"] == 2
+    assert len(odds_alignment["course_overrounds"]) == 2
+    assert odds_alignment["course_overrounds"][0]["overround"] == pytest.approx(-1 / 3, rel=1e-3)
+    assert odds_alignment["course_overrounds"][0]["runner_count"] == 3
+
+    jockey_nat_metrics = metrics["jockey_nationality_performance"]
+    assert set(jockey_nat_metrics.keys()) == {"france", "belgique"}
+    assert jockey_nat_metrics["france"]["actors"] == 1
+    assert jockey_nat_metrics["belgique"]["actors"] == 1
+
+    trainer_nat_metrics = metrics["trainer_nationality_performance"]
+    assert set(trainer_nat_metrics.keys()) == {"france", "belgique"}
+    assert trainer_nat_metrics["france"]["courses"] == 1
+    assert trainer_nat_metrics["belgique"]["courses"] == 1
+
+    pr_curve = metrics["precision_recall_curve"]
+    assert len(pr_curve) == 7
+    assert pr_curve[0]["threshold"] == pytest.approx(0.15, rel=1e-3)
+    assert pr_curve[0]["precision"] == pytest.approx(0.8, rel=1e-3)
+    assert pr_curve[0]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert pr_curve[2]["f1"] == pytest.approx(0.571428, rel=1e-3)
+    assert pr_curve[-1]["threshold"] == pytest.approx(0.0, abs=1e-6)
+
+    roc_curve_points = metrics["roc_curve"]
+    assert len(roc_curve_points) == 5
+    assert roc_curve_points[0]["threshold"] is None
+    assert roc_curve_points[0]["true_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert roc_curve_points[1]["threshold"] == pytest.approx(0.55, rel=1e-3)
+    assert roc_curve_points[1]["youden_j"] == pytest.approx(0.25, rel=1e-3)
+    assert roc_curve_points[3]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert roc_curve_points[3]["specificity"] == pytest.approx(0.5, rel=1e-3)
+
+    ks_analysis = metrics["ks_analysis"]
+    assert ks_analysis["ks_statistic"] == pytest.approx(0.5, rel=1e-3)
+    assert ks_analysis["ks_threshold"] == pytest.approx(0.25, rel=1e-3)
+    assert len(ks_analysis["curve"]) == 6
+    assert ks_analysis["curve"][0]["threshold"] == pytest.approx(0.55, rel=1e-3)
+    assert ks_analysis["curve"][4]["distance"] == pytest.approx(0.5, rel=1e-3)
+
+    confidence = result["confidence_distribution"]
+    assert confidence == {"high": 1, "low": 2, "medium": 3}
+
+    level_metrics = metrics["confidence_level_metrics"]
+    assert set(level_metrics.keys()) == {"high", "low", "medium"}
+
+    assert level_metrics["high"]["samples"] == 1
+    assert level_metrics["high"]["label"] == "Confiance élevée"
+    assert level_metrics["high"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["high"]["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert level_metrics["high"]["courses"] == 1
+    assert level_metrics["high"]["pronostics"] == 1
+
+    assert level_metrics["medium"]["samples"] == 3
+    assert level_metrics["medium"]["precision"] == pytest.approx(2 / 3, rel=1e-3)
+    assert level_metrics["medium"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert level_metrics["medium"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert level_metrics["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert level_metrics["medium"]["courses"] == 2
+    assert level_metrics["medium"]["pronostics"] == 2
+
+    assert level_metrics["low"]["samples"] == 2
+    assert level_metrics["low"]["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert level_metrics["low"]["positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert level_metrics["low"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert level_metrics["low"]["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert level_metrics["low"]["courses"] == 2
+    assert level_metrics["low"]["pronostics"] == 2
+
+    confidence_score_performance = metrics["confidence_score_performance"]
+    assert set(confidence_score_performance.keys()) == {"low", "medium"}
+
+    medium_confidence = confidence_score_performance["medium"]
+    assert medium_confidence["label"] == "Confiance moyenne (50-70%)"
+    assert medium_confidence["samples"] == 3
+    assert medium_confidence["courses"] == 1
+    assert medium_confidence["share"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_confidence["average_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["min_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["max_confidence"] == pytest.approx(55.0, rel=1e-3)
+    assert medium_confidence["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert medium_confidence["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    low_confidence = confidence_score_performance["low"]
+    assert low_confidence["label"] == "Confiance faible (30-50%)"
+    assert low_confidence["samples"] == 3
+    assert low_confidence["courses"] == 1
+    assert low_confidence["share"] == pytest.approx(0.5, rel=1e-3)
+    assert low_confidence["average_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["min_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["max_confidence"] == pytest.approx(40.0, rel=1e-3)
+    assert low_confidence["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert low_confidence["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+
+    daily_performance = metrics["daily_performance"]
+    assert len(daily_performance) == 2
+
+    day_minus_one = (date.today() - timedelta(days=1)).isoformat()
+    today = date.today().isoformat()
+
+    assert daily_performance[0]["day"] == day_minus_one
+    assert daily_performance[0]["samples"] == 3
+    assert daily_performance[0]["courses"] == 1
+    assert daily_performance[0]["value_bet_courses"] == 1
+    assert daily_performance[0]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert daily_performance[0]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert daily_performance[0]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    assert daily_performance[1]["day"] == today
+    assert daily_performance[1]["samples"] == 3
+    assert daily_performance[1]["courses"] == 1
+    assert daily_performance[1]["value_bet_courses"] == 0
+    assert daily_performance[1]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert daily_performance[1]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert daily_performance[1]["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert daily_performance[1]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert daily_performance[1]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    day_part_performance = metrics["day_part_performance"]
+    assert set(day_part_performance.keys()) == {"afternoon", "evening"}
+
+    afternoon_metrics = day_part_performance["afternoon"]
+    assert afternoon_metrics["label"] == "Après-midi"
+    assert afternoon_metrics["samples"] == 3
+    assert afternoon_metrics["courses"] == 1
+    assert afternoon_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert afternoon_metrics["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert afternoon_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert afternoon_metrics["average_post_time"] == "14:00"
+    assert afternoon_metrics["earliest_post_time"] == "14:00"
+    assert afternoon_metrics["latest_post_time"] == "14:00"
+
+    evening_metrics = day_part_performance["evening"]
+    assert evening_metrics["label"] == "Soir"
+    assert evening_metrics["samples"] == 3
+    assert evening_metrics["courses"] == 1
+    assert evening_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert evening_metrics["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert evening_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert evening_metrics["average_post_time"] == "20:30"
+    assert evening_metrics["earliest_post_time"] == "20:30"
+    assert evening_metrics["latest_post_time"] == "20:30"
+
+    lead_time_performance = metrics["lead_time_performance"]
+    assert set(lead_time_performance.keys()) == {"between_2h_6h", "between_6h_12h"}
+
+    short_notice = lead_time_performance["between_2h_6h"]
+    assert short_notice["label"] == "Publication 2-6h avant départ"
+    assert short_notice["samples"] == 3
+    assert short_notice["courses"] == 1
+    assert short_notice["pronostics"] == 1
+    assert short_notice["share"] == pytest.approx(0.5, rel=1e-3)
+    assert short_notice["average_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["median_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["min_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+    assert short_notice["max_lead_hours"] == pytest.approx(3.0, rel=1e-3)
+
+    extended_notice = lead_time_performance["between_6h_12h"]
+    assert extended_notice["label"] == "Publication 6-12h avant départ"
+    assert extended_notice["samples"] == 3
+    assert extended_notice["courses"] == 1
+    assert extended_notice["pronostics"] == 1
+    assert extended_notice["share"] == pytest.approx(0.5, rel=1e-3)
+    assert extended_notice["average_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["median_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["min_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+    assert extended_notice["max_lead_hours"] == pytest.approx(10.0, rel=1e-3)
+
+    year_performance = metrics["year_performance"]
+    current_year_key = date.today().strftime("%Y")
+    assert current_year_key in year_performance
+    current_year_metrics = year_performance[current_year_key]
+    assert current_year_metrics["label"] == f"Année {date.today().year}"
+    assert current_year_metrics["year"] == date.today().year
+    assert current_year_metrics["samples"] == 6
+    assert current_year_metrics["share"] == pytest.approx(1.0, rel=1e-3)
+    assert current_year_metrics["courses"] >= 1
+    assert current_year_metrics["reunions"] >= 1
+    assert current_year_metrics["first_date"] <= current_year_metrics["last_date"]
+
+    month_performance = metrics["month_performance"]
+    current_month_key = date.today().strftime("%Y-%m")
+    assert current_month_key in month_performance
+    assert month_performance[current_month_key]["samples"] >= 3
+    assert month_performance[current_month_key]["reunions"] >= 1
+    assert sum(entry["samples"] for entry in month_performance.values()) == 6
+    assert str(date.today().year) in month_performance[current_month_key]["label"]
+
+    season_performance = metrics["season_performance"]
+    season_key, season_label = _derive_season_key(date.today())
+    previous_key, previous_label = _derive_season_key(date.today() - timedelta(days=1))
+
+    assert season_key in season_performance
+    assert season_performance[season_key]["label"] == season_label
+    assert season_performance[season_key]["samples"] >= 3
+    assert season_performance[season_key]["courses"] >= 1
+
+    if previous_key != season_key:
+        assert previous_key in season_performance
+        assert season_performance[previous_key]["label"] == previous_label
+
+    assert sum(entry["samples"] for entry in season_performance.values()) == 6
+
+    quarter_performance = metrics["quarter_performance"]
+    current_quarter_index = ((date.today().month - 1) // 3) + 1
+    current_quarter_key = f"{date.today().year:04d}-Q{current_quarter_index}"
+    assert current_quarter_key in quarter_performance
+    current_quarter_metrics = quarter_performance[current_quarter_key]
+    assert current_quarter_metrics["samples"] == 6
+    assert current_quarter_metrics["reunions"] >= 1
+    assert current_quarter_metrics["share"] == pytest.approx(1.0, rel=1e-3)
+    assert current_quarter_metrics["label"] == f"T{current_quarter_index} {date.today().year}"
+    assert current_quarter_metrics["dates"][0].startswith(str(date.today().year))
+    assert sum(entry["samples"] for entry in quarter_performance.values()) == 6
+
+    race_order_performance = metrics["race_order_performance"]
+    assert set(race_order_performance.keys()) == {"early_card", "late_card"}
+
+    early_segment = race_order_performance["early_card"]
+    assert early_segment["label"] == "Début de réunion (courses 1-3)"
+    assert early_segment["samples"] == 3
+    assert early_segment["courses"] == 1
+    assert early_segment["reunions"] == 1
+    assert early_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert early_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert early_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert early_segment["average_course_number"] == pytest.approx(1.0, abs=1e-6)
+    assert early_segment["min_course_number"] == 1
+    assert early_segment["max_course_number"] == 1
+
+    late_segment = race_order_performance["late_card"]
+    assert late_segment["label"] == "Fin de réunion (courses 7+)"
+    assert late_segment["samples"] == 3
+    assert late_segment["courses"] == 1
+    assert late_segment["reunions"] == 1
+    assert late_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert late_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert late_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert late_segment["average_course_number"] == pytest.approx(7.0, abs=1e-6)
+    assert late_segment["min_course_number"] == 7
+    assert late_segment["max_course_number"] == 7
+
+    reunion_number_performance = metrics["reunion_number_performance"]
+    assert set(reunion_number_performance.keys()) == {"morning_cards", "day_cards"}
+
+    morning_segment = reunion_number_performance["morning_cards"]
+    assert morning_segment["label"] == "Réunions R1-R2 (matinales)"
+    assert morning_segment["samples"] == 3
+    assert morning_segment["courses"] == 1
+    assert morning_segment["reunions"] == 1
+    assert morning_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert morning_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert morning_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert morning_segment["average_reunion_number"] == pytest.approx(1.0, abs=1e-6)
+    assert morning_segment["min_reunion_number"] == 1
+    assert morning_segment["max_reunion_number"] == 1
+
+    day_segment = reunion_number_performance["day_cards"]
+    assert day_segment["label"] == "Réunions R3-R5 (journée)"
+    assert day_segment["samples"] == 3
+    assert day_segment["courses"] == 1
+    assert day_segment["reunions"] == 1
+    assert day_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert day_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert day_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert day_segment["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
+    assert day_segment["min_reunion_number"] == 4
+    assert day_segment["max_reunion_number"] == 4
+
+    weekday_performance = metrics["weekday_performance"]
+    weekday_labels = {
+        0: ("monday", "Lundi"),
+        1: ("tuesday", "Mardi"),
+        2: ("wednesday", "Mercredi"),
+        3: ("thursday", "Jeudi"),
+        4: ("friday", "Vendredi"),
+        5: ("saturday", "Samedi"),
+        6: ("sunday", "Dimanche"),
+    }
+
+    previous_day = date.today() - timedelta(days=1)
+    previous_key, previous_label = weekday_labels[previous_day.weekday()]
+    today_key, today_label = weekday_labels[date.today().weekday()]
+
+    assert set(weekday_performance.keys()) == {previous_key, today_key}
+
+    previous_metrics = weekday_performance[previous_key]
+    assert previous_metrics["label"] == previous_label
+    assert previous_metrics["samples"] == 3
+    assert previous_metrics["courses"] == 1
+    assert previous_metrics["reunions"] == 1
+    assert previous_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert previous_metrics["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert previous_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert previous_metrics["weekday_index"] == previous_day.weekday()
+    assert previous_metrics["first_date"] == previous_day.isoformat()
+    assert previous_metrics["last_date"] == previous_day.isoformat()
+
+    today_metrics = weekday_performance[today_key]
+    assert today_metrics["label"] == today_label
+    assert today_metrics["samples"] == 3
+    assert today_metrics["courses"] == 1
+    assert today_metrics["reunions"] == 1
+    assert today_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert today_metrics["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert today_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert today_metrics["weekday_index"] == date.today().weekday()
+    assert today_metrics["first_date"] == date.today().isoformat()
+    assert today_metrics["last_date"] == date.today().isoformat()
+
+    hippodrome_performance = metrics["hippodrome_performance"]
+    assert len(hippodrome_performance) == 2
+    hippodrome_map = {entry["label"]: entry for entry in hippodrome_performance}
+    assert set(hippodrome_map.keys()) == {"Hippodrome Test", "Hippodrome Trot"}
+
+    venue_entry = hippodrome_map["Hippodrome Test"]
+    assert venue_entry["samples"] == 3
+    assert venue_entry["courses"] == 1
+    assert venue_entry["reunions"] == 1
+    assert venue_entry["horses"] == 3
+    assert venue_entry["accuracy"] == pytest.approx(1.0, rel=1e-3)
+
+    trot_entry = hippodrome_map["Hippodrome Trot"]
+    assert trot_entry["samples"] == 3
+    assert trot_entry["courses"] == 1
+    assert trot_entry["reunions"] == 1
+    assert trot_entry["horses"] == 3
+    assert trot_entry["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+
+    country_performance = metrics["country_performance"]
+    assert set(country_performance.keys()) == {"belgique", "france"}
+
+    france_metrics = country_performance["france"]
+    assert france_metrics["label"] == "France"
+    assert france_metrics["samples"] == 3
+    assert france_metrics["courses"] == 1
+    assert france_metrics["reunions"] == 1
+    assert france_metrics["hippodromes"] == 1
+    assert france_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert france_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert france_metrics["cities"] == ["Paris"]
+
+    belgium_metrics = country_performance["belgique"]
+    assert belgium_metrics["label"] == "Belgique"
+    assert belgium_metrics["samples"] == 3
+    assert belgium_metrics["courses"] == 1
+    assert belgium_metrics["reunions"] == 1
+    assert belgium_metrics["hippodromes"] == 1
+    assert belgium_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert belgium_metrics["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert belgium_metrics["cities"] == ["Mons"]
+
+    city_performance = metrics["city_performance"]
+    assert set(city_performance.keys()) == {"paris", "mons"}
+
+    paris_metrics = city_performance["paris"]
+    assert paris_metrics["label"] == "Paris"
+    assert paris_metrics["samples"] == 3
+    assert paris_metrics["courses"] == 1
+    assert paris_metrics["reunions"] == 1
+    assert paris_metrics["hippodromes"] == 1
+    assert paris_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert paris_metrics["countries"] == ["France"]
+
+    mons_metrics = city_performance["mons"]
+    assert mons_metrics["label"] == "Mons"
+    assert mons_metrics["samples"] == 3
+    assert mons_metrics["courses"] == 1
+    assert mons_metrics["reunions"] == 1
+    assert mons_metrics["hippodromes"] == 1
+    assert mons_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert mons_metrics["countries"] == ["Belgique"]
+
+    api_source_performance = metrics["api_source_performance"]
+    assert set(api_source_performance.keys()) == {"pmu_api", "turfinfo"}
+
+    turfinfo_metrics = api_source_performance["turfinfo"]
+    assert turfinfo_metrics["label"] == "Turfinfo"
+    assert turfinfo_metrics["samples"] == 3
+    assert turfinfo_metrics["courses"] == 1
+    assert turfinfo_metrics["reunions"] == 1
+    assert turfinfo_metrics["pronostics"] == 1
+    assert turfinfo_metrics["hippodromes"] == 1
+    assert turfinfo_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert turfinfo_metrics["model_versions"] == ["v1.0"]
+
+    pmu_metrics = api_source_performance["pmu_api"]
+    assert pmu_metrics["label"] == "PMU_API"
+    assert pmu_metrics["samples"] == 3
+    assert pmu_metrics["courses"] == 1
+    assert pmu_metrics["reunions"] == 1
+    assert pmu_metrics["pronostics"] == 1
+    assert pmu_metrics["hippodromes"] == 1
+    assert pmu_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert pmu_metrics["model_versions"] == ["v2.0"]
+
+    discipline_performance = metrics["discipline_performance"]
+    assert set(discipline_performance.keys()) == {"plat", "trot_attele"}
+    assert discipline_performance["plat"]["samples"] == 3
+    assert discipline_performance["plat"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert discipline_performance["plat"]["courses"] == 1
+    assert discipline_performance["trot_attele"]["samples"] == 3
+    assert discipline_performance["trot_attele"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert discipline_performance["trot_attele"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    distance_performance = metrics["distance_performance"]
+    assert set(distance_performance.keys()) == {"long_distance", "short_distance"}
+    assert distance_performance["short_distance"]["samples"] == 3
+    assert distance_performance["short_distance"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert distance_performance["short_distance"]["average_distance"] == pytest.approx(1400.0, abs=1e-6)
+    assert distance_performance["long_distance"]["samples"] == 3
+    assert distance_performance["long_distance"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert distance_performance["long_distance"]["average_distance"] == pytest.approx(3000.0, abs=1e-6)
+
+    surface_performance = metrics["surface_performance"]
+    assert set(surface_performance.keys()) == {"pelouse", "sable"}
+    assert surface_performance["pelouse"]["samples"] == 3
+    assert surface_performance["pelouse"]["positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert surface_performance["sable"]["samples"] == 3
+    assert surface_performance["sable"]["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    discipline_surface_performance = metrics["discipline_surface_performance"]
+    assert set(discipline_surface_performance.keys()) == {
+        "plat__pelouse",
+        "trot_attele__sable",
+    }
+
+    plat_pelouse_segment = discipline_surface_performance["plat__pelouse"]
+    assert plat_pelouse_segment["label"] == "Plat · Pelouse"
+    assert plat_pelouse_segment["discipline"] == "plat"
+    assert plat_pelouse_segment["surface"] == "pelouse"
+    assert plat_pelouse_segment["samples"] == 3
+    assert plat_pelouse_segment["courses"] == 1
+    assert plat_pelouse_segment["reunions"] == 1
+    assert plat_pelouse_segment["average_distance"] == pytest.approx(1400.0, abs=1e-6)
+    assert plat_pelouse_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    trot_sable_segment = discipline_surface_performance["trot_attele__sable"]
+    assert trot_sable_segment["label"] == "Trot Attele · Sable"
+    assert trot_sable_segment["discipline"] == "trot_attele"
+    assert trot_sable_segment["surface"] == "sable"
+    assert trot_sable_segment["samples"] == 3
+    assert trot_sable_segment["courses"] == 1
+    assert trot_sable_segment["reunions"] == 1
+    assert trot_sable_segment["average_distance"] == pytest.approx(3000.0, abs=1e-6)
+    assert trot_sable_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    weather_performance = metrics["weather_performance"]
+    assert set(weather_performance.keys()) == {"clear", "rain"}
+    assert weather_performance["clear"]["label"] == "Conditions claires"
+    assert weather_performance["clear"]["courses"] == 1
+    assert weather_performance["clear"]["reunions"] == 1
+    assert weather_performance["clear"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert weather_performance["clear"]["average_temperature"] == pytest.approx(18.0, rel=1e-3)
+    assert weather_performance["rain"]["label"] == "Pluie / Averses"
+    assert weather_performance["rain"]["courses"] == 1
+    assert weather_performance["rain"]["reunions"] == 1
+    assert weather_performance["rain"]["average_temperature"] == pytest.approx(9.0, rel=1e-3)
+
+    temperature_bands = metrics["temperature_band_performance"]
+    assert set(temperature_bands.keys()) == {"cool", "mild"}
+
+    cool_metrics = temperature_bands["cool"]
+    assert cool_metrics["label"] == "Frais (8-14°C)"
+    assert cool_metrics["samples"] == 3
+    assert cool_metrics["share"] == pytest.approx(0.5, rel=1e-3)
+    assert cool_metrics["average_temperature"] == pytest.approx(9.0, rel=1e-3)
+    assert cool_metrics["median_temperature"] == pytest.approx(9.0, rel=1e-3)
+
+    mild_metrics = temperature_bands["mild"]
+    assert mild_metrics["label"] == "Tempéré (15-22°C)"
+    assert mild_metrics["samples"] == 3
+    assert mild_metrics["courses"] == 1
+    assert mild_metrics["reunions"] == 1
+    assert mild_metrics["average_temperature"] == pytest.approx(18.0, rel=1e-3)
+    assert mild_metrics["median_temperature"] == pytest.approx(18.0, rel=1e-3)
+
+    track_type_performance = metrics["track_type_performance"]
+    assert set(track_type_performance.keys()) == {"flat", "trot"}
+    assert track_type_performance["flat"]["label"] == "Piste plate"
+    assert track_type_performance["flat"]["samples"] == 3
+    assert track_type_performance["flat"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert track_type_performance["trot"]["label"] == "Piste de trot"
+    assert track_type_performance["trot"]["samples"] == 3
+    assert track_type_performance["trot"]["reunions"] == 1
+    assert track_type_performance["trot"]["hippodromes"] == 1
+
+    track_length_performance = metrics["track_length_performance"]
+    assert set(track_length_performance.keys()) == {"compact_loop", "extended_loop"}
+    compact_loop = track_length_performance["compact_loop"]
+    assert compact_loop["label"] == "Piste compacte (≤ 1 400 m)"
+    assert compact_loop["samples"] == 3
+    assert compact_loop["average_track_length"] == pytest.approx(1300.0, abs=1e-6)
+    assert compact_loop["share"] == pytest.approx(0.5, rel=1e-3)
+    extended_loop = track_length_performance["extended_loop"]
+    assert extended_loop["label"] == "Piste longue (> 1 700 m)"
+    assert extended_loop["samples"] == 3
+    assert extended_loop["average_track_length"] == pytest.approx(1825.0, abs=1e-6)
+
+    prize_money_performance = metrics["prize_money_performance"]
+    assert set(prize_money_performance.keys()) == {"low_prize", "medium_prize"}
+    assert prize_money_performance["low_prize"]["samples"] == 3
+    assert prize_money_performance["low_prize"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert prize_money_performance["low_prize"]["average_prize_eur"] == pytest.approx(
+        8000.0, abs=1e-6
+    )
+    assert prize_money_performance["medium_prize"]["samples"] == 3
+    assert prize_money_performance["medium_prize"]["accuracy"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    assert prize_money_performance["medium_prize"]["average_prize_eur"] == pytest.approx(
+        10000.0, abs=1e-6
+    )
+
+    prize_per_runner_performance = metrics["prize_per_runner_performance"]
+    assert set(prize_per_runner_performance.keys()) == {
+        "per_runner_low",
+        "per_runner_high",
+    }
+    low_segment = prize_per_runner_performance["per_runner_low"]
+    assert low_segment["label"] == "< 600 € par partant"
+    assert low_segment["samples"] == 3
+    assert low_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert low_segment["average_prize_per_runner_eur"] == pytest.approx(8000 / 14, rel=1e-3)
+    assert low_segment["average_field_size"] == pytest.approx(14.0, abs=1e-6)
+
+    high_segment = prize_per_runner_performance["per_runner_high"]
+    assert high_segment["label"] == "1200-2000 € par partant"
+    assert high_segment["samples"] == 3
+    assert high_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert high_segment["average_prize_per_runner_eur"] == pytest.approx(10000 / 8, rel=1e-3)
+    assert high_segment["average_field_size"] == pytest.approx(8.0, abs=1e-6)
+
+    handicap_performance = metrics["handicap_performance"]
+    assert set(handicap_performance.keys()) == {
+        "competitive_handicap",
+        "high_handicap",
+        "light_handicap",
+        "medium_handicap",
+        "unknown",
+    }
+
+    light_segment = handicap_performance["light_handicap"]
+    assert light_segment["label"] == "Handicap léger (≤10)"
+    assert light_segment["samples"] == 1
+    assert light_segment["courses"] == 1
+    assert light_segment["horses"] == 1
+    assert light_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert light_segment["average_handicap_value"] == pytest.approx(8.0, rel=1e-3)
+    assert light_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    medium_segment = handicap_performance["medium_handicap"]
+    assert medium_segment["label"] == "Handicap moyen (11-20)"
+    assert medium_segment["samples"] == 2
+    assert medium_segment["courses"] == 2
+    assert medium_segment["horses"] == 2
+    assert medium_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert medium_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert medium_segment["average_handicap_value"] == pytest.approx(14.0, rel=1e-3)
+    assert medium_segment["min_handicap_value"] == pytest.approx(12.0, rel=1e-3)
+    assert medium_segment["max_handicap_value"] == pytest.approx(16.0, rel=1e-3)
+    assert medium_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+
+    competitive_segment = handicap_performance["competitive_handicap"]
+    assert competitive_segment["label"] == "Handicap relevé (21-30)"
+    assert competitive_segment["samples"] == 1
+    assert competitive_segment["courses"] == 1
+    assert competitive_segment["horses"] == 1
+    assert competitive_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert competitive_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert competitive_segment["average_handicap_value"] == pytest.approx(26.0, rel=1e-3)
+    assert competitive_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    high_segment = handicap_performance["high_handicap"]
+    assert high_segment["label"] == "Handicap très élevé (>30)"
+    assert high_segment["samples"] == 1
+    assert high_segment["courses"] == 1
+    assert high_segment["horses"] == 1
+    assert high_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert high_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert high_segment["average_handicap_value"] == pytest.approx(34.0, rel=1e-3)
+    assert high_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    unknown_segment = handicap_performance["unknown"]
+    assert unknown_segment["label"] == "Handicap inconnu"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["courses"] == 1
+    assert unknown_segment["horses"] == 1
+    assert unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["average_handicap_value"] is None
+    assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    weight_performance = metrics["weight_performance"]
+    assert set(weight_performance.keys()) == {
+        "heavy",
+        "light",
+        "medium",
+        "unknown",
+        "very_light",
+    }
+
+    heavy_weight_segment = weight_performance["heavy"]
+    assert heavy_weight_segment["label"] == "Lourd (≥60 kg)"
+    assert heavy_weight_segment["samples"] == 2
+    assert heavy_weight_segment["horses"] == 2
+    assert heavy_weight_segment["average_weight"] == pytest.approx(61.0, rel=1e-3)
+    assert heavy_weight_segment["min_weight"] == pytest.approx(60.0, rel=1e-3)
+    assert heavy_weight_segment["max_weight"] == pytest.approx(62.0, rel=1e-3)
+
+    light_weight_segment = weight_performance["light"]
+    assert light_weight_segment["label"] == "Léger (54-57 kg)"
+    assert light_weight_segment["samples"] == 1
+    assert light_weight_segment["average_weight"] == pytest.approx(55.0, rel=1e-3)
+
+    very_light_weight_segment = weight_performance["very_light"]
+    assert very_light_weight_segment["label"] == "Très léger (<54 kg)"
+    assert very_light_weight_segment["samples"] == 1
+    assert very_light_weight_segment["average_weight"] == pytest.approx(52.5, rel=1e-3)
+
+    medium_weight_segment = weight_performance["medium"]
+    assert medium_weight_segment["label"] == "Moyen (57-60 kg)"
+    assert medium_weight_segment["samples"] == 1
+    assert medium_weight_segment["average_weight"] == pytest.approx(58.5, rel=1e-3)
+
+    unknown_weight_segment = weight_performance["unknown"]
+    assert unknown_weight_segment["label"] == "Poids inconnu"
+    assert unknown_weight_segment["samples"] == 1
+    assert unknown_weight_segment["average_weight"] is None
+
+    equipment_performance = metrics["equipment_performance"]
+    assert set(equipment_performance.keys()) == {
+        "blinkers",
+        "multi_gear",
+        "no_equipment",
+        "single_gear",
+        "unknown",
+    }
+
+    blinkers_segment = equipment_performance["blinkers"]
+    assert blinkers_segment["label"] == "Œillères déclarées"
+    assert blinkers_segment["samples"] == 2
+    assert blinkers_segment["courses"] == 2
+    assert blinkers_segment["horses"] == 2
+    assert blinkers_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert blinkers_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
+    assert blinkers_segment["blinkers_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    single_gear_segment = equipment_performance["single_gear"]
+    assert single_gear_segment["label"] == "Équipement isolé"
+    assert single_gear_segment["samples"] == 1
+    assert single_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert single_gear_segment["average_equipment_items"] == pytest.approx(1.0, rel=1e-3)
+    assert single_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    multi_gear_segment = equipment_performance["multi_gear"]
+    assert multi_gear_segment["label"] == "Équipement combiné (≥2)"
+    assert multi_gear_segment["samples"] == 1
+    assert multi_gear_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert multi_gear_segment["average_equipment_items"] == pytest.approx(2.0, rel=1e-3)
+    assert multi_gear_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    no_equipment_segment = equipment_performance["no_equipment"]
+    assert no_equipment_segment["label"] == "Aucun équipement déclaré"
+    assert no_equipment_segment["samples"] == 1
+    assert no_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert no_equipment_segment["average_equipment_items"] == pytest.approx(0.0, abs=1e-6)
+    assert no_equipment_segment["blinkers_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    unknown_equipment_segment = equipment_performance["unknown"]
+    assert unknown_equipment_segment["label"] == "Équipement inconnu"
+    assert unknown_equipment_segment["samples"] == 1
+    assert unknown_equipment_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert unknown_equipment_segment["average_equipment_items"] is None
+    assert unknown_equipment_segment["blinkers_rate"] is None
+
+    odds_band_performance = metrics["odds_band_performance"]
+    assert set(odds_band_performance.keys()) == {"challenger", "favorite", "outsider"}
+
+    favorite_segment = odds_band_performance["favorite"]
+    assert favorite_segment["label"] == "Favori (≤4/1)"
+    assert favorite_segment["samples"] == 2
+    assert favorite_segment["courses"] == 1
+    assert favorite_segment["horses"] == 2
+    assert favorite_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert favorite_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert favorite_segment["average_odds"] == pytest.approx(3.5, rel=1e-3)
+    assert favorite_segment["average_implied_probability"] == pytest.approx(0.291666, rel=1e-3)
+
+    challenger_segment = odds_band_performance["challenger"]
+    assert challenger_segment["label"] == "Challenger (4-8/1)"
+    assert challenger_segment["samples"] == 3
+    assert challenger_segment["courses"] == 1
+    assert challenger_segment["horses"] == 3
+    assert challenger_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert challenger_segment["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert challenger_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert challenger_segment["average_odds"] == pytest.approx(6.166666, rel=1e-3)
+    assert challenger_segment["min_odds"] == pytest.approx(5.5, rel=1e-3)
+    assert challenger_segment["max_odds"] == pytest.approx(7.0, rel=1e-3)
+    assert challenger_segment["average_implied_probability"] == pytest.approx(0.163780, rel=1e-3)
+
+    outsider_segment = odds_band_performance["outsider"]
+    assert outsider_segment["label"] == "Outsider (8-15/1)"
+    assert outsider_segment["samples"] == 1
+    assert outsider_segment["courses"] == 1
+    assert outsider_segment["horses"] == 1
+    assert outsider_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert outsider_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert outsider_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert outsider_segment["average_odds"] == pytest.approx(12.0, rel=1e-3)
+    assert outsider_segment["average_implied_probability"] == pytest.approx(1 / 12, rel=1e-3)
+
+    probability_edge_performance = metrics["probability_edge_performance"]
+    assert set(probability_edge_performance.keys()) == {
+        "slight_positive_edge",
+        "strong_positive_edge",
+    }
+
+    strong_edge_segment = probability_edge_performance["strong_positive_edge"]
+    assert strong_edge_segment["label"] == "Écart très favorable (≥ 18 pts)"
+    assert strong_edge_segment["samples"] == 3
+    assert strong_edge_segment["courses"] == 2
+    assert strong_edge_segment["horses"] == 3
+    assert strong_edge_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert strong_edge_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert strong_edge_segment["average_edge"] == pytest.approx(0.219047, rel=1e-3)
+    assert strong_edge_segment["median_edge"] == pytest.approx(0.216667, rel=1e-3)
+    assert strong_edge_segment["min_edge"] == pytest.approx(0.183333, rel=1e-3)
+    assert strong_edge_segment["max_edge"] == pytest.approx(0.257143, rel=1e-3)
+    assert strong_edge_segment["average_implied_probability"] == pytest.approx(0.214286, rel=1e-3)
+    assert strong_edge_segment["average_odds"] == pytest.approx(5.333333, rel=1e-3)
+
+    slight_edge_segment = probability_edge_performance["slight_positive_edge"]
+    assert slight_edge_segment["label"] == "Écart légèrement favorable (3-8 pts)"
+    assert slight_edge_segment["samples"] == 3
+    assert slight_edge_segment["courses"] == 2
+    assert slight_edge_segment["horses"] == 3
+    assert slight_edge_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert slight_edge_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert slight_edge_segment["average_edge"] == pytest.approx(0.061616, rel=1e-3)
+    assert slight_edge_segment["median_edge"] == pytest.approx(0.066667, rel=1e-3)
+    assert slight_edge_segment["min_edge"] == pytest.approx(0.05, rel=1e-3)
+    assert slight_edge_segment["max_edge"] == pytest.approx(0.068182, rel=1e-3)
+    assert slight_edge_segment["average_implied_probability"] == pytest.approx(0.171717, rel=1e-3)
+    assert slight_edge_segment["average_odds"] == pytest.approx(7.166667, rel=1e-3)
+
+    probability_error_performance = metrics["probability_error_performance"]
+    assert set(probability_error_performance.keys()) == {
+        "error_10_20",
+        "error_35_50",
+        "error_50_plus",
+    }
+
+    tight_segment = probability_error_performance["error_10_20"]
+    assert tight_segment["label"] == "Fiable (10-20 pts)"
+    assert tight_segment["samples"] == 1
+    assert tight_segment["courses"] == 1
+    assert tight_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert tight_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert tight_segment["average_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["median_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["min_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+    assert tight_segment["max_absolute_error"] == pytest.approx(0.15, rel=1e-3)
+
+    fragile_segment = probability_error_performance["error_35_50"]
+    assert fragile_segment["label"] == "Fragile (35-50 pts)"
+    assert fragile_segment["samples"] == 2
+    assert fragile_segment["courses"] == 2
+    assert fragile_segment["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert fragile_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert fragile_segment["average_absolute_error"] == pytest.approx(0.425, rel=1e-3)
+    assert fragile_segment["median_absolute_error"] == pytest.approx(0.425, rel=1e-3)
+    assert fragile_segment["min_absolute_error"] == pytest.approx(0.40, rel=1e-3)
+    assert fragile_segment["max_absolute_error"] == pytest.approx(0.45, rel=1e-3)
+
+    critical_segment = probability_error_performance["error_50_plus"]
+    assert critical_segment["label"] == "À surveiller (> 50 pts)"
+    assert critical_segment["samples"] == 3
+    assert critical_segment["courses"] == 2
+    assert critical_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert critical_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert critical_segment["average_absolute_error"] == pytest.approx(0.7, rel=1e-3)
+    assert critical_segment["median_absolute_error"] == pytest.approx(0.7, rel=1e-3)
+    assert critical_segment["min_absolute_error"] == pytest.approx(0.65, rel=1e-3)
+    assert critical_segment["max_absolute_error"] == pytest.approx(0.75, rel=1e-3)
+
+    probability_margin_performance = metrics["probability_margin_performance"]
+    assert set(probability_margin_performance.keys()) == {"margin_clear", "margin_tight"}
+
+    clear_margin_segment = probability_margin_performance["margin_clear"]
+    assert clear_margin_segment["label"] == "Très confortable (> 20 pts)"
+    assert clear_margin_segment["samples"] == 1
+    assert clear_margin_segment["courses"] == 1
+    assert clear_margin_segment["horses"] == 1
+    assert clear_margin_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert clear_margin_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert clear_margin_segment["average_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert clear_margin_segment["average_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["median_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["min_margin"] == pytest.approx(0.25, rel=1e-3)
+    assert clear_margin_segment["max_margin"] == pytest.approx(0.25, rel=1e-3)
+
+    tight_margin_segment = probability_margin_performance["margin_tight"]
+    assert tight_margin_segment["label"] == "Très serré (≤ 5 pts)"
+    assert tight_margin_segment["samples"] == 1
+    assert tight_margin_segment["courses"] == 1
+    assert tight_margin_segment["horses"] == 1
+    assert tight_margin_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert tight_margin_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert tight_margin_segment["average_probability"] == pytest.approx(0.40, rel=1e-3)
+    assert tight_margin_segment["average_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["median_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["min_margin"] == pytest.approx(0.05, rel=1e-3)
+    assert tight_margin_segment["max_margin"] == pytest.approx(0.05, rel=1e-3)
+
+    favourite_alignment = metrics["favourite_alignment_performance"]
+    assert set(favourite_alignment.keys()) == {"aligned", "divergent"}
+
+    aligned_segment = favourite_alignment["aligned"]
+    assert aligned_segment["label"] == "Favori modèle aligné sur les cotes PMU"
+    assert aligned_segment["courses"] == 1
+    assert aligned_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert aligned_segment["samples"] == 1
+    assert aligned_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["model_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["aligned_winner_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["average_model_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_odds"] == pytest.approx(3.0, rel=1e-3)
+    assert aligned_segment["average_probability_gap"] == pytest.approx(0.0, abs=1e-6)
+    assert aligned_segment["average_pmu_rank_in_model"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    divergent_segment = favourite_alignment["divergent"]
+    assert divergent_segment["label"] == "Favori modèle différent du PMU"
+    assert divergent_segment["courses"] == 1
+    assert divergent_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert divergent_segment["samples"] == 1
+    assert divergent_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["model_win_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert divergent_segment["aligned_winner_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["average_model_probability"] == pytest.approx(0.40, rel=1e-3)
+    assert divergent_segment["average_pmu_probability"] == pytest.approx(0.25, rel=1e-3)
+    assert divergent_segment["average_pmu_odds"] == pytest.approx(5.5, rel=1e-3)
+    assert divergent_segment["average_probability_gap"] == pytest.approx(0.15, rel=1e-3)
+    assert divergent_segment["average_pmu_rank_in_model"] == pytest.approx(3.0, rel=1e-3)
+    assert divergent_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    horse_age_performance = metrics["horse_age_performance"]
+    assert set(horse_age_performance.keys()) == {
+        "experienced",
+        "juvenile",
+        "prime",
+        "senior",
+        "unknown",
+    }
+    assert horse_age_performance["prime"]["samples"] == 2
+    assert horse_age_performance["prime"]["courses"] == 1
+    assert horse_age_performance["prime"]["horses"] == 2
+    assert horse_age_performance["prime"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_age_performance["prime"]["average_age"] == pytest.approx(4.5, rel=1e-3)
+    assert horse_age_performance["juvenile"]["samples"] == 1
+    assert horse_age_performance["juvenile"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_age_performance["experienced"]["samples"] == 1
+    assert horse_age_performance["experienced"]["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert horse_age_performance["senior"]["samples"] == 1
+    assert horse_age_performance["senior"]["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert horse_age_performance["unknown"]["samples"] == 1
+    assert horse_age_performance["unknown"]["average_age"] is None
+
+    horse_gender_performance = metrics["horse_gender_performance"]
+    assert set(horse_gender_performance.keys()) == {"female", "male"}
+    assert horse_gender_performance["male"]["label"] == "Mâle"
+    assert horse_gender_performance["male"]["samples"] == 4
+    assert horse_gender_performance["male"]["horses"] == 4
+    assert horse_gender_performance["male"]["courses"] == 2
+    assert horse_gender_performance["male"]["accuracy"] == pytest.approx(0.75, rel=1e-3)
+    assert horse_gender_performance["male"]["recall"] == pytest.approx(2 / 3, rel=1e-3)
+    assert horse_gender_performance["male"]["observed_positive_rate"] == pytest.approx(3 / 4, rel=1e-3)
+    assert horse_gender_performance["male"]["share"] == pytest.approx(4 / 6, rel=1e-3)
+    assert horse_gender_performance["female"]["label"] == "Femelle"
+    assert horse_gender_performance["female"]["samples"] == 2
+    assert horse_gender_performance["female"]["horses"] == 2
+    assert horse_gender_performance["female"]["courses"] == 2
+    assert horse_gender_performance["female"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert horse_gender_performance["female"]["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert horse_gender_performance["female"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert horse_gender_performance["female"]["share"] == pytest.approx(2 / 6, rel=1e-3)
+
+    horse_coat_performance = metrics["horse_coat_performance"]
+    assert set(horse_coat_performance.keys()) == {"alezan", "bai", "gris", "unknown"}
+
+    bai_segment = horse_coat_performance["bai"]
+    assert bai_segment["label"] == "Bai"
+    assert bai_segment["samples"] == 2
+    assert bai_segment["courses"] == 1
+    assert bai_segment["horses"] == 2
+    assert bai_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert bai_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert bai_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert bai_segment["input_examples"] == ["Bai", "Bai brun"]
+
+    alezan_segment = horse_coat_performance["alezan"]
+    assert alezan_segment["label"] == "Alezan"
+    assert alezan_segment["samples"] == 2
+    assert alezan_segment["courses"] == 2
+    assert alezan_segment["horses"] == 2
+    assert alezan_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert alezan_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert set(alezan_segment["input_examples"]) == {"Alezan brûlé", "Alezane"}
+
+    gris_segment = horse_coat_performance["gris"]
+    assert gris_segment["label"] == "Gris"
+    assert gris_segment["samples"] == 1
+    assert gris_segment["courses"] == 1
+    assert gris_segment["horses"] == 1
+    assert gris_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert gris_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert gris_segment["input_examples"] == ["Gris Pommelé"]
+
+    unknown_coat_segment = horse_coat_performance["unknown"]
+    assert unknown_coat_segment["label"] == "Robe inconnue"
+    assert unknown_coat_segment["samples"] == 1
+    assert unknown_coat_segment["courses"] == 1
+    assert unknown_coat_segment["horses"] == 1
+    assert unknown_coat_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_coat_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_coat_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert unknown_coat_segment["input_examples"] == []
+
+    horse_breed_performance = metrics["horse_breed_performance"]
+    assert set(horse_breed_performance.keys()) == {
+        "anglo_arabe",
+        "aqps",
+        "pur_sang",
+        "trotteur_francais",
+        "unknown",
+    }
+
+    pur_sang_segment = horse_breed_performance["pur_sang"]
+    assert pur_sang_segment["label"] == "Pur-sang"
+    assert pur_sang_segment["samples"] == 2
+    assert pur_sang_segment["courses"] == 1
+    assert pur_sang_segment["horses"] == 2
+    assert pur_sang_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["recall"] == pytest.approx(1.0, rel=1e-3)
+    assert pur_sang_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert pur_sang_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert pur_sang_segment["input_examples"] == ["Pur sang", "Pur-Sang"]
+
+    anglo_segment = horse_breed_performance["anglo_arabe"]
+    assert anglo_segment["label"] == "Anglo-arabe"
+    assert anglo_segment["samples"] == 1
+    assert anglo_segment["courses"] == 1
+    assert anglo_segment["horses"] == 1
+    assert anglo_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert anglo_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert anglo_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert anglo_segment["input_examples"] == ["Anglo-Arabe"]
+
+    trot_segment = horse_breed_performance["trotteur_francais"]
+    assert trot_segment["label"] == "Trotteur français"
+    assert trot_segment["samples"] == 1
+    assert trot_segment["courses"] == 1
+    assert trot_segment["horses"] == 1
+    assert trot_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert trot_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert trot_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert trot_segment["input_examples"] == ["Trotteur Français"]
+
+    aqps_segment = horse_breed_performance["aqps"]
+    assert aqps_segment["label"] == "AQPS"
+    assert aqps_segment["samples"] == 1
+    assert aqps_segment["courses"] == 1
+    assert aqps_segment["horses"] == 1
+    assert aqps_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["recall"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert aqps_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert aqps_segment["input_examples"] == ["AQPS"]
+
+    unknown_breed_segment = horse_breed_performance["unknown"]
+    assert unknown_breed_segment["label"] == "Race inconnue"
+    assert unknown_breed_segment["samples"] == 1
+    assert unknown_breed_segment["courses"] == 1
+    assert unknown_breed_segment["horses"] == 1
+    assert unknown_breed_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_breed_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_breed_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert unknown_breed_segment["input_examples"] == []
+
+    horse_sire_performance = metrics["horse_sire_performance"]
+    assert set(horse_sire_performance.keys()) == {
+        "etalon_celeste",
+        "stallion_alpha",
+        "stallion_brave",
+        "unknown",
+    }
+
+    alpha_segment = horse_sire_performance["stallion_alpha"]
+    assert alpha_segment["label"] == "Stallion Alpha"
+    assert alpha_segment["samples"] == 2
+    assert alpha_segment["courses"] == 1
+    assert alpha_segment["horses"] == 2
+    assert alpha_segment["trainers"] == 1
+    assert alpha_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert alpha_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert alpha_segment["input_examples"] == ["Stallion Alpha"]
+
+    brave_segment = horse_sire_performance["stallion_brave"]
+    assert brave_segment["label"] == "Stallion Brave"
+    assert brave_segment["samples"] == 2
+    assert brave_segment["courses"] == 2
+    assert brave_segment["horses"] == 2
+    assert brave_segment["trainers"] == 2
+    assert brave_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert brave_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert brave_segment["input_examples"] == ["Stallion Brave"]
+
+    celestial_segment = horse_sire_performance["etalon_celeste"]
+    assert celestial_segment["label"] == "Étalon Céleste"
+    assert celestial_segment["samples"] == 1
+    assert celestial_segment["courses"] == 1
+    assert celestial_segment["horses"] == 1
+    assert celestial_segment["trainers"] == 1
+    assert celestial_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert celestial_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert celestial_segment["input_examples"] == ["Étalon Céleste"]
+
+    unknown_sire_segment = horse_sire_performance["unknown"]
+    assert unknown_sire_segment["label"] == "Père inconnu"
+    assert unknown_sire_segment["samples"] == 1
+    assert unknown_sire_segment["courses"] == 1
+    assert unknown_sire_segment["horses"] == 1
+    assert unknown_sire_segment["trainers"] == 1
+    assert unknown_sire_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_sire_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_sire_segment["input_examples"] == []
+
+    horse_dam_performance = metrics["horse_dam_performance"]
+    assert set(horse_dam_performance.keys()) == {
+        "mare_alpha",
+        "mare_bravee",
+        "mere_stella",
+        "unknown",
+    }
+
+    dam_alpha_segment = horse_dam_performance["mare_alpha"]
+    assert dam_alpha_segment["label"] == "Mare Alpha"
+    assert dam_alpha_segment["samples"] == 2
+    assert dam_alpha_segment["courses"] == 1
+    assert dam_alpha_segment["horses"] == 2
+    assert dam_alpha_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert dam_alpha_segment["input_examples"] == ["Mare Alpha"]
+
+    dam_bravee_segment = horse_dam_performance["mare_bravee"]
+    assert dam_bravee_segment["label"] == "Mare Bravee"
+    assert dam_bravee_segment["samples"] == 2
+    assert dam_bravee_segment["courses"] == 2
+    assert dam_bravee_segment["horses"] == 2
+    assert dam_bravee_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert set(dam_bravee_segment["input_examples"]) == {"Mare Bravée", "Mare Bravee"}
+
+    dam_stella_segment = horse_dam_performance["mere_stella"]
+    assert dam_stella_segment["label"] == "Mère Stella"
+    assert dam_stella_segment["samples"] == 1
+    assert dam_stella_segment["courses"] == 1
+    assert dam_stella_segment["horses"] == 1
+    assert dam_stella_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_stella_segment["input_examples"] == ["Mère Stella"]
+
+    dam_unknown_segment = horse_dam_performance["unknown"]
+    assert dam_unknown_segment["label"] == "Mère inconnue"
+    assert dam_unknown_segment["samples"] == 1
+    assert dam_unknown_segment["courses"] == 1
+    assert dam_unknown_segment["horses"] == 1
+    assert dam_unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_unknown_segment["input_examples"] == []
+
+    owner_performance = metrics["owner_performance"]
+    assert set(owner_performance.keys()) == {
+        "ecurie_boreale",
+        "ecurie_equinoxe",
+        "ecurie_horizon",
+        "unknown",
+    }
+
+    horizon_segment = owner_performance["ecurie_horizon"]
+    assert horizon_segment["label"] == "Ecurie Horizon"
+    assert horizon_segment["samples"] == 2
+    assert horizon_segment["courses"] == 1
+    assert horizon_segment["horses"] == 2
+    assert horizon_segment["trainers"] == 1
+    assert horizon_segment["jockeys"] == 1
+    assert horizon_segment["hippodromes"] == 1
+    assert horizon_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert horizon_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    equinoxe_segment = owner_performance["ecurie_equinoxe"]
+    assert equinoxe_segment["label"] == "Ecurie Equinoxe"
+    assert equinoxe_segment["samples"] == 2
+    assert equinoxe_segment["courses"] == 2
+    assert equinoxe_segment["horses"] == 2
+    assert equinoxe_segment["trainers"] == 2
+    assert equinoxe_segment["jockeys"] == 2
+    assert equinoxe_segment["hippodromes"] == 2
+    assert equinoxe_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert equinoxe_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    boreale_segment = owner_performance["ecurie_boreale"]
+    assert boreale_segment["label"] == "Ecurie Boreale"
+    assert boreale_segment["samples"] == 1
+    assert boreale_segment["courses"] == 1
+    assert boreale_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert boreale_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    unknown_segment = owner_performance["unknown"]
+    assert unknown_segment["label"] == "Propriétaire inconnu"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["courses"] == 1
+    assert unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    owner_trainer_leaderboard = metrics["owner_trainer_performance"]
+    assert len(owner_trainer_leaderboard) == 1
+    top_owner_trainer = owner_trainer_leaderboard[0]
+    assert top_owner_trainer["label"] == "Ecurie Horizon × Anne Durand"
+    assert top_owner_trainer["samples"] == 2
+    assert top_owner_trainer["courses"] == 1
+    assert top_owner_trainer["horses"] == 2
+    assert top_owner_trainer["owners"] == 1
+    assert top_owner_trainer["trainers"] == 1
+    assert top_owner_trainer["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert top_owner_trainer["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert top_owner_trainer["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    owner_jockey_leaderboard = metrics["owner_jockey_performance"]
+    assert len(owner_jockey_leaderboard) == 1
+    top_owner_jockey = owner_jockey_leaderboard[0]
+    assert top_owner_jockey["label"] == "Ecurie Horizon × Leo Martin"
+    assert top_owner_jockey["samples"] == 2
+    assert top_owner_jockey["courses"] == 1
+    assert top_owner_jockey["horses"] == 2
+    assert top_owner_jockey["owners"] == 1
+    assert top_owner_jockey["jockeys"] == 1
+    assert top_owner_jockey["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert top_owner_jockey["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    race_category_performance = metrics["race_category_performance"]
+    assert set(race_category_performance.keys()) == {"classe", "groupe"}
+    assert race_category_performance["groupe"]["samples"] == 3
+    assert race_category_performance["groupe"]["courses"] == 1
+    assert race_category_performance["groupe"]["label"] == "Groupe"
+    assert race_category_performance["classe"]["samples"] == 3
+    assert race_category_performance["classe"]["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    race_class_performance = metrics["race_class_performance"]
+    assert set(race_class_performance.keys()) == {"class_a", "class_b"}
+    assert race_class_performance["class_a"]["label"] == "Classe A"
+    assert race_class_performance["class_a"]["courses"] == 1
+    assert race_class_performance["class_b"]["samples"] == 3
+    assert race_class_performance["class_b"]["observed_positive_rate"] == pytest.approx(
+        2 / 3, rel=1e-3
+    )
+
+    start_type_performance = metrics["start_type_performance"]
+    assert set(start_type_performance.keys()) == {"autostart", "stalle"}
+    assert start_type_performance["stalle"]["samples"] == 3
+    assert start_type_performance["stalle"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert start_type_performance["stalle"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert start_type_performance["autostart"]["samples"] == 3
+    assert start_type_performance["autostart"]["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert start_type_performance["autostart"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert start_type_performance["autostart"]["courses"] == 1
+
+    start_delay_performance = metrics["start_delay_performance"]
+    assert set(start_delay_performance.keys()) == {"heavy_delay", "on_time"}
+    assert start_delay_performance["on_time"]["samples"] == 3
+    assert start_delay_performance["on_time"]["average_delay_minutes"] == pytest.approx(3.0, rel=1e-3)
+    assert start_delay_performance["on_time"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert start_delay_performance["heavy_delay"]["reunions"] == 1
+
+    final_position_performance = metrics["final_position_performance"]
+    assert set(final_position_performance.keys()) == {"winner", "runner_up", "top6"}
+
+    winner_segment = final_position_performance["winner"]
+    assert winner_segment["samples"] == 2
+    assert winner_segment["courses"] == 2
+    assert winner_segment["horses"] == 2
+    assert winner_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert winner_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["average_final_position"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["top3_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    runner_up_segment = final_position_performance["runner_up"]
+    assert runner_up_segment["samples"] == 2
+    assert runner_up_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert runner_up_segment["average_final_position"] == pytest.approx(2.0, rel=1e-3)
+    assert runner_up_segment["top3_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    top6_segment = final_position_performance["top6"]
+    assert top6_segment["samples"] == 2
+    assert top6_segment["courses"] == 2
+    assert top6_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert top6_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert top6_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert top6_segment["best_final_position"] == 4
+    assert top6_segment["worst_final_position"] == 4
+    assert top6_segment["top3_rate"] == pytest.approx(0.0, abs=1e-6)
+
+    value_bet_performance = metrics["value_bet_performance"]
+    assert set(value_bet_performance.keys()) == {"standard", "value_bet"}
+    assert value_bet_performance["value_bet"]["samples"] == 3
+    assert value_bet_performance["value_bet"]["courses"] == 1
+    assert value_bet_performance["standard"]["samples"] == 3
+    assert value_bet_performance["standard"]["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    value_bet_flag_performance = metrics["value_bet_flag_performance"]
+    assert set(value_bet_flag_performance.keys()) == {
+        "value_bet_detected",
+        "standard_pronostic",
+    }
+
+    flagged_segment = value_bet_flag_performance["value_bet_detected"]
+    assert flagged_segment["label"] == "Pronostic value bet détecté"
+    assert flagged_segment["samples"] == 3
+    assert flagged_segment["courses"] == 1
+    assert flagged_segment["pronostics"] == 1
+    assert flagged_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert flagged_segment["pronostic_share"] == pytest.approx(0.5, rel=1e-3)
+    assert flagged_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert flagged_segment["value_bet_flag"] is True
+    assert flagged_segment["value_bet_flag_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    baseline_segment = value_bet_flag_performance["standard_pronostic"]
+    assert baseline_segment["label"] == "Pronostic standard"
+    assert baseline_segment["samples"] == 3
+    assert baseline_segment["courses"] == 1
+    assert baseline_segment["pronostics"] == 1
+    assert baseline_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert baseline_segment["pronostic_share"] == pytest.approx(0.5, rel=1e-3)
+    assert baseline_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert baseline_segment["value_bet_flag"] is False
+    assert baseline_segment["value_bet_flag_rate"] == pytest.approx(0.0, rel=1e-3)
+
+    field_size_performance = metrics["field_size_performance"]
+    assert set(field_size_performance.keys()) == {"large_field", "small_field"}
+    assert field_size_performance["small_field"]["samples"] == 3
+    assert field_size_performance["small_field"]["average_field_size"] == pytest.approx(8.0, abs=1e-6)
+    assert field_size_performance["large_field"]["samples"] == 3
+    assert field_size_performance["large_field"]["max_field_size"] == 14
+
+    draw_performance = metrics["draw_performance"]
+    assert set(draw_performance.keys()) == {"inside", "middle", "outside"}
+    assert draw_performance["inside"]["samples"] == 2
+    assert draw_performance["inside"]["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_performance["inside"]["average_draw"] == pytest.approx(1.5, abs=1e-6)
+    assert draw_performance["inside"]["average_field_size"] == pytest.approx(11.0, abs=1e-6)
+    assert draw_performance["middle"]["courses"] == 2
+    assert draw_performance["middle"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_performance["outside"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert draw_performance["outside"]["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+
+    draw_parity_performance = metrics["draw_parity_performance"]
+    assert set(draw_parity_performance.keys()) == {"even", "odd"}
+
+    odd_segment = draw_parity_performance["odd"]
+    assert odd_segment["label"] == "Numéro impair"
+    assert odd_segment["samples"] == 3
+    assert odd_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert odd_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert odd_segment["average_draw"] == pytest.approx((1 + 5 + 13) / 3, rel=1e-3)
+
+    even_segment = draw_parity_performance["even"]
+    assert even_segment["label"] == "Numéro pair"
+    assert even_segment["samples"] == 3
+    assert even_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert even_segment["observed_positive_rate"] == pytest.approx(1 / 3, rel=1e-3)
+    assert even_segment["average_draw"] == pytest.approx((2 + 8 + 8) / 3, rel=1e-3)
+
+    rest_period_performance = metrics["rest_period_performance"]
+    assert set(rest_period_performance.keys()) == {
+        "extended_break",
+        "fresh",
+        "normal_cycle",
+        "unknown",
+        "very_fresh",
+    }
+    assert rest_period_performance["very_fresh"]["samples"] == 1
+    assert rest_period_performance["very_fresh"]["average_rest_days"] == pytest.approx(10.0, abs=1e-6)
+    assert rest_period_performance["fresh"]["samples"] == 1
+    assert rest_period_performance["fresh"]["precision"] == pytest.approx(1.0, rel=1e-3)
+    assert rest_period_performance["normal_cycle"]["samples"] == 2
+    assert rest_period_performance["normal_cycle"]["average_rest_days"] == pytest.approx(60.0, abs=1e-6)
+    assert rest_period_performance["normal_cycle"]["min_rest_days"] == 45
+    assert rest_period_performance["extended_break"]["samples"] == 1
+    assert rest_period_performance["extended_break"]["average_rest_days"] == pytest.approx(210.0, abs=1e-6)
+    assert rest_period_performance["unknown"]["samples"] == 1
+    assert rest_period_performance["unknown"]["average_rest_days"] is None
+
+    version_performance = metrics["model_version_performance"]
+    assert set(version_performance.keys()) == {"v1.0", "v2.0"}
+
+    assert version_performance["v1.0"]["samples"] == 3
+    assert version_performance["v1.0"]["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert version_performance["v1.0"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v1.0"]["confidence_distribution"] == {
+        "high": 1,
+        "medium": 1,
+        "low": 1,
+    }
+
+    assert version_performance["v2.0"]["samples"] == 3
+    assert version_performance["v2.0"]["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["recall"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert version_performance["v2.0"]["confidence_distribution"] == {
+        "low": 1,
+        "medium": 2,
+    }
+
+    rank_performance = metrics["prediction_rank_performance"]
+    assert set(rank_performance.keys()) == {"rank_1", "rank_2", "rank_3"}
+
+    top_rank_segment = rank_performance["rank_1"]
+    assert top_rank_segment["label"] == "Sélection prioritaire (rang 1)"
+    assert top_rank_segment["samples"] == 2
+    assert top_rank_segment["courses"] == 2
+    assert top_rank_segment["share"] == pytest.approx(1 / 3, rel=1e-3)
+    assert top_rank_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert top_rank_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert top_rank_segment["average_final_position"] == pytest.approx(2.5, rel=1e-3)
+    assert top_rank_segment["average_rank"] == pytest.approx(1.0, rel=1e-3)
+
+    second_rank_segment = rank_performance["rank_2"]
+    assert second_rank_segment["samples"] == 2
+    assert second_rank_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert second_rank_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert second_rank_segment["average_final_position"] == pytest.approx(2.0, rel=1e-3)
+    assert second_rank_segment["average_rank"] == pytest.approx(2.0, rel=1e-3)
+
+    third_rank_segment = rank_performance["rank_3"]
+    assert third_rank_segment["samples"] == 2
+    assert third_rank_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert third_rank_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert third_rank_segment["average_rank"] == pytest.approx(3.0, rel=1e-3)
+    assert third_rank_segment["best_final_position"] == 1
+    assert third_rank_segment["worst_final_position"] == 4
+
+    predicted_position_performance = metrics["predicted_position_performance"]
+    assert set(predicted_position_performance.keys()) == {
+        "predicted_1",
+        "predicted_2",
+        "predicted_3",
+        "predicted_4_5",
+        "predicted_6_plus",
+        "predicted_unknown",
+    }
+
+    predicted_leader = predicted_position_performance["predicted_1"]
+    assert predicted_leader["samples"] == 1
+    assert predicted_leader["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert predicted_leader["average_rank_error"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_leader["signed_bias"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_leader["average_predicted_position"] == pytest.approx(1.0, abs=1e-6)
+
+    predicted_runner_up = predicted_position_performance["predicted_2"]
+    assert predicted_runner_up["samples"] == 1
+    assert predicted_runner_up["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_runner_up["average_rank_error"] == pytest.approx(1.0, abs=1e-6)
+    assert predicted_runner_up["signed_bias"] == pytest.approx(-1.0, abs=1e-6)
+
+    predicted_longshot = predicted_position_performance["predicted_6_plus"]
+    assert predicted_longshot["samples"] == 1
+    assert predicted_longshot["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert predicted_longshot["average_rank_error"] == pytest.approx(2.0, abs=1e-6)
+
+    predicted_unknown = predicted_position_performance["predicted_unknown"]
+    assert predicted_unknown["samples"] == 1
+    assert predicted_unknown["average_predicted_position"] is None
+    assert predicted_unknown["median_final_position"] == pytest.approx(2.0, abs=1e-6)
+
+    jockey_leaderboard = metrics["jockey_performance"]
+    assert len(jockey_leaderboard) == 2
+    assert {entry["label"] for entry in jockey_leaderboard} == {
+        "Leo Martin",
+        "Noah Verbeeck",
+    }
+    top_jockey = jockey_leaderboard[0]
+    assert top_jockey["label"] == "Leo Martin"
+    assert top_jockey["samples"] == 3
+    assert top_jockey["courses"] == 1
+    assert top_jockey["horses"] == 3
+    assert top_jockey["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_jockey["accuracy"] == pytest.approx(1.0, rel=1e-3)
+
+    second_jockey = jockey_leaderboard[1]
+    assert second_jockey["label"] == "Noah Verbeeck"
+    assert second_jockey["samples"] == 3
+    assert second_jockey["courses"] == 1
+    assert second_jockey["horses"] == 3
+    assert second_jockey["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_jockey["precision"] == pytest.approx(0.5, rel=1e-3)
+
+    trainer_leaderboard = metrics["trainer_performance"]
+    assert len(trainer_leaderboard) == 2
+    assert {entry["label"] for entry in trainer_leaderboard} == {
+        "Anne Durand",
+        "Marc Dupont",
+    }
+    top_trainer = trainer_leaderboard[0]
+    assert top_trainer["label"] == "Anne Durand"
+    assert top_trainer["samples"] == 3
+    assert top_trainer["courses"] == 1
+    assert top_trainer["horses"] == 3
+    assert top_trainer["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_trainer["precision"] == pytest.approx(1.0, rel=1e-3)
+
+    second_trainer = trainer_leaderboard[1]
+    assert second_trainer["label"] == "Marc Dupont"
+    assert second_trainer["samples"] == 3
+    assert second_trainer["courses"] == 1
+    assert second_trainer["horses"] == 3
+    assert second_trainer["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_trainer["recall"] == pytest.approx(0.5, rel=1e-3)
+
+    jockey_experience = metrics["jockey_experience_performance"]
+    assert set(jockey_experience.keys()) == {
+        "jockey_experience_confirmed",
+        "jockey_experience_rookie",
+    }
+
+    rookie_jockey_segment = jockey_experience["jockey_experience_rookie"]
+    assert rookie_jockey_segment["label"] == "Jockey débutant (≤ 150 courses)"
+    assert rookie_jockey_segment["samples"] == 3
+    assert rookie_jockey_segment["courses"] == 1
+    assert rookie_jockey_segment["actors"] == 1
+    assert rookie_jockey_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert rookie_jockey_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert rookie_jockey_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert rookie_jockey_segment["average_career_starts"] == pytest.approx(120.0, rel=1e-3)
+    assert rookie_jockey_segment["min_career_starts"] == 120
+    assert rookie_jockey_segment["max_career_starts"] == 120
+
+    confirmed_jockey_segment = jockey_experience["jockey_experience_confirmed"]
+    assert confirmed_jockey_segment["label"] == "Jockey confirmé (401-800 courses)"
+    assert confirmed_jockey_segment["samples"] == 3
+    assert confirmed_jockey_segment["courses"] == 1
+    assert confirmed_jockey_segment["actors"] == 1
+    assert confirmed_jockey_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert confirmed_jockey_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert confirmed_jockey_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert confirmed_jockey_segment["average_career_starts"] == pytest.approx(560.0, rel=1e-3)
+    assert confirmed_jockey_segment["min_career_starts"] == 560
+    assert confirmed_jockey_segment["max_career_starts"] == 560
+
+    trainer_experience = metrics["trainer_experience_performance"]
+    assert set(trainer_experience.keys()) == {
+        "trainer_experience_progressing",
+        "trainer_experience_veteran",
+    }
+
+    progressing_trainer_segment = trainer_experience["trainer_experience_progressing"]
+    assert progressing_trainer_segment["label"] == "Entraîneur en progression (151-400 courses)"
+    assert progressing_trainer_segment["samples"] == 3
+    assert progressing_trainer_segment["courses"] == 1
+    assert progressing_trainer_segment["actors"] == 1
+    assert progressing_trainer_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert progressing_trainer_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert progressing_trainer_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert progressing_trainer_segment["average_career_starts"] == pytest.approx(380.0, rel=1e-3)
+    assert progressing_trainer_segment["min_career_starts"] == 380
+    assert progressing_trainer_segment["max_career_starts"] == 380
+
+    veteran_trainer_segment = trainer_experience["trainer_experience_veteran"]
+    assert veteran_trainer_segment["label"] == "Entraîneur vétéran (> 1 200 courses)"
+    assert veteran_trainer_segment["samples"] == 3
+    assert veteran_trainer_segment["courses"] == 1
+    assert veteran_trainer_segment["actors"] == 1
+    assert veteran_trainer_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert veteran_trainer_segment["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert veteran_trainer_segment["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert veteran_trainer_segment["average_career_starts"] == pytest.approx(1450.0, rel=1e-3)
+    assert veteran_trainer_segment["min_career_starts"] == 1450
+    assert veteran_trainer_segment["max_career_starts"] == 1450
+
+    connection_leaderboard = metrics["jockey_trainer_performance"]
+    assert len(connection_leaderboard) == 2
+    assert {
+        entry["label"] for entry in connection_leaderboard
+    } == {
+        "Leo Martin × Anne Durand",
+        "Noah Verbeeck × Marc Dupont",
+    }
+
+    top_connection = connection_leaderboard[0]
+    assert top_connection["label"] == "Leo Martin × Anne Durand"
+    assert top_connection["samples"] == 3
+    assert top_connection["courses"] == 1
+    assert top_connection["horses"] == 3
+    assert top_connection["jockeys"] == 1
+    assert top_connection["trainers"] == 1
+    assert top_connection["share"] == pytest.approx(0.5, rel=1e-3)
+    assert top_connection["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert top_connection["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    second_connection = connection_leaderboard[1]
+    assert second_connection["label"] == "Noah Verbeeck × Marc Dupont"
+    assert second_connection["samples"] == 3
+    assert second_connection["courses"] == 1
+    assert second_connection["horses"] == 3
+    assert second_connection["share"] == pytest.approx(0.5, rel=1e-3)
+    assert second_connection["accuracy"] == pytest.approx(1 / 3, rel=1e-3)
+    assert second_connection["precision"] == pytest.approx(0.5, rel=1e-3)
+    assert second_connection["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+
+    assert set(result["prediction_rank_performance"].keys()) == {"rank_1", "rank_2", "rank_3"}
+    assert result["prediction_rank_performance"]["rank_2"]["average_rank"] == pytest.approx(2.0, rel=1e-3)
+    assert "predicted_position_performance" in result
+    assert set(result["predicted_position_performance"].keys()) == {
+        "predicted_1",
+        "predicted_2",
+        "predicted_3",
+        "predicted_4_5",
+        "predicted_6_plus",
+        "predicted_unknown",
+    }
+    assert result["predicted_position_performance"]["predicted_unknown"]["samples"] == 1
+
+    assert result["jockey_performance"][0]["label"] == "Leo Martin"
+    assert result["jockey_performance"][1]["label"] == "Noah Verbeeck"
+    assert result["trainer_performance"][0]["label"] == "Anne Durand"
+    assert result["trainer_performance"][1]["label"] == "Marc Dupont"
+    assert result["jockey_trainer_performance"][0]["label"] == "Leo Martin × Anne Durand"
+    assert result["jockey_trainer_performance"][1]["label"] == "Noah Verbeeck × Marc Dupont"
+    assert result["owner_trainer_performance"][0]["label"] == "Ecurie Horizon × Anne Durand"
+    assert set(result["jockey_experience_performance"].keys()) == {
+        "jockey_experience_confirmed",
+        "jockey_experience_rookie",
+    }
+    assert set(result["trainer_experience_performance"].keys()) == {
+        "trainer_experience_progressing",
+        "trainer_experience_veteran",
+    }
+    assert result["owner_jockey_performance"][0]["label"] == "Ecurie Horizon × Leo Martin"
+    assert set(result["start_delay_performance"].keys()) == {"heavy_delay", "on_time"}
+    assert result["start_delay_performance"]["heavy_delay"]["max_delay_minutes"] == pytest.approx(25.0, rel=1e-3)
+    assert set(result["final_position_performance"].keys()) == {"winner", "runner_up", "top6"}
+    assert result["final_position_performance"]["winner"]["samples"] == 2
+    assert result["final_position_performance"]["winner"]["average_final_position"] == pytest.approx(1.0, rel=1e-3)
+    assert result["final_position_performance"]["top6"]["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert set(result["jockey_nationality_performance"].keys()) == {"france", "belgique"}
+    assert set(result["trainer_nationality_performance"].keys()) == {"france", "belgique"}
+    hippodrome_labels = {entry["label"] for entry in result["hippodrome_performance"]}
+    assert hippodrome_labels == {"Hippodrome Test", "Hippodrome Trot"}
+    assert set(result["country_performance"].keys()) == {"belgique", "france"}
+    assert result["country_performance"]["france"]["cities"] == ["Paris"]
+    assert set(result["city_performance"].keys()) == {"paris", "mons"}
+    assert result["city_performance"]["paris"]["countries"] == ["France"]
+    assert set(result["api_source_performance"].keys()) == {"pmu_api", "turfinfo"}
+    assert result["api_source_performance"]["turfinfo"]["label"] == "Turfinfo"
+    assert result["api_source_performance"]["pmu_api"]["pronostics"] == 1
+    assert result["track_type_performance"]["flat"]["label"] == "Piste plate"
+    assert result["track_length_performance"]["compact_loop"]["label"] == "Piste compacte (≤ 1 400 m)"
+    assert result["track_length_performance"]["extended_loop"]["average_track_length"] == pytest.approx(
+        1825.0, abs=1e-6
+    )
+    assert set(result["discipline_surface_performance"].keys()) == {
+        "plat__pelouse",
+        "trot_attele__sable",
+    }
+    assert result["discipline_surface_performance"]["plat__pelouse"]["average_distance"] == pytest.approx(
+        1400.0, abs=1e-6
+    )
+    assert result["discipline_surface_performance"]["trot_attele__sable"]["average_distance"] == pytest.approx(
+        3000.0, abs=1e-6
+    )
+    assert result["weather_performance"]["clear"]["label"] == "Conditions claires"
+    assert result["day_part_performance"]["afternoon"]["samples"] == 3
+    assert set(result["lead_time_performance"].keys()) == {"between_2h_6h", "between_6h_12h"}
+    assert date.today().strftime("%Y") in result["year_performance"]
+    assert date.today().strftime("%Y-%m") in result["month_performance"]
+    season_key, season_label = _derive_season_key(date.today())
+    previous_key, previous_label = _derive_season_key(date.today() - timedelta(days=1))
+    assert season_key in result["season_performance"]
+    assert result["season_performance"][season_key]["label"] == season_label
+    if previous_key != season_key:
+        assert previous_key in result["season_performance"]
+        assert result["season_performance"][previous_key]["label"] == previous_label
+    current_quarter_index = ((date.today().month - 1) // 3) + 1
+    current_quarter_key = f"{date.today().year:04d}-Q{current_quarter_index}"
+    assert current_quarter_key in result["quarter_performance"]
+    assert result["quarter_performance"][current_quarter_key]["label"] == f"T{current_quarter_index} {date.today().year}"
+    assert result["horse_age_performance"]["prime"]["samples"] == 2
+    assert result["horse_gender_performance"]["male"]["samples"] == 4
+    assert result["recent_form_performance"]["recent_winner"]["label"] == "Gagnant récent"
+    assert result["recent_form_performance"]["recent_winner"]["samples"] == 1
+    assert result["owner_performance"]["ecurie_horizon"]["samples"] == 2
+    assert set(result["value_bet_flag_performance"].keys()) == {
+        "value_bet_detected",
+        "standard_pronostic",
+    }
+    assert result["value_bet_flag_performance"]["value_bet_detected"]["pronostics"] == 1
+    assert result["value_bet_flag_performance"]["standard_pronostic"]["pronostic_share"] == pytest.approx(
+        0.5, rel=1e-3
+    )
+    recent_form_performance = metrics["recent_form_performance"]
+    assert set(recent_form_performance.keys()) == {
+        "recent_winner",
+        "strong_form",
+        "steady_form",
+        "inconsistent_form",
+        "poor_form",
+        "unknown",
+    }
+
+    winner_segment = recent_form_performance["recent_winner"]
+    assert winner_segment["label"] == "Gagnant récent"
+    assert winner_segment["samples"] == 1
+    assert winner_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["recent_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert winner_segment["average_recent_position"] == pytest.approx(4 / 3, rel=1e-3)
+    assert winner_segment["best_recent_position"] == 1
+    assert winner_segment["average_recent_history_size"] == pytest.approx(3.0, rel=1e-3)
+
+    strong_segment = recent_form_performance["strong_form"]
+    assert strong_segment["label"] == "Forme solide (moyenne ≤3)"
+    assert strong_segment["samples"] == 1
+    assert strong_segment["accuracy"] == pytest.approx(0.0, rel=1e-3)
+    assert strong_segment["recent_win_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert strong_segment["average_recent_position"] == pytest.approx(7 / 3, rel=1e-3)
+    assert strong_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    steady_segment = recent_form_performance["steady_form"]
+    assert steady_segment["label"] == "Forme régulière (moyenne 3-5)"
+    assert steady_segment["samples"] == 1
+    assert steady_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert steady_segment["recent_win_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert steady_segment["average_recent_position"] == pytest.approx(4.0, rel=1e-3)
+
+    inconsistent_segment = recent_form_performance["inconsistent_form"]
+    assert inconsistent_segment["label"] == "Forme irrégulière (moyenne 5-8)"
+    assert inconsistent_segment["samples"] == 1
+    assert inconsistent_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert inconsistent_segment["observed_positive_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert inconsistent_segment["average_recent_position"] == pytest.approx(7.0, rel=1e-3)
+
+    poor_segment = recent_form_performance["poor_form"]
+    assert poor_segment["label"] == "Forme en difficulté (>8)"
+    assert poor_segment["samples"] == 1
+    assert poor_segment["accuracy"] == pytest.approx(0.0, rel=1e-3)
+    assert poor_segment["observed_positive_rate"] == pytest.approx(0.0, rel=1e-3)
+    assert poor_segment["average_recent_position"] == pytest.approx(10.0, rel=1e-3)
+
+    unknown_segment = recent_form_performance["unknown"]
+    assert unknown_segment["label"] == "Forme inconnue"
+    assert unknown_segment["samples"] == 1
+    assert unknown_segment["average_recent_position"] is None
+    assert unknown_segment["recent_win_rate"] is None
+    assert unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+
+    assert result["handicap_performance"]["medium_handicap"]["samples"] == 2
+    assert result["start_delay_performance"]["on_time"]["samples"] == 3
+    assert result["start_delay_performance"]["on_time"]["average_delay_minutes"] == pytest.approx(3.0, rel=1e-3)
+    assert result["odds_band_performance"]["favorite"]["samples"] == 2
+    assert set(result["probability_edge_performance"].keys()) == {
+        "slight_positive_edge",
+        "strong_positive_edge",
+    }
+    assert result["probability_edge_performance"]["strong_positive_edge"]["average_edge"] == pytest.approx(
+        0.219047, rel=1e-3
+    )
+    assert set(result["probability_error_performance"].keys()) == {
+        "error_10_20",
+        "error_35_50",
+        "error_50_plus",
+    }
+    assert result["probability_error_performance"]["error_35_50"]["samples"] == 2
+    assert result["probability_error_performance"]["error_50_plus"]["average_absolute_error"] == pytest.approx(
+        0.7, rel=1e-3
+    )
+    assert set(result["probability_margin_performance"].keys()) == {
+        "margin_clear",
+        "margin_tight",
+    }
+    assert result["probability_margin_performance"]["margin_clear"]["average_margin"] == pytest.approx(
+        0.25, rel=1e-3
+    )
+    assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
+        0.05, rel=1e-3
+    )
+    assert "probability_distribution_metrics" in result
+    assert "probability_entropy_performance" in result
+    assert "probability_sharpness_performance" in result
+    result_distribution = result["probability_distribution_metrics"]
+    assert result_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert result_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+    assert result_distribution["overall"]["count"] == 6
+    result_entropy = result["probability_entropy_performance"]
+    assert result_entropy["samples"] == 2
+    result_sharpness = result["probability_sharpness_performance"]
+    assert result_sharpness["samples"] == 2
+    assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
+    assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    assert result["favourite_alignment_performance"]["divergent"]["pmu_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    rank_breakdown = result["rank_correlation_performance"]
+    assert rank_breakdown["evaluated_courses"] == 2
+    assert rank_breakdown["best_spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert {
+        detail["label"] for detail in rank_breakdown["course_details"].values()
+    } == {"R1C1", "R1C2"}
+    rank_error_payload = result["rank_error_metrics"]
+    assert rank_error_payload["samples"] == 6
+    assert rank_error_payload["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert "rank_error_distribution" in result
+    assert result["rank_error_distribution"]["rank_error_exact"]["samples"] == 3
+    assert result["equipment_performance"]["blinkers"]["samples"] == 2
+    assert result["race_order_performance"]["early_card"]["samples"] == 3
+    assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
+    assert result["reunion_number_performance"]["morning_cards"]["samples"] == 3
+    assert result["reunion_number_performance"]["day_cards"]["average_reunion_number"] == pytest.approx(4.0, abs=1e-6)
+    assert result["confidence_score_performance"]["medium"]["label"] == "Confiance moyenne (50-70%)"
+    assert result["horse_breed_performance"]["pur_sang"]["samples"] == 2
+    assert result["horse_breed_performance"]["aqps"]["label"] == "AQPS"
+    assert result["horse_sire_performance"]["stallion_alpha"]["samples"] == 2
+    assert result["horse_sire_performance"]["unknown"]["label"] == "Père inconnu"
+    assert result["horse_dam_performance"]["mare_alpha"]["samples"] == 2
+    assert result["horse_dam_performance"]["unknown"]["label"] == "Mère inconnue"
+    assert "win_probability_performance" in result
+    assert "place_probability_performance" in result
+    assert "place_probability_quality" in result
+    assert "place_probability_distribution" in result
+    assert "place_probability_gain_curve" in result
+    assert "place_probability_calibration" in result
+    assert "temperature_band_performance" in result
+    assert "prediction_outcome_performance" in result
+    assert "horse_breed_performance" in result
+    assert "horse_sire_performance" in result
+    assert "horse_dam_performance" in result
+    assert "topn_performance" in result
+    assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
+    with in_memory_session() as check_session:
+        stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
+        assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
+
+        stored_metrics = stored_model.performance_metrics
+        if isinstance(stored_metrics, str):
+            stored_metrics = json.loads(stored_metrics)
+
+        assert stored_metrics["last_evaluation"]["metrics"]["accuracy"] == pytest.approx(2 / 3, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["matthews_correlation"] == pytest.approx(0.25, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["cohen_kappa"] == pytest.approx(0.25, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["gini_coefficient"] == pytest.approx(0.25, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["specificity"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["false_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["negative_predictive_value"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
+        assert (
+            "probability_entropy_performance"
+            in stored_metrics["last_evaluation"]["metrics"]
+        )
+        stored_entropy_metrics = stored_metrics["last_evaluation"]["metrics"][
+            "probability_entropy_performance"
+        ]
+        assert stored_entropy_metrics["overall"]["average_normalised_entropy"] == pytest.approx(
+            0.9353, rel=1e-3
+        )
+
+        stored_sharpness = stored_metrics["last_evaluation"]["metrics"].get(
+            "probability_sharpness_performance"
+        )
+        assert stored_sharpness is not None
+        assert stored_sharpness["overall"]["average_std_dev"] == pytest.approx(
+            0.11368, rel=1e-3
+        )
+
+        stored_probability_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "probability_distribution_metrics"
+        ]
+        assert stored_probability_distribution["overall"]["count"] == 6
+        stored_place_quality = stored_metrics["last_evaluation"]["metrics"]["place_probability_quality"]
+        assert stored_place_quality["samples"] == 6
+        assert stored_place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
+        assert stored_place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+        assert stored_place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+        stored_place_distribution = stored_metrics["last_evaluation"]["metrics"]["place_probability_distribution"]
+        stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
+        stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"]["place_probability_gain_curve"]
+        assert stored_place_distribution["samples"] == 6
+        assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+        assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+        calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
+        assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
+        assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+        stored_feature_summary = stored_metrics["last_evaluation"]["metrics"][
+            "feature_contribution_summary"
+        ]
+        assert stored_feature_summary["features"]["draw_bias"][
+            "average_absolute_contribution"
+        ] == pytest.approx(0.0675, rel=1e-4)
+        assert stored_feature_summary["top_features"][0]["feature"] == "draw_bias"
+        stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
+        assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
+        assert stored_winner_rank["distribution"]["rank_1"] == 1
+        assert stored_winner_rank["distribution"]["rank_3"] == 1
+        sire_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_sire_performance"]
+        assert sire_metrics["stallion_alpha"]["samples"] == 2
+        assert sire_metrics["etalon_celeste"]["label"] == "Étalon Céleste"
+        dam_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_dam_performance"]
+        assert dam_metrics["mare_alpha"]["samples"] == 2
+        assert dam_metrics["unknown"]["label"] == "Mère inconnue"
+        stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
+        assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
+        assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)
+        assert stored_brier["skill_score"] == pytest.approx(-0.395, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top1"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top3"] == pytest.approx(1.0, rel=1e-3)
+        stored_rank_error_summary = stored_metrics["last_evaluation"]["rank_error_metrics"]
+        assert stored_rank_error_summary["samples"] == 6
+        assert stored_rank_error_summary["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+        stored_rank_error_distribution = stored_metrics["last_evaluation"][
+            "rank_error_distribution"
+        ]
+        assert stored_rank_error_distribution["rank_error_exact"]["samples"] == 3
+        stored_topn_metrics = stored_metrics["last_evaluation"]["metrics"]["topn_performance"]
+        assert stored_topn_metrics["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_topn_metrics["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+        stored_topn_summary = stored_metrics["last_evaluation"]["topn_performance"]
+        assert stored_topn_summary["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+        assert "rank_error_metrics" in stored_metrics["last_evaluation"]["metrics"]
+        stored_rank_errors = stored_metrics["last_evaluation"]["metrics"]["rank_error_metrics"]
+        assert stored_rank_errors["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+        assert "rank_error_distribution" in stored_metrics["last_evaluation"]["metrics"]
+        stored_rank_error_metrics_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "rank_error_distribution"
+        ]
+        assert (
+            stored_rank_error_metrics_distribution["rank_error_two_three"]["samples"] == 2
+        )
+        assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
+        assert "confidence_score_performance" in stored_metrics["last_evaluation"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]
+        assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_quality" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_calibration" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_distribution" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_gain_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "lift_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "betting_value_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "owner_jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]["metrics"]
+        assert "favourite_alignment_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "rank_correlation_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
+        assert "track_length_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "precision_recall_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "roc_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "ks_analysis" in stored_metrics["last_evaluation"]["metrics"]
+        assert "calibration_diagnostics" in stored_metrics["last_evaluation"]
+        assert "calibration_diagnostics" in stored_metrics["last_evaluation"]["metrics"]
+        assert "threshold_recommendations" in stored_metrics["last_evaluation"]
+        assert "threshold_recommendations" in stored_metrics["last_evaluation"]["metrics"]
+        assert stored_metrics["last_evaluation"]["threshold_recommendations"]["best_f1"]["threshold"] == pytest.approx(best_f1_threshold, rel=1e-3)
+        assert "daily_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "day_part_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "lead_time_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "confidence_score_performance" in stored_metrics["last_evaluation"]["metrics"]
+        stored_confidence_levels = stored_metrics["last_evaluation"]["confidence_level_metrics"]
+        assert stored_confidence_levels["medium"]["share"] == pytest.approx(0.5, rel=1e-3)
+        assert "year_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "month_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "quarter_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "recent_form_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weekday_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "discipline_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "distance_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "discipline_surface_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weather_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "hippodrome_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "track_type_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "country_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "city_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "odds_band_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_order_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "reunion_number_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prize_money_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prize_per_runner_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "handicap_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "weight_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "equipment_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_age_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_coat_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_breed_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_dam_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "value_bet_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "field_size_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "draw_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "draw_parity_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "start_delay_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "start_type_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "rest_period_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "model_version_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "prediction_rank_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "predicted_position_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "final_position_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_trainer_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_experience_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_experience_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "jockey_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "trainer_nationality_performance" in stored_metrics["last_evaluation"]["metrics"]
+
+
+def test_update_model_performance_without_predictions(in_memory_session: sessionmaker) -> None:
+    """Retourne un statut explicite lorsqu'aucune donnée n'est disponible."""
+
+    session = in_memory_session()
+    session.add(
+        MLModel(
+            model_name="horse_racing_gradient_boosting",
+            version="20250101",
+            algorithm="GradientBoosting",
+            file_path="model.pkl",
+            is_active=True,
+        )
+    )
+    session.commit()
+    session.close()
+
+    result = ml_tasks.update_model_performance.run(days_back=7)
+
+    assert result == {
+        "status": "no_data",
+        "days_evaluated": 7,
+        "cutoff_date": (date.today() - timedelta(days=7)).isoformat(),
+        "evaluated_samples": 0,
+        "message": "No predictions with associated race results in the given window",
+    }
