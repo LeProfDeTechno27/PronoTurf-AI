@@ -385,6 +385,50 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
+
+    if not calibration_rows:
         return {
             "count": len(ordered),
             "average": mean_value,

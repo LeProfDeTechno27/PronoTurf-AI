@@ -50,6 +50,12 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
+      border: {
+          DEFAULT: '#E5E7EB', // gris clair similaire à border-gray-200
+          50:  '#F9FAFB',
+          100: '#F3F4F6',
+          200: '#E5E7EB',
+        },
     },
   },
   plugins: [],
