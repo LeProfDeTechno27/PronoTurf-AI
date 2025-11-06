@@ -385,6 +385,82 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
+    """Calcule un percentile (0-1) par interpolation linéaire."""
+
+    if not sorted_values:
+        return None
+
+    # On borne explicitement la valeur demandée pour éviter les dépassements.
+    percentile = max(0.0, min(1.0, percentile))
+
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    position = percentile * (len(sorted_values) - 1)
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(sorted_values) - 1)
+    weight = position - lower_index
+
+    lower_value = float(sorted_values[lower_index])
+    upper_value = float(sorted_values[upper_index])
+    return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarise_probability_distribution(
+    truths: List[int], scores: List[float]
+) -> Dict[str, object]:
+    """Analyse la distribution des probabilités prédites et leur séparation.
+
+    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
+    - quelle est la dispersion des probabilités émises par le modèle ?
+    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
+      perdants ?
+    - quelle marge existe-t-il entre les médianes positives et négatives ?
+
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
+
 
 def _summarise_probability_distribution(
     truths: List[int], scores: List[float]
@@ -2300,6 +2376,231 @@ def _summarise_place_probability_ks(
             "low_divergence_courses": low_divergence_courses,
             "top_positive_examples": top_positive_examples,
             "top_negative_examples": top_negative_examples,
+        }
+    )
+
+    return payload
+
+
+def _categorise_place_probability_sharpness(
+    standard_deviation: Optional[float],
+) -> Tuple[str, str]:
+    """Classe la dispersion des probabilités de place en segments parlants."""
+
+    if standard_deviation is None:
+        return "unknown", "Dispersion indéterminée"
+
+    if standard_deviation < 0.06:
+        return "very_controlled", "Dispersion très faible (<6 pts)"
+
+    if standard_deviation < 0.12:
+        return "controlled", "Dispersion modérée (6-12 pts)"
+
+    if standard_deviation < 0.18:
+        return "broad", "Dispersion large (12-18 pts)"
+
+    return "volatile", "Dispersion très large (≥18 pts)"
+
+
+def _summarise_place_probability_sharpness(
+    samples: List[Dict[str, object]]
+) -> Dict[str, object]:
+    """Analyse la dispersion absolue des probabilités de place course par course."""
+
+    baseline: Dict[str, object] = {
+        "samples": 0,
+        "overall": {
+            "courses": 0,
+            "average_std_dev": None,
+            "min_std_dev": None,
+            "max_std_dev": None,
+            "average_range": None,
+            "min_range": None,
+            "max_range": None,
+            "average_coefficient_of_variation": None,
+        },
+        "buckets": {},
+        "least_dispersed_courses": [],
+        "most_dispersed_courses": [],
+        "per_course": [],
+    }
+
+    if not samples:
+        return baseline
+
+    per_course: Dict[Tuple[Optional[int], str], Dict[str, object]] = {}
+
+    for sample in samples:
+        probability_raw = sample.get("probability")
+        try:
+            probability = float(probability_raw)
+        except (TypeError, ValueError):  # pragma: no cover - sécurité entrée
+            continue
+
+        course_id_raw = sample.get("course_id")
+        course_id: Optional[int]
+        try:
+            course_id = int(course_id_raw) if course_id_raw is not None else None
+        except (TypeError, ValueError):  # pragma: no cover - robustesse
+            course_id = None
+
+        course_label_raw = sample.get("course_label")
+        course_label = str(course_label_raw) if course_label_raw else None
+        if not course_label:
+            course_label = f"Course {course_id}" if course_id is not None else "Course inconnue"
+
+        key = (course_id, course_label)
+        bucket = per_course.setdefault(
+            key,
+            {
+                "course_id": course_id,
+                "label": course_label,
+                "probabilities": [],
+                "outcomes": [],
+            },
+        )
+        bucket.setdefault("probabilities", []).append(probability)
+        outcome_raw = sample.get("outcome")
+        try:
+            outcome = int(outcome_raw) if outcome_raw is not None else None
+        except (TypeError, ValueError):  # pragma: no cover - données corrompues
+            outcome = None
+        bucket.setdefault("outcomes", []).append(outcome)
+
+    course_records: List[Dict[str, object]] = []
+
+    for payload in per_course.values():
+        probabilities = payload.get("probabilities", [])
+        if not probabilities:
+            continue
+
+        cleaned_probabilities: List[float] = []
+        for probability in probabilities:
+            try:
+                cleaned_probabilities.append(max(float(probability), 0.0))
+            except (TypeError, ValueError):  # pragma: no cover - robustesse
+                continue
+
+        if not cleaned_probabilities:
+            continue
+
+        average_probability = _safe_average(cleaned_probabilities)
+        if average_probability is None:
+            continue
+
+        if len(cleaned_probabilities) > 1:
+            variance = sum(
+                (value - average_probability) ** 2 for value in cleaned_probabilities
+            ) / len(cleaned_probabilities)
+            standard_deviation = sqrt(variance)
+        else:
+            standard_deviation = 0.0
+
+        probability_range = max(cleaned_probabilities) - min(cleaned_probabilities)
+        coefficient_of_variation: Optional[float] = None
+        if average_probability > 0:
+            coefficient_of_variation = standard_deviation / average_probability
+
+        outcomes: List[Optional[int]] = [
+            outcome for outcome in payload.get("outcomes", []) if outcome in (0, 1)
+        ]
+        positive_count = sum(outcomes)
+        sample_count = len(cleaned_probabilities)
+        positive_rate: Optional[float] = None
+        if sample_count:
+            positive_rate = positive_count / sample_count if positive_count is not None else None
+
+        course_records.append(
+            {
+                "course_id": payload.get("course_id"),
+                "label": payload.get("label"),
+                "samples": sample_count,
+                "average_probability": average_probability,
+                "standard_deviation": standard_deviation,
+                "probability_range": probability_range,
+                "coefficient_of_variation": coefficient_of_variation,
+                "positive_rate": positive_rate,
+            }
+        )
+
+    if not course_records:
+        return baseline
+
+    std_values = [record["standard_deviation"] for record in course_records]
+    range_values = [record["probability_range"] for record in course_records]
+    coefficient_values = [
+        record["coefficient_of_variation"]
+        for record in course_records
+        if record.get("coefficient_of_variation") is not None
+    ]
+
+    overall = {
+        "courses": len(course_records),
+        "average_std_dev": _safe_average(std_values),
+        "min_std_dev": min(std_values) if std_values else None,
+        "max_std_dev": max(std_values) if std_values else None,
+        "average_range": _safe_average(range_values),
+        "min_range": min(range_values) if range_values else None,
+        "max_range": max(range_values) if range_values else None,
+        "average_coefficient_of_variation": _safe_average(coefficient_values),
+    }
+
+    buckets: Dict[str, Dict[str, object]] = {}
+    for record in course_records:
+        bucket_key, bucket_label = _categorise_place_probability_sharpness(
+            record.get("standard_deviation")
+        )
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "label": bucket_label,
+                "standard_deviations": [],
+                "ranges": [],
+                "coefficients": [],
+                "courses": set(),
+            },
+        )
+        bucket.setdefault("standard_deviations", []).append(record["standard_deviation"])
+        bucket.setdefault("ranges", []).append(record["probability_range"])
+        if record.get("coefficient_of_variation") is not None:
+            bucket.setdefault("coefficients", []).append(record["coefficient_of_variation"])
+        bucket.setdefault("courses", set()).add(
+            record.get("course_id") if record.get("course_id") is not None else record.get("label")
+        )
+
+    for bucket in buckets.values():
+        stds = bucket.pop("standard_deviations", [])
+        ranges = bucket.pop("ranges", [])
+        coeffs = bucket.pop("coefficients", [])
+        course_ids = bucket.get("courses", set())
+        bucket["samples"] = len(stds)
+        bucket["average_std_dev"] = _safe_average(stds)
+        bucket["min_std_dev"] = min(stds) if stds else None
+        bucket["max_std_dev"] = max(stds) if stds else None
+        bucket["average_range"] = _safe_average(ranges)
+        bucket["average_coefficient_of_variation"] = _safe_average(coeffs)
+        bucket["courses"] = len(course_ids)
+
+    least_dispersed = sorted(
+        course_records,
+        key=lambda record: record["standard_deviation"],
+    )[:3]
+
+    most_dispersed = sorted(
+        course_records,
+        key=lambda record: record["standard_deviation"],
+        reverse=True,
+    )[:3]
+
+    payload = dict(baseline)
+    payload.update(
+        {
+            "samples": len(course_records),
+            "overall": overall,
+            "buckets": buckets,
+            "least_dispersed_courses": least_dispersed,
+            "most_dispersed_courses": most_dispersed,
+            "per_course": course_records,
         }
     )
 
@@ -10922,6 +11223,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         place_probability_ks = _summarise_place_probability_ks(
             place_probability_samples
         )
+        place_probability_sharpness = _summarise_place_probability_sharpness(
+            place_probability_samples
+        )
 
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
@@ -11411,6 +11715,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
             "place_probability_ks": place_probability_ks,
+            "place_probability_sharpness": place_probability_sharpness,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11512,6 +11817,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
             "place_probability_ks": place_probability_ks,
+            "place_probability_sharpness": place_probability_sharpness,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11641,6 +11947,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_precision_recall": place_probability_precision_recall,
             "place_probability_roc": place_probability_roc,
             "place_probability_ks": place_probability_ks,
+            "place_probability_sharpness": place_probability_sharpness,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,

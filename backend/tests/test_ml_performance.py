@@ -725,6 +725,53 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         example["probability"] for example in place_ks["top_negative_examples"]
     ] == pytest.approx([0.36, 0.28], rel=1e-3)
 
+    place_sharpness = metrics["place_probability_sharpness"]
+    assert place_sharpness["samples"] == 2
+    overall_place_sharpness = place_sharpness["overall"]
+    assert overall_place_sharpness["courses"] == 2
+    assert overall_place_sharpness["average_std_dev"] == pytest.approx(0.19229549, rel=1e-3)
+    assert overall_place_sharpness["min_std_dev"] == pytest.approx(0.15577762, rel=1e-3)
+    assert overall_place_sharpness["max_std_dev"] == pytest.approx(0.22881336, rel=1e-3)
+    assert overall_place_sharpness["average_range"] == pytest.approx(0.46, rel=1e-3)
+    assert overall_place_sharpness["min_range"] == pytest.approx(0.38, rel=1e-3)
+    assert overall_place_sharpness["max_range"] == pytest.approx(0.54, rel=1e-3)
+    assert overall_place_sharpness["average_coefficient_of_variation"] == pytest.approx(
+        0.33705879, rel=1e-3
+    )
+
+    place_sharpness_buckets = place_sharpness["buckets"]
+    assert set(place_sharpness_buckets.keys()) == {"broad", "volatile"}
+    assert place_sharpness_buckets["broad"]["samples"] == 1
+    assert place_sharpness_buckets["broad"]["average_std_dev"] == pytest.approx(
+        0.15577762, rel=1e-3
+    )
+    assert place_sharpness_buckets["volatile"]["samples"] == 1
+    assert place_sharpness_buckets["volatile"]["average_std_dev"] == pytest.approx(
+        0.22881336, rel=1e-3
+    )
+
+    least_dispersed_place = place_sharpness["least_dispersed_courses"]
+    assert least_dispersed_place[0]["label"] == "R1C2"
+    assert least_dispersed_place[0]["standard_deviation"] == pytest.approx(
+        0.15577762, rel=1e-3
+    )
+    most_dispersed_place = place_sharpness["most_dispersed_courses"]
+    assert most_dispersed_place[0]["label"] == "R1C1"
+    assert most_dispersed_place[0]["standard_deviation"] == pytest.approx(
+        0.22881336, rel=1e-3
+    )
+
+    place_sharpness_courses = {
+        entry["label"]: entry for entry in place_sharpness["per_course"]
+    }
+    assert place_sharpness_courses["R1C1"]["samples"] == 3
+    assert place_sharpness_courses["R1C1"]["coefficient_of_variation"] == pytest.approx(
+        0.3856405, rel=1e-3
+    )
+    assert place_sharpness_courses["R1C2"]["probability_range"] == pytest.approx(
+        0.38, rel=1e-3
+    )
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2805,6 +2852,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_precision_recall" in result
     assert "place_probability_roc" in result
     assert "place_probability_ks" in result
+    assert "place_probability_sharpness" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2862,18 +2910,33 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
         assert stored_place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
-        stored_place_distribution = stored_metrics["last_evaluation"]["metrics"]["place_probability_distribution"]
-        stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
-        stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"]["place_probability_gain_curve"]
-        stored_place_thresholds = stored_metrics["last_evaluation"]["metrics"]["place_probability_thresholds"]
+        stored_place_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_distribution"
+        ]
+        stored_place_calibration = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_calibration"
+        ]
+        stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_gain_curve"
+        ]
+        stored_place_thresholds = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_thresholds"
+        ]
         stored_place_precision_recall = stored_metrics["last_evaluation"]["metrics"][
             "place_probability_precision_recall"
+        ]
+        stored_place_roc = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_roc"
         ]
         stored_place_ks = stored_metrics["last_evaluation"]["metrics"][
             "place_probability_ks"
         ]
+        stored_place_sharpness = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_sharpness"
+        ]
         assert "place_probability_roc" in result["metrics"]
         assert "place_probability_ks" in result["metrics"]
+        assert "place_probability_sharpness" in result["metrics"]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
@@ -2889,6 +2952,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_place_precision_recall["average_precision"] == pytest.approx(1.0, rel=1e-6)
         assert stored_place_ks["ks_statistic"] == pytest.approx(1.0, rel=1e-6)
         assert stored_place_ks["ks_threshold"] == pytest.approx(0.52, rel=1e-3)
+        assert stored_place_roc["auc"] == pytest.approx(1.0, rel=1e-6)
+        assert stored_place_sharpness["overall"]["average_std_dev"] == pytest.approx(
+            0.19229549, rel=1e-3
+        )
+        assert stored_place_sharpness["buckets"]["volatile"]["samples"] == 1
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
