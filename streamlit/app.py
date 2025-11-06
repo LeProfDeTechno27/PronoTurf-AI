@@ -25,7 +25,13 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from data_providers import list_available_filters, load_bet_history, load_predictions
+from data_providers import (
+    list_available_filters,
+    load_bet_history,
+    load_feature_contributions,
+    load_monitoring_snapshots,
+    load_predictions,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +86,20 @@ def get_predictions() -> pd.DataFrame:
     """Charge et met en cache les meilleurs pronostics synthétiques."""
 
     return load_predictions()
+
+
+@st.cache_data(show_spinner=False)
+def get_monitoring_snapshots() -> pd.DataFrame:
+    """Charge les indicateurs de monitoring synthétiques."""
+
+    return load_monitoring_snapshots()
+
+
+@st.cache_data(show_spinner=False)
+def get_feature_contributions() -> pd.DataFrame:
+    """Charge les contributions moyennes des variables explicatives."""
+
+    return load_feature_contributions()
 
 
 def _filter_by_period(df: pd.DataFrame, period: PeriodDefinition) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -252,6 +272,8 @@ def _render_metrics(metrics: Dict[str, Dict[str, float]]) -> None:
 bet_history = get_bet_history()
 predictions = get_predictions()
 filters = list_available_filters()
+monitoring_snapshots = get_monitoring_snapshots()
+feature_contributions = get_feature_contributions()
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +349,14 @@ st.markdown("---")
 # Contenu principal avec onglets
 # ---------------------------------------------------------------------------
 
-tab_evolution, tab_performance, tab_analytics, tab_details = st.tabs(
-    ["📈 Évolution", "🏆 Performance", "🧠 Analytics avancées", "🔍 Détails"]
+tab_evolution, tab_performance, tab_analytics, tab_monitoring, tab_details = st.tabs(
+    [
+        "📈 Évolution",
+        "🏆 Performance",
+        "🧠 Analytics avancées",
+        "🛡️ Monitoring",
+        "🔍 Détails",
+    ]
 )
 
 
@@ -546,6 +574,107 @@ with tab_analytics:
             labels={"profit": "Profit (€)", "weather": "Météo", "win_rate": "Win Rate %"},
         )
         st.plotly_chart(weather_chart, use_container_width=True)
+
+
+with tab_monitoring:
+    st.subheader("Qualité modèle & santé des données")
+
+    if monitoring_snapshots.empty:
+        st.info(
+            "Les indicateurs synthétiques ne sont pas encore disponibles pour ce sprint."
+        )
+    else:
+        st.markdown("### Synthèse du sprint courant")
+
+        latest_snapshots = (
+            monitoring_snapshots.sort_values("snapshot_date")
+            .groupby("metric", as_index=False)
+            .tail(1)
+            .sort_values("metric")
+        )
+
+        st.dataframe(
+            latest_snapshots,
+            use_container_width=True,
+            column_config={
+                "value": st.column_config.NumberColumn("Valeur", format="%.3f"),
+                "target": st.column_config.NumberColumn("Cible", format="%.3f"),
+                "status": st.column_config.TextColumn("Statut"),
+                "comment": st.column_config.TextColumn("Commentaire"),
+            },
+            hide_index=True,
+        )
+
+        st.markdown("### Historique par indicateur")
+        metric_options = latest_snapshots["metric"].tolist()
+        selected_metric = st.selectbox(
+            "Indicateur suivi",
+            metric_options,
+            help="Chaque série couvre les trois derniers sprints d'observation.",
+        )
+
+        metric_history = (
+            monitoring_snapshots[monitoring_snapshots["metric"] == selected_metric]
+            .sort_values("snapshot_date")
+        )
+
+        history_fig = px.line(
+            metric_history,
+            x="snapshot_date",
+            y="value",
+            markers=True,
+            color="status",
+            title=f"Évolution de {selected_metric}",
+        )
+        history_fig.add_hline(
+            y=metric_history["target"].iloc[0],
+            line_dash="dash",
+            line_color="#7c3aed",
+            annotation_text="Cible",
+        )
+        history_fig.update_layout(
+            xaxis_title="Date de snapshot",
+            yaxis_title="Valeur",
+            legend_title="Statut",
+        )
+        st.plotly_chart(history_fig, use_container_width=True)
+
+    st.markdown("### Contributions moyennes du modèle")
+
+    if feature_contributions.empty:
+        st.info("Les contributions de variables sont en cours de calcul.")
+    else:
+        top_features = feature_contributions.head(10).copy()
+        bar_fig = px.bar(
+            top_features,
+            x="importance",
+            y="feature",
+            orientation="h",
+            color="category",
+            labels={
+                "importance": "Importance normalisée",
+                "feature": "Variable",
+                "category": "Famille",
+            },
+            title="Top 10 des facteurs explicatifs",
+        )
+        bar_fig.update_layout(yaxis_title="Variable", xaxis_title="Importance")
+        st.plotly_chart(bar_fig, use_container_width=True)
+
+        st.dataframe(
+            feature_contributions,
+            use_container_width=True,
+            column_config={
+                "importance": st.column_config.NumberColumn(
+                    "Importance", format="%.3f"
+                ),
+                "avg_shap": st.column_config.NumberColumn(
+                    "Impact moyen (SHAP)", format="%.3f"
+                ),
+                "description": st.column_config.TextColumn("Description"),
+            },
+            hide_index=True,
+        )
 
 
 with tab_details:

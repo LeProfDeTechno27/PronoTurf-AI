@@ -48,6 +48,28 @@ class SyntheticCourse:
     temperature: float
 
 
+@dataclass(frozen=True)
+class MonitoringDescriptor:
+    """Describe the configuration of a synthetic monitoring metric."""
+
+    metric: str
+    direction: str
+    target: float
+    base_value: float
+    comment: str
+
+
+@dataclass(frozen=True)
+class FeatureDescriptor:
+    """Capture information required to build feature contribution rows."""
+
+    feature: str
+    importance: float
+    impact: float
+    category: str
+    description: str
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data factories
 # ---------------------------------------------------------------------------
@@ -207,4 +229,178 @@ def list_available_filters() -> Dict[str, List[str]]:
         "disciplines": disciplines,
         "track_types": track_types,
     }
+
+
+def _iterate_monitoring_rows() -> Iterable[Dict[str, object]]:
+    """Yield synthetic monitoring snapshots for the quality dashboard."""
+
+    base_date = date.today() - timedelta(days=42)
+    sprints = ("Sprint 6", "Sprint 7", "Sprint 8")
+
+    descriptors: Tuple[MonitoringDescriptor, ...] = (
+        MonitoringDescriptor(
+            metric="Brier score",
+            direction="lower",
+            target=0.23,
+            base_value=0.245,
+            comment="Calibration des probabilités",
+        ),
+        MonitoringDescriptor(
+            metric="Log loss",
+            direction="lower",
+            target=0.68,
+            base_value=0.73,
+            comment="Qualité probabiliste globale",
+        ),
+        MonitoringDescriptor(
+            metric="Précision top 1",
+            direction="higher",
+            target=0.38,
+            base_value=0.34,
+            comment="Taux de gagnant principal",
+        ),
+        MonitoringDescriptor(
+            metric="Rappel top 3",
+            direction="higher",
+            target=0.72,
+            base_value=0.66,
+            comment="Couverture podium",
+        ),
+        MonitoringDescriptor(
+            metric="Cohen kappa",
+            direction="higher",
+            target=0.28,
+            base_value=0.22,
+            comment="Accord modèle vs réalité",
+        ),
+    )
+
+    for metric_index, descriptor in enumerate(descriptors):
+        for sprint_index, sprint in enumerate(sprints):
+            snapshot_date = base_date + timedelta(days=sprint_index * 14 + metric_index * 2)
+
+            if descriptor.direction == "lower":
+                value = descriptor.base_value - 0.01 * sprint_index
+                status = "Conforme" if value <= descriptor.target else "À surveiller"
+            else:
+                value = descriptor.base_value + 0.02 * sprint_index
+                status = "Conforme" if value >= descriptor.target else "À renforcer"
+
+            yield {
+                "metric": descriptor.metric,
+                "direction": descriptor.direction,
+                "target": round(descriptor.target, 3),
+                "value": round(value, 3),
+                "status": status,
+                "sprint": sprint,
+                "comment": descriptor.comment,
+                "snapshot_date": snapshot_date,
+            }
+
+
+def _build_feature_rows() -> List[Dict[str, object]]:
+    """Return a deterministic list of feature contribution insights."""
+
+    descriptors: Tuple[FeatureDescriptor, ...] = (
+        FeatureDescriptor(
+            "rating_model",
+            0.19,
+            0.28,
+            "Performance cheval",
+            "Score interne combinant historiques et forme",
+        ),
+        FeatureDescriptor(
+            "recent_form_index",
+            0.16,
+            0.24,
+            "Performance cheval",
+            "Indice de régularité sur 5 courses",
+        ),
+        FeatureDescriptor(
+            "trainer_win_rate",
+            0.14,
+            0.18,
+            "Entraîneur",
+            "Taux de victoire entraîneur 12 mois",
+        ),
+        FeatureDescriptor(
+            "jockey_win_rate",
+            0.12,
+            0.17,
+            "Jockey",
+            "Taux de victoire jockey 6 mois",
+        ),
+        FeatureDescriptor(
+            "odds_public",
+            0.10,
+            -0.08,
+            "Marché",
+            "Cote publique normalisée",
+        ),
+        FeatureDescriptor(
+            "draw_number",
+            0.08,
+            0.05,
+            "Course",
+            "Numéro de corde normalisé",
+        ),
+        FeatureDescriptor(
+            "rest_days",
+            0.07,
+            -0.04,
+            "Course",
+            "Jours depuis la dernière course",
+        ),
+        FeatureDescriptor(
+            "track_condition",
+            0.06,
+            0.09,
+            "Course",
+            "Indice synthétique d'état de piste",
+        ),
+        FeatureDescriptor(
+            "pace_projection",
+            0.05,
+            0.07,
+            "Course",
+            "Projection d'allure (rapide, moyen, lent)",
+        ),
+        FeatureDescriptor(
+            "value_edge",
+            0.03,
+            0.05,
+            "Marché",
+            "Différence probabilité modèle vs marché",
+        ),
+    )
+
+    return [
+        {
+            "feature": descriptor.feature,
+            "importance": round(descriptor.importance, 3),
+            "avg_shap": round(descriptor.impact, 3),
+            "category": descriptor.category,
+            "description": descriptor.description,
+        }
+        for descriptor in descriptors
+    ]
+
+
+def load_monitoring_snapshots() -> pd.DataFrame:
+    """Expose the monitoring snapshots used by the Streamlit monitoring tab."""
+
+    records = list(_iterate_monitoring_rows())
+    frame = pd.DataFrame.from_records(records)
+    frame.sort_values(["metric", "snapshot_date"], inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
+
+
+def load_feature_contributions() -> pd.DataFrame:
+    """Return feature contribution metrics mirroring SHAP aggregations."""
+
+    frame = pd.DataFrame.from_records(_build_feature_rows())
+    frame.sort_values("importance", ascending=False, inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
 
