@@ -614,6 +614,36 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         rel=1e-3,
     )
 
+    place_thresholds = metrics["place_probability_thresholds"]
+    assert place_thresholds["samples"] == 6
+    assert place_thresholds["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert place_thresholds["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    threshold_recommendations = place_thresholds["recommendations"]
+    assert threshold_recommendations["best_f1"]["threshold"] == pytest.approx(0.4, rel=1e-3)
+    assert threshold_recommendations["best_f1"]["f1"] == pytest.approx(1.0, rel=1e-6)
+    assert threshold_recommendations["maximize_precision"]["threshold"] == pytest.approx(
+        0.4, rel=1e-3
+    )
+    assert threshold_recommendations["maximize_recall"]["threshold"] == pytest.approx(
+        0.15, rel=1e-3
+    )
+    assert threshold_recommendations["base_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert threshold_recommendations["average_probability"] == pytest.approx(
+        0.5666666667,
+        rel=1e-3,
+    )
+    threshold_courses = {
+        entry["label"]: entry for entry in place_thresholds["per_course"]
+    }
+    assert threshold_courses["R1C1"]["above_threshold"] == 2
+    assert threshold_courses["R1C1"]["above_threshold_hit_rate"] == pytest.approx(1.0, rel=1e-6)
+    assert threshold_courses["R1C2"]["above_threshold_hits"] == 2
+    assert place_thresholds["selected_examples"][0]["probability"] == pytest.approx(
+        0.82, rel=1e-3
+    )
+    assert place_thresholds["false_positive_examples"] == []
+    assert place_thresholds["missed_positive_examples"] == []
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2690,6 +2720,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_distribution" in result
     assert "place_probability_gain_curve" in result
     assert "place_probability_calibration" in result
+    assert "place_probability_thresholds" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2697,6 +2728,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "horse_dam_performance" in result
     assert "topn_performance" in result
     assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
+    place_thresholds_result = result["place_probability_thresholds"]
+    assert place_thresholds_result["recommendations"]["best_f1"]["threshold"] == pytest.approx(
+        0.4, rel=1e-3
+    )
     with in_memory_session() as check_session:
         stored_model = check_session.query(MLModel).filter(MLModel.is_active.is_(True)).one()
         assert float(stored_model.accuracy) == pytest.approx(2 / 3, rel=1e-3)
@@ -2746,9 +2781,16 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         stored_place_distribution = stored_metrics["last_evaluation"]["metrics"]["place_probability_distribution"]
         stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
         stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"]["place_probability_gain_curve"]
+        stored_place_thresholds = stored_metrics["last_evaluation"]["metrics"]["place_probability_thresholds"]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
+        assert stored_place_thresholds["recommendations"]["best_f1"]["threshold"] == pytest.approx(
+            0.4, rel=1e-3
+        )
+        assert stored_place_thresholds["recommendations"]["base_positive_rate"] == pytest.approx(
+            2 / 3, rel=1e-3
+        )
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
@@ -2806,6 +2848,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "place_probability_calibration" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_distribution" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_gain_curve" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_thresholds" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
