@@ -144,6 +144,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Bai",
             breed="Pur-Sang",
             sire="Stallion Alpha",
+            dam="Mare Alpha",
         ),
         Horse(
             name="Cheval B",
@@ -153,6 +154,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Alezane",
             breed="Anglo-Arabe",
             sire="Stallion Alpha",
+            dam="Mare Alpha",
         ),
         Horse(
             name="Cheval C",
@@ -162,6 +164,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Bai brun",
             breed="Pur sang",
             sire="Stallion Brave",
+            dam="Mare Bravée",
         ),
         Horse(
             name="Cheval D",
@@ -171,6 +174,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Gris Pommelé",
             breed="Trotteur Français",
             sire="Stallion Brave",
+            dam="Mare Bravee",
         ),
         Horse(
             name="Cheval E",
@@ -180,6 +184,7 @@ def _seed_reference_data(db: Session) -> None:
             coat_color="Alezan brûlé",
             breed="AQPS",
             sire="Étalon Céleste",
+            dam="Mère Stella",
         ),
         Horse(name="Cheval F", gender=Gender.MALE),
     ]
@@ -444,6 +449,32 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
     assert metrics["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
 
+    probability_distribution = metrics["probability_distribution_metrics"]
+    overall_distribution = probability_distribution["overall"]
+    assert overall_distribution["count"] == 6
+    assert overall_distribution["average"] == pytest.approx(1 / 3, rel=1e-3)
+    assert overall_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert overall_distribution["p10"] == pytest.approx(0.20, rel=1e-3)
+    assert overall_distribution["p90"] == pytest.approx(0.475, rel=1e-3)
+    assert overall_distribution["std"] == pytest.approx(0.1247, rel=1e-3)
+
+    positive_distribution = probability_distribution["positives"]
+    assert positive_distribution["count"] == 4
+    assert positive_distribution["average"] == pytest.approx(0.3625, rel=1e-3)
+    assert positive_distribution["median"] == pytest.approx(0.325, rel=1e-3)
+    assert positive_distribution["min"] == pytest.approx(0.25, rel=1e-3)
+    assert positive_distribution["max"] == pytest.approx(0.55, rel=1e-3)
+
+    negative_distribution = probability_distribution["negatives"]
+    assert negative_distribution["count"] == 2
+    assert negative_distribution["average"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["median"] == pytest.approx(0.275, rel=1e-3)
+    assert negative_distribution["p10"] == pytest.approx(0.175, rel=1e-3)
+    assert negative_distribution["p90"] == pytest.approx(0.375, rel=1e-3)
+
+    assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+
     rank_correlation = metrics["rank_correlation_performance"]
     assert rank_correlation["tracked_courses"] == 2
     assert rank_correlation["evaluated_courses"] == 2
@@ -460,6 +491,36 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert detail_by_label["R1C1"]["runner_count"] == 3
     assert detail_by_label["R1C2"]["spearman"] == pytest.approx(-1.0, abs=1e-6)
     assert detail_by_label["R1C2"]["runner_count"] == 3
+
+    rank_error_metrics = metrics["rank_error_metrics"]
+    assert rank_error_metrics["tracked_courses"] == 2
+    assert rank_error_metrics["evaluated_courses"] == 2
+    assert rank_error_metrics["samples"] == 6
+    assert rank_error_metrics["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_metrics["median_absolute_error"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["rmse"] == pytest.approx((14 / 6) ** 0.5, rel=1e-3)
+    assert rank_error_metrics["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+    assert rank_error_metrics["perfect_predictions"] == 3
+    assert rank_error_metrics["perfect_share"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["average_bias"] == pytest.approx(-1 / 3, rel=1e-3)
+    details_by_label = {
+        detail["label"]: detail for detail in rank_error_metrics["course_details"].values()
+    }
+    assert details_by_label["R1C1"]["mean_absolute_error"] == pytest.approx(1 / 3, rel=1e-3)
+    assert details_by_label["R1C1"]["perfect_share"] == pytest.approx(2 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["mean_absolute_error"] == pytest.approx(5 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+
+    rank_error_distribution = metrics["rank_error_distribution"]
+    assert rank_error_distribution["rank_error_exact"]["samples"] == 3
+    assert rank_error_distribution["rank_error_exact"]["share"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_distribution["rank_error_exact"]["winner_rate"] == pytest.approx(1 / 3, rel=1e-3)
+    assert rank_error_distribution["rank_error_exact"]["course_share"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_one"]["average_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_one"]["median_signed_error"] == pytest.approx(-1.0, rel=1e-3)
+    assert rank_error_distribution["rank_error_two_three"]["samples"] == 2
+    assert rank_error_distribution["rank_error_two_three"]["average_signed_error"] == pytest.approx(-0.5, rel=1e-3)
+    assert rank_error_distribution["rank_error_two_three"]["top3_rate"] == pytest.approx(0.5, rel=1e-3)
 
     winner_rank_metrics = metrics["winner_rank_metrics"]
     assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
@@ -1481,6 +1542,41 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert tight_margin_segment["min_margin"] == pytest.approx(0.05, rel=1e-3)
     assert tight_margin_segment["max_margin"] == pytest.approx(0.05, rel=1e-3)
 
+    favourite_alignment = metrics["favourite_alignment_performance"]
+    assert set(favourite_alignment.keys()) == {"aligned", "divergent"}
+
+    aligned_segment = favourite_alignment["aligned"]
+    assert aligned_segment["label"] == "Favori modèle aligné sur les cotes PMU"
+    assert aligned_segment["courses"] == 1
+    assert aligned_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert aligned_segment["samples"] == 1
+    assert aligned_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["model_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["aligned_winner_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["average_model_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_probability"] == pytest.approx(0.55, rel=1e-3)
+    assert aligned_segment["average_pmu_odds"] == pytest.approx(3.0, rel=1e-3)
+    assert aligned_segment["average_probability_gap"] == pytest.approx(0.0, abs=1e-6)
+    assert aligned_segment["average_pmu_rank_in_model"] == pytest.approx(1.0, rel=1e-3)
+    assert aligned_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
+    divergent_segment = favourite_alignment["divergent"]
+    assert divergent_segment["label"] == "Favori modèle différent du PMU"
+    assert divergent_segment["courses"] == 1
+    assert divergent_segment["share"] == pytest.approx(0.5, rel=1e-3)
+    assert divergent_segment["samples"] == 1
+    assert divergent_segment["precision"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["model_win_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["pmu_win_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert divergent_segment["aligned_winner_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert divergent_segment["average_model_probability"] == pytest.approx(0.40, rel=1e-3)
+    assert divergent_segment["average_pmu_probability"] == pytest.approx(0.25, rel=1e-3)
+    assert divergent_segment["average_pmu_odds"] == pytest.approx(5.5, rel=1e-3)
+    assert divergent_segment["average_probability_gap"] == pytest.approx(0.15, rel=1e-3)
+    assert divergent_segment["average_pmu_rank_in_model"] == pytest.approx(3.0, rel=1e-3)
+    assert divergent_segment["pmu_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+
     horse_age_performance = metrics["horse_age_performance"]
     assert set(horse_age_performance.keys()) == {
         "experienced",
@@ -1675,6 +1771,54 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert unknown_sire_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
     assert unknown_sire_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
     assert unknown_sire_segment["input_examples"] == []
+
+    horse_dam_performance = metrics["horse_dam_performance"]
+    assert set(horse_dam_performance.keys()) == {
+        "mare_alpha",
+        "mare_bravee",
+        "mere_stella",
+        "unknown",
+    }
+
+    dam_alpha_segment = horse_dam_performance["mare_alpha"]
+    assert dam_alpha_segment["label"] == "Mare Alpha"
+    assert dam_alpha_segment["samples"] == 2
+    assert dam_alpha_segment["courses"] == 1
+    assert dam_alpha_segment["horses"] == 2
+    assert dam_alpha_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_alpha_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert dam_alpha_segment["input_examples"] == ["Mare Alpha"]
+
+    dam_bravee_segment = horse_dam_performance["mare_bravee"]
+    assert dam_bravee_segment["label"] == "Mare Bravee"
+    assert dam_bravee_segment["samples"] == 2
+    assert dam_bravee_segment["courses"] == 2
+    assert dam_bravee_segment["horses"] == 2
+    assert dam_bravee_segment["accuracy"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["observed_positive_rate"] == pytest.approx(0.5, rel=1e-3)
+    assert dam_bravee_segment["share"] == pytest.approx(2 / 6, rel=1e-3)
+    assert set(dam_bravee_segment["input_examples"]) == {"Mare Bravée", "Mare Bravee"}
+
+    dam_stella_segment = horse_dam_performance["mere_stella"]
+    assert dam_stella_segment["label"] == "Mère Stella"
+    assert dam_stella_segment["samples"] == 1
+    assert dam_stella_segment["courses"] == 1
+    assert dam_stella_segment["horses"] == 1
+    assert dam_stella_segment["accuracy"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["observed_positive_rate"] == pytest.approx(0.0, abs=1e-6)
+    assert dam_stella_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_stella_segment["input_examples"] == ["Mère Stella"]
+
+    dam_unknown_segment = horse_dam_performance["unknown"]
+    assert dam_unknown_segment["label"] == "Mère inconnue"
+    assert dam_unknown_segment["samples"] == 1
+    assert dam_unknown_segment["courses"] == 1
+    assert dam_unknown_segment["horses"] == 1
+    assert dam_unknown_segment["accuracy"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["observed_positive_rate"] == pytest.approx(1.0, rel=1e-3)
+    assert dam_unknown_segment["share"] == pytest.approx(1 / 6, rel=1e-3)
+    assert dam_unknown_segment["input_examples"] == []
 
     owner_performance = metrics["owner_performance"]
     assert set(owner_performance.keys()) == {
@@ -2247,12 +2391,29 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
         0.05, rel=1e-3
     )
+    assert "probability_distribution_metrics" in result
+    result_distribution = result["probability_distribution_metrics"]
+    assert result_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+    assert result_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+    assert result_distribution["overall"]["count"] == 6
+    assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
+    assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
+    assert result["favourite_alignment_performance"]["divergent"]["pmu_win_rate"] == pytest.approx(
+        1.0, rel=1e-3
+    )
     rank_breakdown = result["rank_correlation_performance"]
     assert rank_breakdown["evaluated_courses"] == 2
     assert rank_breakdown["best_spearman"] == pytest.approx(1.0, abs=1e-6)
     assert {
         detail["label"] for detail in rank_breakdown["course_details"].values()
     } == {"R1C1", "R1C2"}
+    rank_error_payload = result["rank_error_metrics"]
+    assert rank_error_payload["samples"] == 6
+    assert rank_error_payload["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert "rank_error_distribution" in result
+    assert result["rank_error_distribution"]["rank_error_exact"]["samples"] == 3
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -2263,12 +2424,15 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["horse_breed_performance"]["aqps"]["label"] == "AQPS"
     assert result["horse_sire_performance"]["stallion_alpha"]["samples"] == 2
     assert result["horse_sire_performance"]["unknown"]["label"] == "Père inconnu"
+    assert result["horse_dam_performance"]["mare_alpha"]["samples"] == 2
+    assert result["horse_dam_performance"]["unknown"]["label"] == "Mère inconnue"
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
     assert "horse_sire_performance" in result
+    assert "horse_dam_performance" in result
     assert "topn_performance" in result
     assert result["topn_performance"]["top2"]["coverage_rate"] == pytest.approx(1.0, rel=1e-3)
     with in_memory_session() as check_session:
@@ -2287,6 +2451,11 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
+        stored_probability_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "probability_distribution_metrics"
+        ]
+        assert stored_probability_distribution["overall"]["count"] == 6
+        assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
         stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
         assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_winner_rank["distribution"]["rank_1"] == 1
@@ -2294,19 +2463,40 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         sire_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_sire_performance"]
         assert sire_metrics["stallion_alpha"]["samples"] == 2
         assert sire_metrics["etalon_celeste"]["label"] == "Étalon Céleste"
+        dam_metrics = stored_metrics["last_evaluation"]["metrics"]["horse_dam_performance"]
+        assert dam_metrics["mare_alpha"]["samples"] == 2
+        assert dam_metrics["unknown"]["label"] == "Mère inconnue"
         stored_brier = stored_metrics["last_evaluation"]["metrics"]["brier_decomposition"]
         assert stored_brier["reliability"] == pytest.approx(0.24979, rel=1e-3)
         assert stored_brier["resolution"] == pytest.approx(0.13889, rel=1e-3)
         assert stored_brier["skill_score"] == pytest.approx(-0.395, rel=1e-3)
         assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top1"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top3"] == pytest.approx(1.0, rel=1e-3)
+        stored_rank_error_summary = stored_metrics["last_evaluation"]["rank_error_metrics"]
+        assert stored_rank_error_summary["samples"] == 6
+        assert stored_rank_error_summary["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+        stored_rank_error_distribution = stored_metrics["last_evaluation"][
+            "rank_error_distribution"
+        ]
+        assert stored_rank_error_distribution["rank_error_exact"]["samples"] == 3
         stored_topn_metrics = stored_metrics["last_evaluation"]["metrics"]["topn_performance"]
         assert stored_topn_metrics["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
         assert stored_topn_metrics["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
         stored_topn_summary = stored_metrics["last_evaluation"]["topn_performance"]
         assert stored_topn_summary["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+        assert "rank_error_metrics" in stored_metrics["last_evaluation"]["metrics"]
+        stored_rank_errors = stored_metrics["last_evaluation"]["metrics"]["rank_error_metrics"]
+        assert stored_rank_errors["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+        assert "rank_error_distribution" in stored_metrics["last_evaluation"]["metrics"]
+        stored_rank_error_metrics_distribution = stored_metrics["last_evaluation"]["metrics"][
+            "rank_error_distribution"
+        ]
+        assert (
+            stored_rank_error_metrics_distribution["rank_error_two_three"]["samples"] == 2
+        )
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
@@ -2320,6 +2510,8 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "probability_distribution_metrics" in stored_metrics["last_evaluation"]["metrics"]
+        assert "favourite_alignment_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "rank_correlation_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
@@ -2365,6 +2557,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "horse_gender_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_coat_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "horse_breed_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "horse_dam_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "value_bet_flag_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_category_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "race_class_performance" in stored_metrics["last_evaluation"]["metrics"]
