@@ -1877,6 +1877,116 @@ def _summarise_rank_correlation_performance(
     }
 
 
+def _summarise_rank_error_metrics(
+    rank_error_tracking: Dict[int, Dict[str, object]]
+) -> Dict[str, object]:
+    """Mesure l'écart de classement entre le modèle et l'arrivée officielle."""
+
+    tracked_courses = len(rank_error_tracking)
+    total_samples = 0
+    total_perfect = 0
+    absolute_errors_all: List[float] = []
+    squared_errors_all: List[float] = []
+    signed_errors_all: List[float] = []
+    course_details: Dict[str, Dict[str, object]] = {}
+
+    for course_id, payload in rank_error_tracking.items():
+        absolute_errors = [
+            float(value)
+            for value in payload.get("absolute_errors", [])
+            if value is not None
+        ]
+        if not absolute_errors:
+            continue
+
+        squared_errors = [
+            float(value)
+            for value in payload.get("squared_errors", [])
+            if value is not None
+        ]
+        if not squared_errors:
+            squared_errors = [error**2 for error in absolute_errors]
+
+        signed_errors = [
+            float(value)
+            for value in payload.get("signed_errors", [])
+            if value is not None
+        ]
+
+        samples = len(absolute_errors)
+        perfect_predictions = int(payload.get("perfect_predictions", 0))
+        runner_count = int(payload.get("runner_count", samples))
+
+        total_samples += samples
+        total_perfect += perfect_predictions
+        absolute_errors_all.extend(absolute_errors)
+        squared_errors_all.extend(squared_errors)
+        signed_errors_all.extend(signed_errors)
+
+        key = payload.get("key") or f"course_{course_id}"
+        label = payload.get("label") or key.replace("_", " ")
+
+        course_details[key] = {
+            "course_id": course_id,
+            "label": label,
+            "samples": samples,
+            "runner_count": runner_count,
+            "mean_absolute_error": sum(absolute_errors) / samples,
+            "median_absolute_error": float(median(absolute_errors)),
+            "max_absolute_error": max(absolute_errors),
+            "rmse": sqrt(sum(squared_errors) / samples),
+            "perfect_predictions": perfect_predictions,
+            "perfect_share": (perfect_predictions / samples) if samples else None,
+            "average_bias": (
+                sum(signed_errors) / samples if signed_errors else None
+            ),
+            "median_bias": (
+                float(median(signed_errors)) if signed_errors else None
+            ),
+        }
+
+    evaluated_courses = len(course_details)
+
+    if total_samples == 0:
+        return {
+            "tracked_courses": tracked_courses,
+            "evaluated_courses": evaluated_courses,
+            "courses_missing_results": tracked_courses - evaluated_courses,
+            "samples": 0,
+            "mean_absolute_error": None,
+            "median_absolute_error": None,
+            "rmse": None,
+            "max_absolute_error": None,
+            "perfect_predictions": 0,
+            "perfect_share": None,
+            "average_bias": None,
+            "median_bias": None,
+            "course_details": course_details,
+        }
+
+    return {
+        "tracked_courses": tracked_courses,
+        "evaluated_courses": evaluated_courses,
+        "courses_missing_results": tracked_courses - evaluated_courses,
+        "samples": total_samples,
+        "mean_absolute_error": sum(absolute_errors_all) / total_samples,
+        "median_absolute_error": float(median(absolute_errors_all)),
+        "rmse": sqrt(sum(squared_errors_all) / total_samples)
+        if squared_errors_all
+        else None,
+        "max_absolute_error": max(absolute_errors_all) if absolute_errors_all else None,
+        "perfect_predictions": total_perfect,
+        "perfect_share": total_perfect / total_samples,
+        "average_bias": (
+            sum(signed_errors_all) / total_samples if signed_errors_all else None
+        ),
+        "median_bias": (
+            float(median(signed_errors_all)) if signed_errors_all else None
+        ),
+        "course_details": course_details,
+    }
+
+
 def _categorise_experience_level(
     career_starts: Optional[object],
     *,
@@ -5981,6 +6091,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
         rank_correlation_tracking: Dict[int, Dict[str, object]] = {}
+        # Suit la précision du classement en termes d'écart absolu/signé entre
+        # le rang prédit et la position réelle des partants.
+        rank_error_tracking: Dict[int, Dict[str, object]] = {}
 
         # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
         # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
@@ -6220,7 +6333,15 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                 {
                     "predictions": [],
                     "value_bet_detected": bool(pronostic.value_bet_detected),
+                    "label": getattr(course, "course_name", None)
+                    or f"Course {getattr(course, 'course_number', course.course_id)}",
                 },
+            )
+
+            course_entry["label"] = (
+                getattr(course, "course_name", None)
+                or course_entry.get("label")
+                or f"Course {getattr(course, 'course_number', course.course_id)}"
             )
 
             course_entry["predictions"].append(
@@ -8032,7 +8153,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         top3_probabilities: List[float] = []
         winner_ranks: List[int] = []
 
-        for data in course_stats.values():
+        for course_id, data in course_stats.items():
             predictions = data["predictions"]  # type: ignore[assignment]
             sorted_predictions = sorted(
                 predictions, key=lambda item: item["probability"], reverse=True
@@ -8053,6 +8174,43 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     final_position_value = None
 
                 ranked_entries.append((item, final_position_value))
+
+            error_bucket = rank_error_tracking.setdefault(
+                course_id,
+                {
+                    "key": f"course_{course_id}",
+                    "label": data.get("label"),
+                    "absolute_errors": [],
+                    "squared_errors": [],
+                    "signed_errors": [],
+                    "samples": 0,
+                    "perfect_predictions": 0,
+                },
+            )
+            error_bucket["label"] = data.get("label") or error_bucket.get("label")
+            error_bucket["runner_count"] = len(ranked_entries)
+
+            for predicted_rank, (_, final_position_value) in enumerate(
+                ranked_entries, start=1
+            ):
+                if final_position_value is None:
+                    continue
+
+                absolute_error = abs(predicted_rank - final_position_value)
+                signed_error = predicted_rank - final_position_value
+
+                error_bucket.setdefault("absolute_errors", []).append(
+                    float(absolute_error)
+                )
+                error_bucket.setdefault("squared_errors", []).append(
+                    float(absolute_error**2)
+                )
+                error_bucket.setdefault("signed_errors", []).append(float(signed_error))
+                error_bucket["samples"] = error_bucket.get("samples", 0) + 1
+                if absolute_error == 0:
+                    error_bucket["perfect_predictions"] = (
+                        error_bucket.get("perfect_predictions", 0) + 1
+                    )
 
             # Conserve des indicateurs par panier Top N (Top 1 → Top 5) afin de
             # suivre la précision cumulative de la sélection du modèle.
@@ -8116,6 +8274,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
 
         winner_rank_metrics = _summarise_winner_rankings(winner_ranks, course_count)
         topn_performance = _summarise_topn_performance(topn_tracking, course_count)
+        rank_error_metrics = _summarise_rank_error_metrics(rank_error_tracking)
 
         calibration_table = _build_calibration_table(y_scores, y_true, bins=5)
         # Résume l'ampleur des écarts de calibration pour suivre un indicateur
@@ -8381,6 +8540,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "ndcg_at_5": _safe_average(ndcg_at_5_scores),
             "winner_rank_metrics": winner_rank_metrics,
             "topn_performance": topn_performance,
+            "rank_error_metrics": rank_error_metrics,
             "average_winner_probability": _safe_average(winner_probabilities),
             "average_top3_probability": _safe_average(top3_probabilities),
             "calibration_table": calibration_table,
@@ -8404,6 +8564,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_margin_performance": probability_margin_performance,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
+            "rank_error_metrics": rank_error_metrics,
             "prediction_outcome_performance": prediction_outcome_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
@@ -8490,6 +8651,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_margin_performance": probability_margin_performance,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
+            "rank_error_metrics": rank_error_metrics,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
@@ -8604,6 +8766,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_margin_performance": probability_margin_performance,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
+            "rank_error_metrics": rank_error_metrics,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,

@@ -466,6 +466,25 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert detail_by_label["R1C2"]["spearman"] == pytest.approx(-1.0, abs=1e-6)
     assert detail_by_label["R1C2"]["runner_count"] == 3
 
+    rank_error_metrics = metrics["rank_error_metrics"]
+    assert rank_error_metrics["tracked_courses"] == 2
+    assert rank_error_metrics["evaluated_courses"] == 2
+    assert rank_error_metrics["samples"] == 6
+    assert rank_error_metrics["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
+    assert rank_error_metrics["median_absolute_error"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["rmse"] == pytest.approx((14 / 6) ** 0.5, rel=1e-3)
+    assert rank_error_metrics["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+    assert rank_error_metrics["perfect_predictions"] == 3
+    assert rank_error_metrics["perfect_share"] == pytest.approx(0.5, rel=1e-3)
+    assert rank_error_metrics["average_bias"] == pytest.approx(-1 / 3, rel=1e-3)
+    details_by_label = {
+        detail["label"]: detail for detail in rank_error_metrics["course_details"].values()
+    }
+    assert details_by_label["R1C1"]["mean_absolute_error"] == pytest.approx(1 / 3, rel=1e-3)
+    assert details_by_label["R1C1"]["perfect_share"] == pytest.approx(2 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["mean_absolute_error"] == pytest.approx(5 / 3, rel=1e-3)
+    assert details_by_label["R1C2"]["max_absolute_error"] == pytest.approx(3.0, rel=1e-3)
+
     winner_rank_metrics = metrics["winner_rank_metrics"]
     assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
     assert winner_rank_metrics["median_rank"] == pytest.approx(2.0, rel=1e-3)
@@ -2348,6 +2367,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert {
         detail["label"] for detail in rank_breakdown["course_details"].values()
     } == {"R1C1", "R1C2"}
+    rank_error_payload = result["rank_error_metrics"]
+    assert rank_error_payload["samples"] == 6
+    assert rank_error_payload["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -2401,11 +2423,17 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_brier["skill_score"] == pytest.approx(-0.395, rel=1e-3)
         assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top1"] == pytest.approx(0.5, rel=1e-3)
         assert stored_metrics["last_evaluation"]["winner_rank_metrics"]["share_top3"] == pytest.approx(1.0, rel=1e-3)
+        stored_rank_error_summary = stored_metrics["last_evaluation"]["rank_error_metrics"]
+        assert stored_rank_error_summary["samples"] == 6
+        assert stored_rank_error_summary["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
         stored_topn_metrics = stored_metrics["last_evaluation"]["metrics"]["topn_performance"]
         assert stored_topn_metrics["top1"]["winner_hit_rate"] == pytest.approx(0.5, rel=1e-3)
         assert stored_topn_metrics["top3"]["winner_hit_rate"] == pytest.approx(1.0, rel=1e-3)
         stored_topn_summary = stored_metrics["last_evaluation"]["topn_performance"]
         assert stored_topn_summary["top2"]["top3_hit_rate"] == pytest.approx(1.0, rel=1e-3)
+        assert "rank_error_metrics" in stored_metrics["last_evaluation"]["metrics"]
+        stored_rank_errors = stored_metrics["last_evaluation"]["metrics"]["rank_error_metrics"]
+        assert stored_rank_errors["mean_absolute_error"] == pytest.approx(1.0, rel=1e-3)
         assert "confidence_level_metrics" in stored_metrics["last_evaluation"]
         assert "confidence_score_performance" in stored_metrics["last_evaluation"]
         assert "win_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
