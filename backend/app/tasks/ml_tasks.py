@@ -1707,6 +1707,90 @@ def _summarise_topn_performance(
     return summary
 
 
+def _compute_spearman_correlation(
+    predicted_probabilities: List[float],
+    finish_positions: List[int],
+) -> Optional[float]:
+    """Calcule la corrélation de Spearman entre le ranking prévu et l'arrivée."""
+
+    n = len(predicted_probabilities)
+    if n < 2 or n != len(finish_positions):
+        return None
+
+    # Classement du modèle : probabilité décroissante (0 -> favori).
+    predicted_ranks = [0] * n
+    for rank, index in enumerate(
+        sorted(range(n), key=lambda idx: (-predicted_probabilities[idx], idx)), start=1
+    ):
+        predicted_ranks[index] = rank
+
+    # Classement réel : position d'arrivée croissante (1 -> vainqueur).
+    actual_ranks = [0] * n
+    for rank, index in enumerate(
+        sorted(range(n), key=lambda idx: (finish_positions[idx], idx)), start=1
+    ):
+        actual_ranks[index] = rank
+
+    denominator = n * (n**2 - 1)
+    if denominator == 0:
+        return None
+
+    diff_squared = sum(
+        (predicted_ranks[idx] - actual_ranks[idx]) ** 2 for idx in range(n)
+    )
+    return 1 - (6 * diff_squared) / denominator
+
+
+def _summarise_rank_correlation_performance(
+    ranking_samples: Dict[int, Dict[str, object]]
+) -> Dict[str, object]:
+    """Synthétise la corrélation rang/pronostic par course et globalement."""
+
+    course_details: Dict[str, Dict[str, object]] = {}
+    spearman_scores: List[float] = []
+
+    for course_id, payload in ranking_samples.items():
+        probabilities = [
+            float(value)
+            for value in payload.get("probabilities", [])
+            if value is not None
+        ]
+        finish_positions = [
+            int(value)
+            for value in payload.get("finish_positions", [])
+            if value is not None
+        ]
+
+        correlation = _compute_spearman_correlation(probabilities, finish_positions)
+        if correlation is None:
+            continue
+
+        key = payload.get("key") or f"course_{course_id}"
+        label = payload.get("label") or key.replace("_", " ")
+
+        course_details[key] = {
+            "course_id": course_id,
+            "label": label,
+            "runner_count": len(probabilities),
+            "spearman": correlation,
+        }
+        spearman_scores.append(correlation)
+
+    evaluated_courses = len(spearman_scores)
+    tracked_courses = len(ranking_samples)
+
+    return {
+        "tracked_courses": tracked_courses,
+        "evaluated_courses": evaluated_courses,
+        "courses_missing_results": tracked_courses - evaluated_courses,
+        "average_spearman": _safe_average(spearman_scores),
+        "median_spearman": float(median(spearman_scores)) if spearman_scores else None,
+        "best_spearman": max(spearman_scores) if spearman_scores else None,
+        "worst_spearman": min(spearman_scores) if spearman_scores else None,
+        "course_details": course_details,
+    }
+
+
 def _categorise_experience_level(
     career_starts: Optional[object],
     *,
@@ -5645,6 +5729,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         final_position_breakdown: Dict[str, Dict[str, object]] = {}
         daily_breakdown: Dict[str, Dict[str, object]] = {}
         betting_samples: List[Dict[str, object]] = []
+        rank_correlation_tracking: Dict[int, Dict[str, object]] = {}
 
         # Parcourt chaque pronostic couplé à un résultat officiel pour préparer les listes
         # nécessaires aux métriques (labels réels, scores, version du modèle, etc.).
@@ -5653,6 +5738,24 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             probability = max(0.0, min(probability, 1.0))
             is_top3 = 1 if partant.final_position and partant.final_position <= 3 else 0
             predicted_label = 1 if probability >= probability_threshold else 0
+
+            correlation_bucket = rank_correlation_tracking.setdefault(
+                course.course_id,
+                {
+                    "key": f"course_{course.course_id}",
+                    "label": getattr(course, "course_name", None)
+                    or f"Course {getattr(course, 'course_number', '?')}",
+                    "probabilities": [],
+                    "finish_positions": [],
+                },
+            )
+            if getattr(course, "course_name", None):
+                correlation_bucket["label"] = str(course.course_name)
+            if getattr(partant, "final_position", None) is not None:
+                correlation_bucket.setdefault("probabilities", []).append(probability)
+                correlation_bucket.setdefault("finish_positions", []).append(
+                    int(partant.final_position)
+                )
 
             # Mesure l'écart absolu entre la probabilité annoncée et l'issue réelle
             # afin de piloter un tableau de bord de précision par bandes d'erreur.
@@ -7723,6 +7826,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         probability_margin_performance = _summarise_probability_margin_performance(
             probability_margin_breakdown
         )
+        rank_correlation_performance = _summarise_rank_correlation_performance(
+            rank_correlation_tracking
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -7886,6 +7992,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "daily_performance": daily_performance,
             "day_part_performance": day_part_performance,
@@ -7968,6 +8075,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,
@@ -8078,6 +8186,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "rank_correlation_performance": rank_correlation_performance,
             "prediction_outcome_performance": prediction_outcome_performance,
             "calibration_diagnostics": calibration_diagnostics,
             "threshold_recommendations": threshold_recommendations,

@@ -439,6 +439,23 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert metrics["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
     assert metrics["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
 
+    rank_correlation = metrics["rank_correlation_performance"]
+    assert rank_correlation["tracked_courses"] == 2
+    assert rank_correlation["evaluated_courses"] == 2
+    assert rank_correlation["courses_missing_results"] == 0
+    assert rank_correlation["average_spearman"] == pytest.approx(0.0, abs=1e-6)
+    assert rank_correlation["median_spearman"] == pytest.approx(0.0, abs=1e-6)
+    assert rank_correlation["best_spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert rank_correlation["worst_spearman"] == pytest.approx(-1.0, abs=1e-6)
+    assert len(rank_correlation["course_details"]) == 2
+    detail_by_label = {
+        detail["label"]: detail for detail in rank_correlation["course_details"].values()
+    }
+    assert detail_by_label["R1C1"]["spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert detail_by_label["R1C1"]["runner_count"] == 3
+    assert detail_by_label["R1C2"]["spearman"] == pytest.approx(-1.0, abs=1e-6)
+    assert detail_by_label["R1C2"]["runner_count"] == 3
+
     winner_rank_metrics = metrics["winner_rank_metrics"]
     assert winner_rank_metrics["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
     assert winner_rank_metrics["median_rank"] == pytest.approx(2.0, rel=1e-3)
@@ -2177,6 +2194,12 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert result["probability_margin_performance"]["margin_tight"]["average_margin"] == pytest.approx(
         0.05, rel=1e-3
     )
+    rank_breakdown = result["rank_correlation_performance"]
+    assert rank_breakdown["evaluated_courses"] == 2
+    assert rank_breakdown["best_spearman"] == pytest.approx(1.0, abs=1e-6)
+    assert {
+        detail["label"] for detail in rank_breakdown["course_details"].values()
+    } == {"R1C1", "R1C2"}
     assert result["equipment_performance"]["blinkers"]["samples"] == 2
     assert result["race_order_performance"]["early_card"]["samples"] == 3
     assert result["race_order_performance"]["late_card"]["average_course_number"] == pytest.approx(7.0, abs=1e-6)
@@ -2238,6 +2261,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "probability_edge_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_error_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "probability_margin_performance" in stored_metrics["last_evaluation"]["metrics"]
+        assert "rank_correlation_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "prediction_outcome_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "api_source_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "odds_alignment" in stored_metrics["last_evaluation"]["metrics"]
