@@ -346,6 +346,11 @@ def _seed_reference_data(db: Session) -> None:
             place_probability=Decimal("0.82"),
             predicted_position=1,
             confidence_level="high",
+            shap_contributions={
+                "draw_bias": "0.12",
+                "recent_form": "0.05",
+                "ground_state": "-0.02",
+            },
         ),
         PartantPrediction(
             pronostic_id=pronostic1.pronostic_id,
@@ -354,6 +359,11 @@ def _seed_reference_data(db: Session) -> None:
             place_probability=Decimal("0.68"),
             predicted_position=3,
             confidence_level="medium",
+            shap_values=[
+                {"feature": "draw_bias", "value": -0.03},
+                {"feature": "recent_form", "value": 0.01},
+                {"feature": "pace_projection", "value": 0.07},
+            ],
         ),
         PartantPrediction(
             pronostic_id=pronostic1.pronostic_id,
@@ -362,6 +372,7 @@ def _seed_reference_data(db: Session) -> None:
             place_probability=Decimal("0.28"),
             predicted_position=5,
             confidence_level="low",
+            shap_contributions='[{"feature": "draw_bias", "value": -0.08}, {"feature": "ground_state", "value": 0.02}]',
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
@@ -370,6 +381,7 @@ def _seed_reference_data(db: Session) -> None:
             place_probability=Decimal("0.74"),
             predicted_position=2,
             confidence_level="low",
+            shap_contributions={"pace_projection": 0.05, "distance_profile": -0.04},
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
@@ -378,6 +390,10 @@ def _seed_reference_data(db: Session) -> None:
             place_probability=Decimal("0.36"),
             predicted_position=6,
             confidence_level="medium",
+            shap_values=[
+                {"feature": "pace_projection", "value": -0.02},
+                {"feature": "ground_state", "value": 0.01},
+            ],
         ),
         PartantPrediction(
             pronostic_id=pronostic2.pronostic_id,
@@ -385,6 +401,7 @@ def _seed_reference_data(db: Session) -> None:
             win_probability=Decimal("0.35"),
             place_probability=Decimal("0.52"),
             confidence_level="medium",
+            shap_contributions={"draw_bias": 0.04, "distance_profile": -0.01},
         ),
     ]
     db.add_all(predictions)
@@ -479,6 +496,20 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
 
     assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
     assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
+
+    feature_summary = metrics["feature_contribution_summary"]
+    assert feature_summary["prediction_samples"] == 6
+    assert feature_summary["total_samples"] == 14
+    draw_feature = feature_summary["features"]["draw_bias"]
+    assert draw_feature["average_contribution"] == pytest.approx(0.0125, rel=1e-4)
+    assert draw_feature["average_absolute_contribution"] == pytest.approx(0.0675, rel=1e-4)
+    assert draw_feature["positive_share"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_feature["negative_share"] == pytest.approx(0.5, rel=1e-3)
+    assert draw_feature["max_contribution"] == pytest.approx(0.12, rel=1e-4)
+    assert draw_feature["min_contribution"] == pytest.approx(-0.08, rel=1e-4)
+    top_features = feature_summary["top_features"]
+    assert top_features[0]["feature"] == "draw_bias"
+    assert top_features[1]["feature"] == "pace_projection"
 
     rank_correlation = metrics["rank_correlation_performance"]
     assert rank_correlation["tracked_courses"] == 2
@@ -2504,6 +2535,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         ]
         assert stored_probability_distribution["overall"]["count"] == 6
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
+        stored_feature_summary = stored_metrics["last_evaluation"]["metrics"][
+            "feature_contribution_summary"
+        ]
+        assert stored_feature_summary["features"]["draw_bias"][
+            "average_absolute_contribution"
+        ] == pytest.approx(0.0675, rel=1e-4)
+        assert stored_feature_summary["top_features"][0]["feature"] == "draw_bias"
         stored_winner_rank = stored_metrics["last_evaluation"]["metrics"]["winner_rank_metrics"]
         assert stored_winner_rank["mean_reciprocal_rank"] == pytest.approx(2 / 3, rel=1e-3)
         assert stored_winner_rank["distribution"]["rank_1"] == 1

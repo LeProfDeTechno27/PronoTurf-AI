@@ -325,6 +325,82 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
+    """Calcule un percentile (0-1) par interpolation linéaire."""
+
+    if not sorted_values:
+        return None
+
+    # On borne explicitement la valeur demandée pour éviter les dépassements.
+    percentile = max(0.0, min(1.0, percentile))
+
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    position = percentile * (len(sorted_values) - 1)
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(sorted_values) - 1)
+    weight = position - lower_index
+
+    lower_value = float(sorted_values[lower_index])
+    upper_value = float(sorted_values[upper_index])
+    return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarise_probability_distribution(
+    truths: List[int], scores: List[float]
+) -> Dict[str, object]:
+    """Analyse la distribution des probabilités prédites et leur séparation.
+
+    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
+    - quelle est la dispersion des probabilités émises par le modèle ?
+    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
+      perdants ?
+    - quelle marge existe-t-il entre les médianes positives et négatives ?
+
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
+
     if not calibration_rows:
         return {
             "count": len(ordered),
@@ -1704,6 +1780,154 @@ def _summarise_probability_margin_performance(
         margin_metrics[segment] = summary
 
     return margin_metrics
+
+
+def _extract_feature_contributions(payload: Optional[object]) -> Dict[str, float]:
+    """Normalise une structure SHAP arbitraire en dictionnaire ``feature -> valeur``.
+
+    Les contributions peuvent provenir d'un dictionnaire natif, d'une liste de
+    dictionnaires (contenant les clés ``feature``/``value`` ou ``contribution``),
+    ou encore d'une chaîne JSON. Tous les éléments non convertibles en flottants
+    sont silencieusement ignorés afin de garantir la robustesse de l'agrégation.
+    """
+
+    if payload is None:
+        return {}
+
+    raw_data: object = payload
+
+    if isinstance(payload, str):
+        try:
+            raw_data = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+
+    contributions: Dict[str, float] = {}
+
+    if isinstance(raw_data, dict):
+        for key, value in raw_data.items():
+            try:
+                contributions[str(key)] = float(value)
+            except (TypeError, ValueError):  # pragma: no cover - sécurité parsing
+                continue
+        return contributions
+
+    if isinstance(raw_data, list):
+        for item in raw_data:
+            if not isinstance(item, dict):
+                continue
+
+            feature_name = item.get("feature") or item.get("name") or item.get("label")
+            if not feature_name:
+                continue
+
+            raw_value = (
+                item.get("value")
+                if item.get("value") is not None
+                else item.get("contribution")
+                if item.get("contribution") is not None
+                else item.get("impact")
+            )
+
+            if raw_value is None:
+                continue
+
+            try:
+                contributions[str(feature_name)] = float(raw_value)
+            except (TypeError, ValueError):  # pragma: no cover - valeurs non numériques
+                continue
+
+        return contributions
+
+    return {}
+
+
+def _summarise_feature_contribution_performance(
+    tracker: Dict[str, Dict[str, object]]
+) -> Dict[str, object]:
+    """Agrège les contributions SHAP pour identifier les leviers dominants.
+
+    Le résultat expose pour chaque feature la contribution moyenne, absolue,
+    la part d'occurrences positives/négatives ainsi que les extrêmes observés.
+    Une vue *top features* permet de prioriser les facteurs expliquant les
+    décisions du modèle sur la fenêtre analysée.
+    """
+
+    if not tracker:
+        return {
+            "total_samples": 0,
+            "prediction_samples": 0,
+            "features": {},
+            "top_features": [],
+        }
+
+    features_summary: Dict[str, Dict[str, object]] = {}
+    ranking: List[Dict[str, object]] = []
+    total_samples = 0
+    prediction_ids: Set[int] = set()
+
+    for feature, stats in tracker.items():
+        samples = int(stats.get("samples", 0))
+        if samples <= 0:
+            continue
+
+        total_samples += samples
+        prediction_ids.update(stats.get("predictions", set()))
+
+        total_contribution = float(stats.get("total_contribution", 0.0))
+        total_abs_contribution = float(stats.get("total_abs_contribution", 0.0))
+        positive_count = int(stats.get("positive_count", 0))
+        negative_count = int(stats.get("negative_count", 0))
+        neutral_count = max(0, samples - positive_count - negative_count)
+
+        average_contribution = total_contribution / samples
+        average_abs_contribution = total_abs_contribution / samples
+
+        summary_payload: Dict[str, object] = {
+            "samples": samples,
+            "average_contribution": average_contribution,
+            "average_absolute_contribution": average_abs_contribution,
+            "max_contribution": float(stats.get("max_contribution", 0.0)),
+            "min_contribution": float(stats.get("min_contribution", 0.0)),
+            "positive_share": positive_count / samples if samples else 0.0,
+            "negative_share": negative_count / samples if samples else 0.0,
+            "neutral_share": neutral_count / samples if samples else 0.0,
+            "courses": len(stats.get("courses", set())),
+            "horses": len(stats.get("horses", set())),
+            "pronostics": len(stats.get("pronostics", set())),
+        }
+
+        if average_contribution > 0.005:
+            summary_payload["dominant_direction"] = "positive"
+        elif average_contribution < -0.005:
+            summary_payload["dominant_direction"] = "negative"
+        else:
+            summary_payload["dominant_direction"] = "neutral"
+
+        features_summary[feature] = summary_payload
+
+        ranking.append(
+            {
+                "feature": feature,
+                "average_absolute_contribution": average_abs_contribution,
+                "average_contribution": average_contribution,
+                "samples": samples,
+            }
+        )
+
+    ordered_features = dict(sorted(features_summary.items(), key=lambda item: item[0]))
+    top_features = sorted(
+        ranking,
+        key=lambda item: (item["average_absolute_contribution"], item["samples"]),
+        reverse=True,
+    )[:10]
+
+    return {
+        "total_samples": total_samples,
+        "prediction_samples": len(prediction_ids),
+        "features": ordered_features,
+        "top_features": top_features,
+    }
 
 
 def _categorise_favourite_alignment(
@@ -6369,6 +6593,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         probability_edge_breakdown: Dict[str, Dict[str, object]] = {}
         probability_error_breakdown: Dict[str, Dict[str, object]] = {}
         probability_margin_breakdown: Dict[str, Dict[str, object]] = {}
+        feature_contribution_tracker: Dict[str, Dict[str, object]] = {}
         favourite_alignment_breakdown: Dict[str, Dict[str, object]] = {}
         horse_age_breakdown: Dict[str, Dict[str, object]] = {}
         horse_gender_breakdown: Dict[str, Dict[str, object]] = {}
@@ -6498,6 +6723,54 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
                     predicted_position_bucket.setdefault("rank_errors", []).append(
                         float(final_position_value - normalised_predicted_position)
                     )
+
+            shap_payload = getattr(prediction, "shap_contributions", None) or getattr(
+                prediction, "shap_values", None
+            )
+            shap_contributions = _extract_feature_contributions(shap_payload)
+            if shap_contributions:
+                for feature_name, contribution_value in shap_contributions.items():
+                    tracker_entry = feature_contribution_tracker.setdefault(
+                        feature_name,
+                        {
+                            "total_contribution": 0.0,
+                            "total_abs_contribution": 0.0,
+                            "samples": 0,
+                            "positive_count": 0,
+                            "negative_count": 0,
+                            "max_contribution": contribution_value,
+                            "min_contribution": contribution_value,
+                            "courses": set(),
+                            "horses": set(),
+                            "pronostics": set(),
+                            "predictions": set(),
+                        },
+                    )
+
+                    tracker_entry["total_contribution"] += contribution_value
+                    tracker_entry["total_abs_contribution"] += abs(contribution_value)
+                    tracker_entry["samples"] += 1
+                    if contribution_value > 0:
+                        tracker_entry["positive_count"] += 1
+                    elif contribution_value < 0:
+                        tracker_entry["negative_count"] += 1
+
+                    tracker_entry["max_contribution"] = max(
+                        tracker_entry.get("max_contribution", contribution_value),
+                        contribution_value,
+                    )
+                    tracker_entry["min_contribution"] = min(
+                        tracker_entry.get("min_contribution", contribution_value),
+                        contribution_value,
+                    )
+                    tracker_entry.setdefault("courses", set()).add(course.course_id)
+                    if getattr(partant, "horse_id", None) is not None:
+                        tracker_entry.setdefault("horses", set()).add(partant.horse_id)
+                    tracker_entry.setdefault("pronostics", set()).add(pronostic.pronostic_id)
+                    if getattr(prediction, "prediction_id", None) is not None:
+                        tracker_entry.setdefault("predictions", set()).add(
+                            prediction.prediction_id
+                        )
 
             correlation_bucket = rank_correlation_tracking.setdefault(
                 course.course_id,
@@ -8844,6 +9117,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         rank_correlation_performance = _summarise_rank_correlation_performance(
             rank_correlation_tracking
         )
+        feature_contribution_summary = _summarise_feature_contribution_performance(
+            feature_contribution_tracker
+        )
 
         daily_performance = _summarise_daily_performance(daily_breakdown)
         day_part_performance = _summarise_day_part_performance(day_part_breakdown)
@@ -9019,6 +9295,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "feature_contribution_summary": feature_contribution_summary,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "rank_error_metrics": rank_error_metrics,
@@ -9109,6 +9386,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "feature_contribution_summary": feature_contribution_summary,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "rank_error_metrics": rank_error_metrics,
@@ -9227,6 +9505,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
+            "feature_contribution_summary": feature_contribution_summary,
             "favourite_alignment_performance": favourite_alignment_performance,
             "rank_correlation_performance": rank_correlation_performance,
             "rank_error_metrics": rank_error_metrics,
