@@ -530,6 +530,65 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert place_calibration["most_overconfident_bins"][0]["label"] == "30-40%"
     assert place_calibration["most_underconfident_bins"][0]["label"] == "50-60%"
 
+    place_distribution = metrics["place_probability_distribution"]
+    assert place_distribution["samples"] == 6
+
+    overall_place_distribution = place_distribution["overall"]
+    assert overall_place_distribution["count"] == 6
+    assert overall_place_distribution["average"] == pytest.approx(0.5666666667, rel=1e-3)
+    assert overall_place_distribution["median"] == pytest.approx(0.6, rel=1e-3)
+    assert overall_place_distribution["min"] == pytest.approx(0.28, rel=1e-3)
+    assert overall_place_distribution["max"] == pytest.approx(0.82, rel=1e-3)
+    assert overall_place_distribution["p10"] == pytest.approx(0.32, rel=1e-3)
+    assert overall_place_distribution["p90"] == pytest.approx(0.78, rel=1e-3)
+    assert overall_place_distribution["std"] == pytest.approx(0.19754, rel=1e-3)
+
+    positive_place_distribution = place_distribution["positives"]
+    assert positive_place_distribution["count"] == 4
+    assert positive_place_distribution["average"] == pytest.approx(0.69, rel=1e-3)
+    assert positive_place_distribution["median"] == pytest.approx(0.71, rel=1e-3)
+    assert positive_place_distribution["p10"] == pytest.approx(0.568, rel=1e-3)
+    assert positive_place_distribution["p90"] == pytest.approx(0.796, rel=1e-3)
+    assert positive_place_distribution["std"] == pytest.approx(0.11, rel=1e-3)
+
+    negative_place_distribution = place_distribution["negatives"]
+    assert negative_place_distribution["count"] == 2
+    assert negative_place_distribution["average"] == pytest.approx(0.32, rel=1e-3)
+    assert negative_place_distribution["median"] == pytest.approx(0.32, rel=1e-3)
+    assert negative_place_distribution["p10"] == pytest.approx(0.288, rel=1e-3)
+    assert negative_place_distribution["p90"] == pytest.approx(0.352, rel=1e-3)
+    assert negative_place_distribution["std"] == pytest.approx(0.04, rel=1e-3)
+
+    assert place_distribution["average_gap"] == pytest.approx(0.37, rel=1e-3)
+    assert place_distribution["median_gap"] == pytest.approx(0.39, rel=1e-3)
+
+    per_course_distribution = place_distribution["per_course"]
+    assert len(per_course_distribution) == 2
+    course_labels = {entry["label"]: entry for entry in per_course_distribution}
+    r1c1_distribution = course_labels["R1C1"]
+    assert r1c1_distribution["samples"] == 3
+    assert r1c1_distribution["average_probability"] == pytest.approx(0.5933333333, rel=1e-3)
+    assert r1c1_distribution["median_probability"] == pytest.approx(0.68, rel=1e-3)
+    assert r1c1_distribution["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert r1c1_distribution["positive_samples"] == 2
+    assert r1c1_distribution["horses"] == 3
+    assert r1c1_distribution["pronostics"] == 1
+
+    top_predictions = place_distribution["top_predictions"]
+    assert [entry["probability"] for entry in top_predictions] == pytest.approx(
+        [0.82, 0.74, 0.68],
+        rel=1e-3,
+    )
+    assert top_predictions[0]["horse_name"] == "Cheval A"
+
+    surprising_winners = place_distribution["surprising_winners"]
+    assert surprising_winners[0]["probability"] == pytest.approx(0.52, rel=1e-3)
+    assert surprising_winners[0]["horse_name"] == "Cheval F"
+
+    surprising_losses = place_distribution["surprising_losses"]
+    assert surprising_losses[0]["probability"] == pytest.approx(0.36, rel=1e-3)
+    assert surprising_losses[0]["horse_name"] == "Cheval E"
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2603,6 +2662,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "win_probability_performance" in result
     assert "place_probability_performance" in result
     assert "place_probability_quality" in result
+    assert "place_probability_distribution" in result
     assert "place_probability_calibration" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
@@ -2657,7 +2717,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_place_quality["brier_score"] == pytest.approx(0.1068, rel=1e-3)
         assert stored_place_quality["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_quality["observed_positive_rate"] == pytest.approx(2 / 3, rel=1e-3)
+        stored_place_distribution = stored_metrics["last_evaluation"]["metrics"]["place_probability_distribution"]
         stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
+        assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
@@ -2714,6 +2776,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "place_probability_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_quality" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_calibration" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_distribution" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
