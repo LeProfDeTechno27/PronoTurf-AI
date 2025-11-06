@@ -385,88 +385,6 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
-def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
-    """Calcule un percentile (0-1) par interpolation linéaire."""
-
-    if not sorted_values:
-        return None
-
-    # On borne explicitement la valeur demandée pour éviter les dépassements.
-    percentile = max(0.0, min(1.0, percentile))
-
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
-    position = percentile * (len(sorted_values) - 1)
-    lower_index = int(position)
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-    weight = position - lower_index
-
-    lower_value = float(sorted_values[lower_index])
-    upper_value = float(sorted_values[upper_index])
-    return lower_value + (upper_value - lower_value) * weight
-
-
-def _summarise_probability_distribution(
-    truths: List[int], scores: List[float]
-) -> Dict[str, object]:
-    """Analyse la distribution des probabilités prédites et leur séparation.
-
-    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
-    - quelle est la dispersion des probabilités émises par le modèle ?
-    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
-      perdants ?
-    - quelle marge existe-t-il entre les médianes positives et négatives ?
-
-    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
-    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
-    des taux globaux stables.
-    """
-
-    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
-    cleaned_scores = [float(score) for score in scores if score is not None]
-    positives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 1
-    ]
-    negatives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 0
-    ]
-
-    def _build_stats(values: List[float]) -> Dict[str, object]:
-        """Construit les statistiques descriptives pour une liste de scores."""
-
-        if not values:
-            return {
-                "count": 0,
-                "average": None,
-                "median": None,
-                "p10": None,
-                "p90": None,
-                "min": None,
-                "max": None,
-                "std": None,
-            }
-
-        ordered = sorted(values)
-        mean_value = _safe_average(ordered)
-        std_value: Optional[float] = None
-        if mean_value is not None:
-            if len(ordered) == 1:
-                std_value = 0.0
-            else:
-                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
-                std_value = sqrt(variance)
-
-    # On borne explicitement la valeur demandée pour éviter les dépassements.
-    percentile = max(0.0, min(1.0, percentile))
-
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
     position = percentile * (len(sorted_values) - 1)
     lower_index = int(position)
     upper_index = min(lower_index + 1, len(sorted_values) - 1)
@@ -1840,6 +1758,202 @@ def _summarise_place_probability_thresholds(
         "false_positive_examples": false_positive_examples,
         "missed_positive_examples": missed_positive_examples,
     }
+
+def _summarise_place_probability_precision_recall(
+    samples: List[Dict[str, object]]
+) -> Dict[str, object]:
+    """Construit une lecture précision/rappel dédiée aux probabilités de place."""
+
+    empty_curve = {
+        "samples": 0,
+        "positives": 0,
+        "negatives": 0,
+        "average_precision": None,
+        "curve": [],
+        "best_point": None,
+        "high_precision_points": [],
+        "high_recall_points": [],
+        "recommended_threshold": None,
+        "examples_above_recommended_threshold": [],
+        "missed_positive_examples": [],
+    }
+
+    if (
+        not samples
+        or precision_recall_curve is None
+        or average_precision_score is None
+    ):
+        return empty_curve
+
+    cleaned_samples: List[Dict[str, object]] = []
+    probabilities: List[float] = []
+    outcomes: List[int] = []
+
+    for sample in samples:
+        try:
+            probability = float(sample.get("probability", 0.0))
+        except (TypeError, ValueError):  # pragma: no cover - robustesse saisie
+            probability = 0.0
+
+        probability = min(max(probability, 0.0), 1.0)
+        outcome = 1 if sample.get("outcome") else 0
+
+        probabilities.append(probability)
+        outcomes.append(outcome)
+
+        cleaned_samples.append(
+            {
+                "course": sample.get("course_label") or sample.get("course"),
+                "probability": probability,
+                "outcome": outcome,
+                "horse_name": sample.get("horse_name"),
+                "final_position": sample.get("final_position"),
+                "predicted_position": sample.get("predicted_position"),
+            }
+        )
+
+    if not probabilities or not outcomes:
+        return empty_curve
+
+    precision_values, recall_values, thresholds = precision_recall_curve(
+        outcomes,
+        probabilities,
+    )
+    average_precision_value = average_precision_score(outcomes, probabilities)
+
+    positives = sum(outcomes)
+    negatives = len(outcomes) - positives
+
+    curve: List[Dict[str, object]] = []
+    best_point: Optional[Dict[str, object]] = None
+
+    for idx, (precision_value, recall_value) in enumerate(
+        zip(precision_values, recall_values)
+    ):
+        is_sentinel = False
+        if idx == 0:
+            threshold_value: Optional[float] = None
+        elif idx == len(precision_values) - 1:
+            threshold_value = float("inf")
+            is_sentinel = True
+        else:
+            threshold_value = float(thresholds[idx - 1])
+
+        if threshold_value is None:
+            selected_samples = list(cleaned_samples)
+        elif is_sentinel:
+            selected_samples = []
+        else:
+            selected_samples = [
+                record
+                for record in cleaned_samples
+                if record["probability"] >= threshold_value
+            ]
+
+        support = len(selected_samples)
+        hits = sum(record["outcome"] for record in selected_samples)
+        f1_value: Optional[float] = None
+        if precision_value + recall_value > 0:
+            f1_value = (2 * precision_value * recall_value) / (
+                precision_value + recall_value
+            )
+
+        point = {
+            "precision": float(precision_value),
+            "recall": float(recall_value),
+            "threshold": (
+                None
+                if threshold_value in (None, float("inf"))
+                else float(threshold_value)
+            ),
+            "is_sentinel": is_sentinel,
+            "support": support,
+            "hits": hits,
+            "f1": f1_value,
+        }
+        curve.append(point)
+
+        if not is_sentinel and f1_value is not None:
+            if best_point is None or f1_value > best_point.get("f1", 0.0):
+                best_point = dict(point)
+
+    high_precision_points = [
+        dict(point)
+        for point in sorted(
+            (p for p in curve if not p.get("is_sentinel")),
+            key=lambda item: item.get("precision", 0.0),
+            reverse=True,
+        )[:3]
+    ]
+    high_recall_points = [
+        dict(point)
+        for point in sorted(
+            (p for p in curve if not p.get("is_sentinel")),
+            key=lambda item: item.get("recall", 0.0),
+            reverse=True,
+        )[:3]
+    ]
+
+    recommended_threshold: Optional[float] = None
+    if best_point and best_point.get("threshold") is not None:
+        recommended_threshold = float(best_point["threshold"])
+
+    def _format_example(record: Dict[str, object]) -> Dict[str, object]:
+        """Normalise l'affichage d'un échantillon autour d'un seuil."""
+
+        return {
+            "course": record.get("course"),
+            "probability": record.get("probability"),
+            "outcome": record.get("outcome"),
+            "horse_name": record.get("horse_name"),
+            "final_position": record.get("final_position"),
+            "predicted_position": record.get("predicted_position"),
+        }
+
+    examples_above_threshold: List[Dict[str, object]] = []
+    missed_positive_examples: List[Dict[str, object]] = []
+    if recommended_threshold is not None:
+        above_threshold_samples = [
+            record
+            for record in cleaned_samples
+            if record["probability"] >= recommended_threshold
+        ]
+        examples_above_threshold = [
+            _format_example(record)
+            for record in sorted(
+                above_threshold_samples,
+                key=lambda record: record["probability"],
+                reverse=True,
+            )[:3]
+        ]
+        missed_positive_examples = [
+            _format_example(record)
+            for record in sorted(
+                (
+                    sample
+                    for sample in cleaned_samples
+                    if sample["probability"] < recommended_threshold
+                    and sample["outcome"] == 1
+                ),
+                key=lambda record: record["probability"],
+                reverse=True,
+            )[:3]
+        ]
+
+    return {
+        "samples": len(probabilities),
+        "positives": positives,
+        "negatives": negatives,
+        "average_precision": average_precision_value,
+        "curve": curve,
+        "best_point": best_point,
+        "high_precision_points": high_precision_points,
+        "high_recall_points": high_recall_points,
+        "recommended_threshold": recommended_threshold,
+        "examples_above_recommended_threshold": examples_above_threshold,
+        "missed_positive_examples": missed_positive_examples,
+    }
+
 
 def _categorise_probability_sharpness(
     standard_deviation: Optional[float],
@@ -10446,6 +10560,11 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         place_probability_thresholds = _summarise_place_probability_thresholds(
             place_probability_samples,
         )
+        place_probability_precision_recall = (
+            _summarise_place_probability_precision_recall(
+                place_probability_samples
+            )
+        )
 
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
@@ -10932,6 +11051,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "place_probability_thresholds": place_probability_thresholds,
+            "place_probability_precision_recall": place_probability_precision_recall,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11030,6 +11150,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "place_probability_thresholds": place_probability_thresholds,
+            "place_probability_precision_recall": place_probability_precision_recall,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -11156,6 +11277,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "place_probability_gain_curve": place_probability_gain_curve,
             "place_probability_calibration": place_probability_calibration,
             "place_probability_thresholds": place_probability_thresholds,
+            "place_probability_precision_recall": place_probability_precision_recall,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,

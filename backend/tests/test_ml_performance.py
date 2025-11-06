@@ -644,6 +644,34 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert place_thresholds["false_positive_examples"] == []
     assert place_thresholds["missed_positive_examples"] == []
 
+    place_precision_recall = metrics["place_probability_precision_recall"]
+    assert place_precision_recall["samples"] == 6
+    assert place_precision_recall["positives"] == 4
+    assert place_precision_recall["negatives"] == 2
+    assert place_precision_recall["average_precision"] == pytest.approx(1.0, rel=1e-6)
+
+    pr_curve = place_precision_recall["curve"]
+    assert len(pr_curve) == 7
+    assert pr_curve[0]["support"] == 6
+    assert pr_curve[-1]["is_sentinel"] is True
+    assert pr_curve[-1]["support"] == 0
+
+    best_pr_point = place_precision_recall["best_point"]
+    assert best_pr_point["threshold"] == pytest.approx(0.36, rel=1e-3)
+    assert best_pr_point["precision"] == pytest.approx(1.0, rel=1e-6)
+    assert best_pr_point["recall"] == pytest.approx(1.0, rel=1e-6)
+
+    assert place_precision_recall["recommended_threshold"] == pytest.approx(
+        0.36, rel=1e-3
+    )
+
+    examples_above = place_precision_recall["examples_above_recommended_threshold"]
+    assert [example["probability"] for example in examples_above] == pytest.approx(
+        [0.82, 0.74, 0.68],
+        rel=1e-3,
+    )
+    assert place_precision_recall["missed_positive_examples"] == []
+
     entropy_metrics = metrics["probability_entropy_performance"]
 
     entropy_metrics = metrics["probability_entropy_performance"]
@@ -2721,6 +2749,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert "place_probability_gain_curve" in result
     assert "place_probability_calibration" in result
     assert "place_probability_thresholds" in result
+    assert "place_probability_precision_recall" in result
     assert "temperature_band_performance" in result
     assert "prediction_outcome_performance" in result
     assert "horse_breed_performance" in result
@@ -2782,6 +2811,9 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         stored_place_calibration = stored_metrics["last_evaluation"]["metrics"]["place_probability_calibration"]
         stored_place_gain_curve = stored_metrics["last_evaluation"]["metrics"]["place_probability_gain_curve"]
         stored_place_thresholds = stored_metrics["last_evaluation"]["metrics"]["place_probability_thresholds"]
+        stored_place_precision_recall = stored_metrics["last_evaluation"]["metrics"][
+            "place_probability_precision_recall"
+        ]
         assert stored_place_distribution["samples"] == 6
         assert stored_place_calibration["overall"]["average_probability"] == pytest.approx(0.5666666667, rel=1e-3)
         assert stored_place_gain_curve["best_step"]["capture_rate"] == pytest.approx(0.5, rel=1e-3)
@@ -2791,6 +2823,10 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_place_thresholds["recommendations"]["base_positive_rate"] == pytest.approx(
             2 / 3, rel=1e-3
         )
+        assert stored_place_precision_recall["recommended_threshold"] == pytest.approx(
+            0.36, rel=1e-3
+        )
+        assert stored_place_precision_recall["average_precision"] == pytest.approx(1.0, rel=1e-6)
         calibration_bins_stored = {entry["label"]: entry for entry in stored_place_calibration["bins"]}
         assert calibration_bins_stored["50-60%"]["calibration_gap"] == pytest.approx(-0.48, rel=1e-3)
         assert stored_probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
@@ -2849,6 +2885,7 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert "place_probability_distribution" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_gain_curve" in stored_metrics["last_evaluation"]["metrics"]
         assert "place_probability_thresholds" in stored_metrics["last_evaluation"]["metrics"]
+        assert "place_probability_precision_recall" in stored_metrics["last_evaluation"]["metrics"]
         assert "season_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "temperature_band_performance" in stored_metrics["last_evaluation"]["metrics"]
         assert "gain_curve" in stored_metrics["last_evaluation"]["metrics"]
