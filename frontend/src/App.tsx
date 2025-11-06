@@ -1,3 +1,7 @@
+// Copyright (c) 2025 PronoTurf AI. All rights reserved.
+// This source code is proprietary and confidential.
+// Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 import { Routes, Route } from 'react-router-dom'
 import Home from './pages/Home'
 import Login from './pages/Login'

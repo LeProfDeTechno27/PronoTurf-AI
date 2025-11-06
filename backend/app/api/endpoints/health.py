@@ -1,3 +1,7 @@
+# Copyright (c) 2025 PronoTurf AI. All rights reserved.
+# This source code is proprietary and confidential.
+# Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 """
 Router de healthcheck et test de connectivité
 Vérifie la santé de tous les services (API, MySQL, Redis)

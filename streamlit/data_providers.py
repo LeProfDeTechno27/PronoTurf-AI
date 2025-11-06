@@ -1,3 +1,7 @@
+# Copyright (c) 2025 PronoTurf AI. All rights reserved.
+# This source code is proprietary and confidential.
+# Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 """Utility helpers to provide analytical datasets for the Streamlit dashboard.
 
 The real PronoTurf backend will eventually expose dedicated API endpoints for

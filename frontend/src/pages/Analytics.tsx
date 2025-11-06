@@ -1,3 +1,7 @@
+// Copyright (c) 2025 PronoTurf AI. All rights reserved.
+// This source code is proprietary and confidential.
+// Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 import { FormEvent, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import analyticsService from '../services/analytics'

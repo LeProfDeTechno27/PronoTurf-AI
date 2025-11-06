@@ -1,3 +1,7 @@
+# Copyright (c) 2025 PronoTurf AI. All rights reserved.
+# This source code is proprietary and confidential.
+# Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
+
 """Endpoints REST pour exposer les statistiques enrichies Aspiturf."""
 
 from __future__ import annotations
@@ -2969,4 +2973,3 @@ async def get_course_analytics(
             date_end=target_date,
         ),
     )
-
