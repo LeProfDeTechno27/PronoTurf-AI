@@ -499,6 +499,32 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
     assert probability_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
     assert probability_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
 
+    entropy_metrics = metrics["probability_entropy_performance"]
+    assert entropy_metrics["samples"] == 2
+    overall_entropy = entropy_metrics["overall"]
+    assert overall_entropy["courses"] == 2
+    assert overall_entropy["average_entropy"] == pytest.approx(1.4824, rel=1e-3)
+    assert overall_entropy["average_normalised_entropy"] == pytest.approx(0.9353, rel=1e-3)
+    assert overall_entropy["min_normalised_entropy"] == pytest.approx(0.8871, rel=1e-3)
+    assert overall_entropy["max_normalised_entropy"] == pytest.approx(0.9835, rel=1e-3)
+
+    entropy_buckets = entropy_metrics["buckets"]
+    assert set(entropy_buckets.keys()) == {"diffuse"}
+    diffuse_bucket = entropy_buckets["diffuse"]
+    assert diffuse_bucket["samples"] == 2
+    assert diffuse_bucket["average_normalised_entropy"] == pytest.approx(0.9353, rel=1e-3)
+    assert diffuse_bucket["average_runner_count"] == pytest.approx(11.0, rel=1e-3)
+
+    confident_courses = entropy_metrics["most_confident_courses"]
+    assert confident_courses[0]["label"] == "R1C1"
+    assert confident_courses[0]["runner_count"] == 8
+    assert confident_courses[0]["normalised_entropy"] == pytest.approx(0.8871, rel=1e-3)
+
+    uncertain_courses = entropy_metrics["most_uncertain_courses"]
+    assert uncertain_courses[0]["label"] == "R1C2"
+    assert uncertain_courses[0]["runner_count"] == 14
+    assert uncertain_courses[0]["normalised_entropy"] == pytest.approx(0.9835, rel=1e-3)
+
     feature_summary = metrics["feature_contribution_summary"]
     assert feature_summary["prediction_samples"] == 6
     assert feature_summary["total_samples"] == 14
@@ -2473,10 +2499,13 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         0.05, rel=1e-3
     )
     assert "probability_distribution_metrics" in result
+    assert "probability_entropy_performance" in result
     result_distribution = result["probability_distribution_metrics"]
     assert result_distribution["average_gap"] == pytest.approx(0.0875, rel=1e-3)
     assert result_distribution["median_gap"] == pytest.approx(0.05, rel=1e-3)
     assert result_distribution["overall"]["count"] == 6
+    result_entropy = result["probability_entropy_performance"]
+    assert result_entropy["samples"] == 2
     assert set(result["favourite_alignment_performance"].keys()) == {"aligned", "divergent"}
     assert result["favourite_alignment_performance"]["aligned"]["model_win_rate"] == pytest.approx(
         1.0, rel=1e-3
@@ -2534,6 +2563,17 @@ def test_update_model_performance_with_results(in_memory_session: sessionmaker) 
         assert stored_metrics["last_evaluation"]["metrics"]["balanced_accuracy"] == pytest.approx(0.625, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_3"] == pytest.approx(0.8467, rel=1e-3)
         assert stored_metrics["last_evaluation"]["metrics"]["ndcg_at_5"] == pytest.approx(0.8467, rel=1e-3)
+        assert (
+            "probability_entropy_performance"
+            in stored_metrics["last_evaluation"]["metrics"]
+        )
+        stored_entropy_metrics = stored_metrics["last_evaluation"]["metrics"][
+            "probability_entropy_performance"
+        ]
+        assert stored_entropy_metrics["overall"]["average_normalised_entropy"] == pytest.approx(
+            0.9353, rel=1e-3
+        )
+
         stored_probability_distribution = stored_metrics["last_evaluation"]["metrics"][
             "probability_distribution_metrics"
         ]

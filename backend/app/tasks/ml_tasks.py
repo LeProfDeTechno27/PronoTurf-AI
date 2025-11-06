@@ -385,91 +385,6 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
-
-def _summarise_probability_distribution(
-    truths: List[int], scores: List[float]
-) -> Dict[str, object]:
-    """Analyse la distribution des probabilités prédites et leur séparation.
-
-    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
-    - quelle est la dispersion des probabilités émises par le modèle ?
-    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
-      perdants ?
-    - quelle marge existe-t-il entre les médianes positives et négatives ?
-
-    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
-    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
-    des taux globaux stables.
-    """
-
-    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
-    cleaned_scores = [float(score) for score in scores if score is not None]
-    positives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 1
-    ]
-    negatives = [
-        float(score)
-        for score, truth in zip(scores, truths)
-        if score is not None and int(truth) == 0
-    ]
-
-    def _build_stats(values: List[float]) -> Dict[str, object]:
-        """Construit les statistiques descriptives pour une liste de scores."""
-
-        if not values:
-            return {
-                "count": 0,
-                "average": None,
-                "median": None,
-                "p10": None,
-                "p90": None,
-                "min": None,
-                "max": None,
-                "std": None,
-            }
-
-        ordered = sorted(values)
-        mean_value = _safe_average(ordered)
-        std_value: Optional[float] = None
-        if mean_value is not None:
-            if len(ordered) == 1:
-                std_value = 0.0
-            else:
-                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
-                std_value = sqrt(variance)
-
-    if not sorted_values:
-        return None
-
-    # On borne explicitement la valeur demandée pour éviter les dépassements.
-    percentile = max(0.0, min(1.0, percentile))
-
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-
-    position = percentile * (len(sorted_values) - 1)
-    lower_index = int(position)
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-    weight = position - lower_index
-
-    lower_value = float(sorted_values[lower_index])
-    upper_value = float(sorted_values[upper_index])
-    return lower_value + (upper_value - lower_value) * weight
-
-
-def _summarise_probability_distribution(
-    truths: List[int], scores: List[float]
-) -> Dict[str, object]:
-    """Analyse la distribution des probabilités prédites et leur séparation.
-
-    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
-    - quelle est la dispersion des probabilités émises par le modèle ?
-    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
-      perdants ?
-    - quelle marge existe-t-il entre les médianes positives et négatives ?
-
     Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
     mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
     des taux globaux stables.
@@ -543,6 +458,209 @@ def _summarise_probability_distribution(
         "negatives": negative_stats,
         "average_gap": average_gap,
         "median_gap": median_gap,
+    }
+
+
+def _compute_entropy(probabilities: List[float]) -> Optional[float]:
+    """Calcule l'entropie de Shannon (base 2) pour une distribution donnée."""
+
+    if not probabilities:
+        return None
+
+    entropy = 0.0
+    for probability in probabilities:
+        if probability <= 0:
+            # Les probabilités nulles n'apportent aucune information et sont ignorées
+            continue
+        entropy -= probability * log2(probability)
+
+    return entropy
+
+
+def _categorise_entropy_level(
+    normalised_entropy: Optional[float],
+) -> Tuple[str, str]:
+    """Regroupe une entropie normalisée en segments lisibles pour les opérateurs."""
+
+    if normalised_entropy is None:
+        return "unknown", "Distribution indéterminée"
+
+    if normalised_entropy < 0.45:
+        return "focused", "Distribution très concentrée (<45\u202f%)"
+    if normalised_entropy < 0.70:
+        return "balanced", "Distribution équilibrée (45-70\u202f%)"
+    return "diffuse", "Distribution diffuse (\u2265\u202f70\u202f%)"
+
+
+def _summarise_probability_entropy(
+    course_stats: Dict[int, Dict[str, object]]
+) -> Dict[str, object]:
+    """Analyse la dispersion des probabilités par course et extrait des diagnostics."""
+
+    course_records: List[Dict[str, object]] = []
+
+    for course_id, payload in course_stats.items():
+        predictions = payload.get("predictions", [])
+        if not isinstance(predictions, list) or not predictions:
+            continue
+
+        cleaned_probabilities: List[float] = []
+        for entry in predictions:
+            probability = entry.get("probability")
+            if probability is None:
+                continue
+
+            try:
+                cleaned_probabilities.append(max(float(probability), 0.0))
+            except (TypeError, ValueError):  # pragma: no cover - sécurité sur données corrompues
+                continue
+
+        if not cleaned_probabilities:
+            continue
+
+        total_probability = sum(cleaned_probabilities)
+        if total_probability <= 0:
+            continue
+
+        normalised_probabilities = [
+            value / total_probability for value in cleaned_probabilities
+        ]
+
+        entropy = _compute_entropy(normalised_probabilities)
+        if entropy is None:
+            continue
+
+        declared_field_size: Optional[int] = None
+        field_size_raw = payload.get("field_size")
+        if field_size_raw is not None:
+            try:
+                declared_field_size = int(field_size_raw)
+            except (TypeError, ValueError):  # pragma: no cover - robustesse saisie
+                declared_field_size = None
+
+        predicted_runner_count = len(normalised_probabilities)
+        runner_reference = declared_field_size or predicted_runner_count
+
+        normalised_entropy: Optional[float] = None
+        if predicted_runner_count > 1:
+            max_entropy = log2(predicted_runner_count)
+            if max_entropy > 0:
+                normalised_entropy = entropy / max_entropy
+
+        probability_spread: Optional[float] = None
+        if normalised_probabilities:
+            probability_spread = max(normalised_probabilities) - min(
+                normalised_probabilities
+            )
+
+        course_records.append(
+            {
+                "course_id": int(course_id),
+                "label": str(payload.get("label") or f"Course {course_id}"),
+                "entropy": entropy,
+                "normalised_entropy": normalised_entropy,
+                "runner_count": runner_reference,
+                "predictions_evaluated": predicted_runner_count,
+                "probability_spread": probability_spread,
+            }
+        )
+
+    entropy_values = [record["entropy"] for record in course_records]
+    normalised_values = [
+        record["normalised_entropy"]
+        for record in course_records
+        if record["normalised_entropy"] is not None
+    ]
+
+    overall = {
+        "courses": len(course_records),
+        "average_entropy": _safe_average(entropy_values),
+        "average_normalised_entropy": _safe_average(normalised_values),
+        "min_entropy": min(entropy_values) if entropy_values else None,
+        "max_entropy": max(entropy_values) if entropy_values else None,
+        "min_normalised_entropy": min(normalised_values)
+        if normalised_values
+        else None,
+        "max_normalised_entropy": max(normalised_values)
+        if normalised_values
+        else None,
+    }
+
+    buckets: Dict[str, Dict[str, object]] = {}
+    for record in course_records:
+        bucket_key, bucket_label = _categorise_entropy_level(
+            record["normalised_entropy"]
+        )
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "label": bucket_label,
+                "entropies": [],
+                "normalised_entropies": [],
+                "runner_counts": [],
+                "courses": set(),
+            },
+        )
+        bucket["label"] = bucket_label
+        bucket.setdefault("entropies", []).append(record["entropy"])
+        if record["normalised_entropy"] is not None:
+            bucket.setdefault("normalised_entropies", []).append(
+                record["normalised_entropy"]
+            )
+        bucket.setdefault("runner_counts", []).append(float(record["runner_count"]))
+        bucket.setdefault("courses", set()).add(record["course_id"])
+
+    for bucket in buckets.values():
+        entropies = bucket.pop("entropies", [])
+        normalised = bucket.pop("normalised_entropies", [])
+        runner_counts = bucket.pop("runner_counts", [])
+        course_ids = bucket.get("courses", set())
+        bucket["samples"] = len(entropies)
+        bucket["average_entropy"] = _safe_average(entropies)
+        bucket["average_normalised_entropy"] = _safe_average(normalised)
+        bucket["min_normalised_entropy"] = min(normalised) if normalised else None
+        bucket["max_normalised_entropy"] = max(normalised) if normalised else None
+        bucket["average_runner_count"] = _safe_average(runner_counts)
+        bucket["courses"] = len(course_ids)
+
+    def _format_course_record(record: Dict[str, object]) -> Dict[str, object]:
+        """Structure les points saillants pour les tableaux de synthèse."""
+
+        return {
+            "course_id": record["course_id"],
+            "label": record["label"],
+            "runner_count": record["runner_count"],
+            "predictions_evaluated": record["predictions_evaluated"],
+            "entropy": record["entropy"],
+            "normalised_entropy": record["normalised_entropy"],
+            "probability_spread": record["probability_spread"],
+        }
+
+    most_confident_courses = sorted(
+        course_records,
+        key=lambda record: record["normalised_entropy"]
+        if record["normalised_entropy"] is not None
+        else float("inf"),
+    )[:3]
+
+    most_uncertain_courses = sorted(
+        course_records,
+        key=lambda record: record["normalised_entropy"]
+        if record["normalised_entropy"] is not None
+        else -1.0,
+        reverse=True,
+    )[:3]
+
+    return {
+        "samples": len(course_records),
+        "overall": overall,
+        "buckets": buckets,
+        "most_confident_courses": [
+            _format_course_record(record) for record in most_confident_courses
+        ],
+        "most_uncertain_courses": [
+            _format_course_record(record) for record in most_uncertain_courses
+        ],
     }
 
 
@@ -8937,6 +9055,9 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             y_true,
             y_scores,
         )
+        probability_entropy_performance = _summarise_probability_entropy(
+            course_stats
+        )
 
         course_count = len(course_stats)
         favourite_alignment_performance = _summarise_favourite_alignment_performance(
@@ -9386,6 +9507,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "average_positive_probability": avg_positive_prob,
             "average_negative_probability": avg_negative_prob,
             "probability_distribution_metrics": probability_distribution_metrics,
+            "probability_entropy_performance": probability_entropy_performance,
             "top1_accuracy": top1_correct / course_count if course_count else None,
             "course_top3_hit_rate": top3_course_hits / course_count if course_count else None,
             "ndcg_at_3": _safe_average(ndcg_at_3_scores),
@@ -9501,6 +9623,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "probability_distribution_metrics": probability_distribution_metrics,
+            "probability_entropy_performance": probability_entropy_performance,
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
             "probability_edge_performance": probability_edge_performance,
@@ -9619,6 +9742,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "confidence_level_metrics": confidence_level_metrics,
             "confidence_score_performance": confidence_score_performance,
             "probability_distribution_metrics": probability_distribution_metrics,
+            "probability_entropy_performance": probability_entropy_performance,
             "topn_performance": topn_performance,
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
