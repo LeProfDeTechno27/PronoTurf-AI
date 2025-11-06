@@ -385,6 +385,82 @@ def _summarise_probability_distribution(
                 variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
                 std_value = sqrt(variance)
 
+def _compute_percentile(sorted_values: List[float], percentile: float) -> Optional[float]:
+    """Calcule un percentile (0-1) par interpolation linéaire."""
+
+    if not sorted_values:
+        return None
+
+    # On borne explicitement la valeur demandée pour éviter les dépassements.
+    percentile = max(0.0, min(1.0, percentile))
+
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    position = percentile * (len(sorted_values) - 1)
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(sorted_values) - 1)
+    weight = position - lower_index
+
+    lower_value = float(sorted_values[lower_index])
+    upper_value = float(sorted_values[upper_index])
+    return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarise_probability_distribution(
+    truths: List[int], scores: List[float]
+) -> Dict[str, object]:
+    """Analyse la distribution des probabilités prédites et leur séparation.
+
+    L'objectif est d'offrir un diagnostic rapide de la calibration globale :
+    - quelle est la dispersion des probabilités émises par le modèle ?
+    - les gagnants observés reçoivent-ils des scores nettement supérieurs aux
+      perdants ?
+    - quelle marge existe-t-il entre les médianes positives et négatives ?
+
+    Ces éléments complètent les métriques agrégées (précision, rappel, Brier) en
+    mettant en évidence d'éventuels recouvrements entre gagnants/perdants malgré
+    des taux globaux stables.
+    """
+
+    # Conversion défensive : certaines valeurs peuvent provenir de ``Decimal``.
+    cleaned_scores = [float(score) for score in scores if score is not None]
+    positives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 1
+    ]
+    negatives = [
+        float(score)
+        for score, truth in zip(scores, truths)
+        if score is not None and int(truth) == 0
+    ]
+
+    def _build_stats(values: List[float]) -> Dict[str, object]:
+        """Construit les statistiques descriptives pour une liste de scores."""
+
+        if not values:
+            return {
+                "count": 0,
+                "average": None,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "min": None,
+                "max": None,
+                "std": None,
+            }
+
+        ordered = sorted(values)
+        mean_value = _safe_average(ordered)
+        std_value: Optional[float] = None
+        if mean_value is not None:
+            if len(ordered) == 1:
+                std_value = 0.0
+            else:
+                variance = sum((value - mean_value) ** 2 for value in ordered) / len(ordered)
+                std_value = sqrt(variance)
+
     if not calibration_rows:
         return {
             "count": len(ordered),
@@ -810,6 +886,195 @@ def _summarise_place_probability_quality(
             _format_sample(record) for record in underconfident_predictions
         ],
         "per_course": per_course_summary,
+    }
+
+
+def _build_place_probability_calibration_curve(
+    samples: List[Dict[str, object]],
+    buckets: int = 10,
+) -> Dict[str, object]:
+    """Construit une courbe de calibration dédiée aux probabilités de place.
+
+    Cette vue complète les diagnostics globaux en répartissant les échantillons
+    par bandes homogènes de probabilité afin de comparer la probabilité
+    moyenne annoncée et la fréquence réelle d'arrivée dans les trois premiers.
+    """
+
+    if not samples or buckets <= 0:
+        return {
+            "samples": 0,
+            "overall": {
+                "average_probability": None,
+                "observed_positive_rate": None,
+                "average_calibration_gap": None,
+                "brier_score": None,
+                "rmse": None,
+            },
+            "bins": [],
+            "most_overconfident_bins": [],
+            "most_underconfident_bins": [],
+        }
+
+    bucket_payloads: Dict[int, Dict[str, object]] = {}
+    all_probabilities: List[float] = []
+    all_outcomes: List[int] = []
+
+    for sample in samples:
+        try:
+            raw_probability = float(sample.get("probability", 0.0))
+        except (TypeError, ValueError):  # pragma: no cover - robustesse entrée
+            raw_probability = 0.0
+
+        probability = min(max(raw_probability, 0.0), 1.0)
+        outcome = 1 if sample.get("outcome") else 0
+        bucket_index = min(int(probability * buckets), buckets - 1)
+        bucket = bucket_payloads.setdefault(
+            bucket_index,
+            {
+                "probabilities": [],
+                "outcomes": [],
+                "courses": set(),
+                "pronostics": set(),
+                "horses": set(),
+                "examples": [],
+            },
+        )
+
+        bucket.setdefault("lower_bound", bucket_index / buckets)
+        bucket.setdefault("upper_bound", (bucket_index + 1) / buckets)
+        bucket["probabilities"].append(probability)
+        bucket["outcomes"].append(outcome)
+
+        course_id = sample.get("course_id")
+        if course_id is not None:
+            bucket.setdefault("courses", set()).add(int(course_id))
+
+        pronostic_id = sample.get("pronostic_id")
+        if pronostic_id is not None:
+            bucket.setdefault("pronostics", set()).add(int(pronostic_id))
+
+        horse_id = sample.get("horse_id")
+        if horse_id is not None:
+            try:
+                bucket.setdefault("horses", set()).add(int(horse_id))
+            except (TypeError, ValueError):  # pragma: no cover - robustesse
+                pass
+
+        if len(bucket["examples"]) < 3:
+            bucket.setdefault("examples", []).append(
+                {
+                    "course": sample.get("course_label"),
+                    "probability": probability,
+                    "outcome": outcome,
+                    "horse_name": sample.get("horse_name"),
+                    "model_version": sample.get("model_version"),
+                }
+            )
+
+        all_probabilities.append(probability)
+        all_outcomes.append(outcome)
+
+    def _format_bin(index: int, payload: Dict[str, object]) -> Dict[str, object]:
+        """Structure une ligne de calibration pour faciliter la lecture."""
+
+        probabilities = payload.pop("probabilities", [])
+        outcomes = payload.pop("outcomes", [])
+        sample_size = len(probabilities)
+
+        average_probability = _safe_average(probabilities)
+        observed_rate = _safe_average(outcomes)
+        calibration_gap: Optional[float] = None
+        if average_probability is not None and observed_rate is not None:
+            calibration_gap = average_probability - observed_rate
+
+        squared_errors = [(prob - outcome) ** 2 for prob, outcome in zip(probabilities, outcomes)]
+        brier = sum(squared_errors) / sample_size if sample_size else None
+        rmse = sqrt(sum(squared_errors) / sample_size) if sample_size else None
+
+        if probabilities and log_loss is not None:
+            clipped = [min(max(value, 1e-15), 1 - 1e-15) for value in probabilities]
+            try:
+                bin_log_loss = log_loss(outcomes, clipped, labels=[0, 1])
+            except ValueError:  # pragma: no cover - classe unique
+                bin_log_loss = None
+        else:
+            bin_log_loss = None
+
+        lower_bound = payload.get("lower_bound", index / buckets)
+        upper_bound = payload.get("upper_bound", (index + 1) / buckets)
+        lower_percent = int(round(lower_bound * 100))
+        upper_percent = int(round(upper_bound * 100))
+        label = f"{lower_percent:02d}-{upper_percent:02d}%"
+
+        courses = payload.get("courses", set())
+        pronostics = payload.get("pronostics", set())
+        horses = payload.get("horses", set())
+
+        return {
+            "index": index,
+            "label": label,
+            "lower_bound": lower_bound,
+            "upper_bound": upper_bound,
+            "samples": sample_size,
+            "average_probability": average_probability,
+            "observed_positive_rate": observed_rate,
+            "calibration_gap": calibration_gap,
+            "brier_score": brier,
+            "rmse": rmse,
+            "log_loss": bin_log_loss,
+            "courses": len(courses) if isinstance(courses, set) else 0,
+            "pronostics": len(pronostics) if isinstance(pronostics, set) else 0,
+            "horses": len(horses) if isinstance(horses, set) else 0,
+            "examples": payload.get("examples", [])[:3],
+        }
+
+    bin_records = [
+        _format_bin(index, payload)
+        for index, payload in sorted(bucket_payloads.items())
+    ]
+
+    overall_squared_errors = [
+        (probability - outcome) ** 2
+        for probability, outcome in zip(all_probabilities, all_outcomes)
+    ]
+    sample_count = len(all_probabilities)
+    overall_average = _safe_average(all_probabilities)
+    overall_observed = _safe_average(all_outcomes)
+    overall_gap: Optional[float] = None
+    if overall_average is not None and overall_observed is not None:
+        overall_gap = overall_average - overall_observed
+
+    overall_summary = {
+        "average_probability": overall_average,
+        "observed_positive_rate": overall_observed,
+        "average_calibration_gap": overall_gap,
+        "brier_score": sum(overall_squared_errors) / sample_count if sample_count else None,
+        "rmse": sqrt(sum(overall_squared_errors) / sample_count) if sample_count else None,
+    }
+
+    overconfident_bins = [
+        record
+        for record in bin_records
+        if record.get("calibration_gap") is not None and record["calibration_gap"] > 0
+    ]
+    overconfident_bins.sort(
+        key=lambda record: record.get("calibration_gap", 0.0),
+        reverse=True,
+    )
+
+    underconfident_bins = [
+        record
+        for record in bin_records
+        if record.get("calibration_gap") is not None and record["calibration_gap"] < 0
+    ]
+    underconfident_bins.sort(key=lambda record: record.get("calibration_gap", 0.0))
+
+    return {
+        "samples": sample_count,
+        "overall": overall_summary,
+        "bins": bin_records,
+        "most_overconfident_bins": overconfident_bins[:3],
+        "most_underconfident_bins": underconfident_bins[:3],
     }
 
 
@@ -9703,6 +9968,10 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
         probability_margin_performance = _summarise_probability_margin_performance(
             probability_margin_breakdown
         )
+        place_probability_calibration = _build_place_probability_calibration_curve(
+            place_probability_samples,
+            buckets=10,
+        )
         rank_correlation_performance = _summarise_rank_correlation_performance(
             rank_correlation_tracking
         )
@@ -9886,6 +10155,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
             "place_probability_quality": place_probability_quality,
+            "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -9980,6 +10250,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "win_probability_performance": win_probability_performance,
             "place_probability_performance": place_probability_performance,
             "place_probability_quality": place_probability_quality,
+            "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
@@ -10102,6 +10373,7 @@ def update_model_performance(days_back: int = 7, probability_threshold: float = 
             "win_probability_performance": win_probability_performance,
             "place_probability_quality": place_probability_quality,
             "place_probability_performance": place_probability_performance,
+            "place_probability_calibration": place_probability_calibration,
             "probability_edge_performance": probability_edge_performance,
             "probability_error_performance": probability_error_performance,
             "probability_margin_performance": probability_margin_performance,
