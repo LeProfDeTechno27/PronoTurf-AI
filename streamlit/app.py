@@ -28,6 +28,8 @@ import streamlit as st
 from data_providers import (
     list_available_filters,
     load_bet_history,
+    load_data_drift_metrics,
+    load_data_quality_checks,
     load_feature_contributions,
     load_monitoring_snapshots,
     load_predictions,
@@ -100,6 +102,20 @@ def get_feature_contributions() -> pd.DataFrame:
     """Charge les contributions moyennes des variables explicatives."""
 
     return load_feature_contributions()
+
+
+@st.cache_data(show_spinner=False)
+def get_data_quality_checks() -> pd.DataFrame:
+    """Charge les alertes qualité de données synthétiques."""
+
+    return load_data_quality_checks()
+
+
+@st.cache_data(show_spinner=False)
+def get_data_drift_metrics() -> pd.DataFrame:
+    """Charge les diagnostics de drift de données synthétiques."""
+
+    return load_data_drift_metrics()
 
 
 def _filter_by_period(df: pd.DataFrame, period: PeriodDefinition) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -274,6 +290,8 @@ predictions = get_predictions()
 filters = list_available_filters()
 monitoring_snapshots = get_monitoring_snapshots()
 feature_contributions = get_feature_contributions()
+data_quality_checks = get_data_quality_checks()
+data_drift_metrics = get_data_drift_metrics()
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +690,89 @@ with tab_monitoring:
                     "Impact moyen (SHAP)", format="%.3f"
                 ),
                 "description": st.column_config.TextColumn("Description"),
+            },
+            hide_index=True,
+        )
+
+    st.markdown("### Qualité des données & pipelines")
+
+    if data_quality_checks.empty:
+        st.success("Aucun incident de données détecté sur la période analysée.")
+    else:
+        severity_order = ["Critique", "Majeure", "Mineure"]
+        severity_counts = (
+            data_quality_checks.groupby("severity")["check"].count()
+            .reindex(severity_order, fill_value=0)
+        )
+        severity_icons = {"Critique": "🔥", "Majeure": "⚠️", "Mineure": "ℹ️"}
+
+        col_sev1, col_sev2, col_sev3 = st.columns(3)
+        for column, severity in zip((col_sev1, col_sev2, col_sev3), severity_order):
+            with column:
+                st.metric(
+                    label=f"{severity_icons[severity]} {severity}",
+                    value=int(severity_counts[severity]),
+                )
+
+        st.dataframe(
+            data_quality_checks,
+            use_container_width=True,
+            column_config={
+                "check": st.column_config.TextColumn("Contrôle"),
+                "severity": st.column_config.TextColumn("Sévérité"),
+                "status": st.column_config.TextColumn("Statut"),
+                "impacted_rows": st.column_config.NumberColumn(
+                    "Lignes impactées", format="%d"
+                ),
+                "recommendation": st.column_config.TextColumn("Action recommandée"),
+                "last_seen": st.column_config.DateColumn("Dernière occurrence"),
+            },
+            hide_index=True,
+        )
+
+    st.markdown("### Surveillance du drift de données")
+
+    if data_drift_metrics.empty:
+        st.success("Aucun drift détecté sur la fenêtre de 14 jours suivie.")
+    else:
+        drift_fig = px.bar(
+            data_drift_metrics,
+            x="drift_score",
+            y="feature",
+            color="status",
+            orientation="h",
+            labels={
+                "drift_score": "Score de drift (PSI)",
+                "feature": "Variable surveillée",
+                "status": "Statut",
+            },
+            title="Priorisation des variables en drift",
+        )
+        drift_fig.update_layout(
+            xaxis_title="Score de drift",
+            yaxis_title="Variable surveillée",
+            legend_title="Statut",
+        )
+        st.plotly_chart(drift_fig, use_container_width=True)
+
+        st.dataframe(
+            data_drift_metrics,
+            use_container_width=True,
+            column_config={
+                "drift_score": st.column_config.NumberColumn(
+                    "Score de drift", format="%.2f"
+                ),
+                "p_value": st.column_config.NumberColumn("p-value", format="%.3f"),
+                "status": st.column_config.TextColumn("Statut"),
+                "reference_mean": st.column_config.NumberColumn(
+                    "Moyenne référence", format="%.3f"
+                ),
+                "current_mean": st.column_config.NumberColumn(
+                    "Moyenne actuelle", format="%.3f"
+                ),
+                "comment": st.column_config.TextColumn("Commentaire"),
+                "window_start": st.column_config.DateColumn("Début fenêtre"),
+                "window_end": st.column_config.DateColumn("Fin fenêtre"),
             },
             hide_index=True,
         )

@@ -70,6 +70,31 @@ class FeatureDescriptor:
     description: str
 
 
+@dataclass(frozen=True)
+class DataQualityDescriptor:
+    """Describe a synthetic data-quality alert surfaced by monitoring."""
+
+    check: str
+    severity: str
+    status: str
+    impacted_rows: int
+    recommendation: str
+    days_since_seen: int
+
+
+@dataclass(frozen=True)
+class DriftDescriptor:
+    """Represent a monitored feature in the drift surveillance dataset."""
+
+    feature: str
+    drift_score: float
+    p_value: float
+    status: str
+    reference_mean: float
+    current_mean: float
+    comment: str
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data factories
 # ---------------------------------------------------------------------------
@@ -403,4 +428,149 @@ def load_feature_contributions() -> pd.DataFrame:
     frame.sort_values("importance", ascending=False, inplace=True)
     frame.reset_index(drop=True, inplace=True)
     return frame
+
+
+def _build_data_quality_rows() -> List[Dict[str, object]]:
+    """Construct deterministic data quality alerts for the monitoring UI."""
+
+    descriptors: Tuple[DataQualityDescriptor, ...] = (
+        DataQualityDescriptor(
+            check="Données courses incomplètes",
+            severity="Critique",
+            status="Investigation en cours",
+            impacted_rows=8,
+            recommendation="Relancer l'ingestion PMU et combler les écarts manuels",
+            days_since_seen=1,
+        ),
+        DataQualityDescriptor(
+            check="Temps intermédiaires manquants",
+            severity="Majeure",
+            status="Correctif planifié",
+            impacted_rows=24,
+            recommendation="Aligner le mapping API pour capturer les temps partiels",
+            days_since_seen=3,
+        ),
+        DataQualityDescriptor(
+            check="Chevaux dupliqués",
+            severity="Majeure",
+            status="Résolu",
+            impacted_rows=12,
+            recommendation="Nettoyage terminé, suivi renforcé sur 7 jours",
+            days_since_seen=6,
+        ),
+        DataQualityDescriptor(
+            check="Cotes manquantes",
+            severity="Mineure",
+            status="Monitoring",
+            impacted_rows=15,
+            recommendation="Valeurs imputées via médiane marché",
+            days_since_seen=9,
+        ),
+    )
+
+    today = date.today()
+    records: List[Dict[str, object]] = []
+
+    for descriptor in descriptors:
+        records.append(
+            {
+                "check": descriptor.check,
+                "severity": descriptor.severity,
+                "status": descriptor.status,
+                "impacted_rows": descriptor.impacted_rows,
+                "recommendation": descriptor.recommendation,
+                "last_seen": today - timedelta(days=descriptor.days_since_seen),
+            }
+        )
+
+    frame = pd.DataFrame.from_records(records)
+    frame["last_seen"] = pd.to_datetime(frame["last_seen"])
+
+    severity_order = {"Critique": 0, "Majeure": 1, "Mineure": 2}
+    frame["_severity_order"] = frame["severity"].map(severity_order)
+    frame.sort_values(["_severity_order", "last_seen"], inplace=True)
+    frame.drop(columns="_severity_order", inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
+
+
+def load_data_quality_checks() -> pd.DataFrame:
+    """Expose the synthetic data-quality alerts consumed by the dashboard."""
+
+    return _build_data_quality_rows()
+
+
+def _build_data_drift_rows() -> List[Dict[str, object]]:
+    """Create deterministic drift diagnostics for monitored features."""
+
+    descriptors: Tuple[DriftDescriptor, ...] = (
+        DriftDescriptor(
+            feature="win_probability",
+            drift_score=0.28,
+            p_value=0.03,
+            status="À investiguer",
+            reference_mean=0.31,
+            current_mean=0.27,
+            comment="Probabilités plus conservatrices sur les 2 dernières semaines",
+        ),
+        DriftDescriptor(
+            feature="value_edge",
+            drift_score=0.18,
+            p_value=0.07,
+            status="À surveiller",
+            reference_mean=0.05,
+            current_mean=0.03,
+            comment="Écart modèle/marché réduit sur les réunions nocturnes",
+        ),
+        DriftDescriptor(
+            feature="pace_projection",
+            drift_score=0.11,
+            p_value=0.21,
+            status="Stable",
+            reference_mean=1.48,
+            current_mean=1.51,
+            comment="Distribution similaire entre les catégories de rythme",
+        ),
+        DriftDescriptor(
+            feature="track_condition",
+            drift_score=0.09,
+            p_value=0.26,
+            status="Stable",
+            reference_mean=0.64,
+            current_mean=0.66,
+            comment="Mix météo conforme à la période de référence",
+        ),
+    )
+
+    window_end = date.today()
+    window_start = window_end - timedelta(days=14)
+
+    records: List[Dict[str, object]] = []
+    for descriptor in descriptors:
+        records.append(
+            {
+                "feature": descriptor.feature,
+                "drift_score": round(descriptor.drift_score, 2),
+                "p_value": round(descriptor.p_value, 3),
+                "status": descriptor.status,
+                "reference_mean": round(descriptor.reference_mean, 3),
+                "current_mean": round(descriptor.current_mean, 3),
+                "comment": descriptor.comment,
+                "window_start": window_start,
+                "window_end": window_end,
+            }
+        )
+
+    frame = pd.DataFrame.from_records(records)
+    frame["window_start"] = pd.to_datetime(frame["window_start"])
+    frame["window_end"] = pd.to_datetime(frame["window_end"])
+    frame.sort_values("drift_score", ascending=False, inplace=True)
+    frame.reset_index(drop=True, inplace=True)
+    return frame
+
+
+def load_data_drift_metrics() -> pd.DataFrame:
+    """Expose deterministic data drift diagnostics to Streamlit."""
+
+    return _build_data_drift_rows()
 
