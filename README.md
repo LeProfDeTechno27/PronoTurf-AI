@@ -130,7 +130,6 @@ Ce projet est protégé par la licence privée **PronoTurf AI Private License v1
 ### Court Terme
 - [ ] Tests unitaires complets (couverture > 80%)
 - [ ] Documentation API complète
-- [ ] Optimisation requêtes SQL
 - [ ] Cache Redis pour endpoints fréquents
 - [ ] Pagination systématique
 - [ ] Gestion erreurs robuste

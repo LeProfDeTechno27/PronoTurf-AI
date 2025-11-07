@@ -20,7 +20,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, desc, case
+from sqlalchemy import select, func, and_, desc, case, true
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_db
@@ -65,6 +65,7 @@ async def get_current_bankroll(
         is_critical=user.is_bankroll_critical,
         last_updated=datetime.now()
     )
+
 
 
 @router.get("/history", response_model=List[BankrollHistoryResponse])
@@ -258,65 +259,68 @@ async def get_bankroll_stats(
     Returns:
         Statistiques complètes de gestion de bankroll
     """
-    # Récupérer l'utilisateur
-    stmt = select(User).where(User.user_id == current_user.user_id)
+    # Stats globales de l'historique (agrégation + récupération utilisateur en une requête)
+    stats_subquery = (
+        select(
+            func.count(BankrollHistory.history_id).label("total_transactions"),
+            func.sum(
+                case((BankrollHistory.amount > 0, BankrollHistory.amount), else_=0)
+            ).label("total_gains"),
+            func.sum(
+                case(
+                    (BankrollHistory.amount < 0, func.abs(BankrollHistory.amount)),
+                    else_=0
+                )
+            ).label("total_losses"),
+            func.sum(
+                case((BankrollHistory.transaction_type == TransactionType.BET, 1), else_=0)
+            ).label("total_bets"),
+            func.sum(
+                case((BankrollHistory.transaction_type == TransactionType.WIN, 1), else_=0)
+            ).label("total_wins"),
+            func.sum(
+                case((BankrollHistory.transaction_type == TransactionType.LOSS, 1), else_=0)
+            ).label("total_losses_count"),
+            func.max(BankrollHistory.balance_after).label("peak_bankroll"),
+            func.min(BankrollHistory.balance_after).label("bottom_bankroll"),
+        )
+        .where(BankrollHistory.user_id == current_user.user_id)
+        .select_from(BankrollHistory)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            User,
+            stats_subquery.c.total_transactions,
+            stats_subquery.c.total_gains,
+            stats_subquery.c.total_losses,
+            stats_subquery.c.total_bets,
+            stats_subquery.c.total_wins,
+            stats_subquery.c.total_losses_count,
+            stats_subquery.c.peak_bankroll,
+            stats_subquery.c.bottom_bankroll,
+        )
+        .outerjoin(stats_subquery, true())
+        .where(User.user_id == current_user.user_id)
+    )
+
     result = await db.execute(stmt)
-    user = result.scalar_one()
+    row = result.one()
+    user: User = row.User
 
-    # Stats globales de l'historique
-    history_stmt = select(
-        func.count(BankrollHistory.history_id).label("total_transactions"),
-        func.sum(
-            case((BankrollHistory.amount > 0, BankrollHistory.amount), else_=0)
-        ).label("total_gains"),
-        func.sum(
-            case(
-                (BankrollHistory.amount < 0, func.abs(BankrollHistory.amount)),
-                else_=0
-            )
-        ).label("total_losses"),
-        func.sum(
-            case((BankrollHistory.transaction_type == TransactionType.BET, 1), else_=0)
-        ).label("total_bets"),
-        func.sum(
-            case((BankrollHistory.transaction_type == TransactionType.WIN, 1), else_=0)
-        ).label("total_wins"),
-        func.sum(
-            case((BankrollHistory.transaction_type == TransactionType.LOSS, 1), else_=0)
-        ).label("total_losses_count"),
-        func.max(BankrollHistory.balance_after).label("peak_bankroll"),
-        func.min(BankrollHistory.balance_after).label("bottom_bankroll"),
-    ).where(BankrollHistory.user_id == current_user.user_id)
-
-    result = await db.execute(history_stmt)
-    stats_row = result.first()
-
-    if stats_row is None:
-        total_transactions = 0
-        total_gains = Decimal("0")
-        total_losses = Decimal("0")
-        total_bets = 0
-        total_wins = 0
-        total_losses_count = 0
-        peak_bankroll = user.current_bankroll
-        bottom_bankroll = user.current_bankroll
-    else:
-        total_transactions = stats_row.total_transactions or 0
-        total_gains = Decimal(str(stats_row.total_gains or 0))
-        total_losses = Decimal(str(stats_row.total_losses or 0))
-        total_bets = int(stats_row.total_bets or 0)
-        total_wins = int(stats_row.total_wins or 0)
-        total_losses_count = int(stats_row.total_losses_count or 0)
-        peak_bankroll = (
-            stats_row.peak_bankroll
-            if stats_row.peak_bankroll is not None
-            else user.current_bankroll
-        )
-        bottom_bankroll = (
-            stats_row.bottom_bankroll
-            if stats_row.bottom_bankroll is not None
-            else user.current_bankroll
-        )
+    total_transactions = int(row.total_transactions or 0)
+    total_gains = Decimal(str(row.total_gains or 0))
+    total_losses = Decimal(str(row.total_losses or 0))
+    total_bets = int(row.total_bets or 0)
+    total_wins = int(row.total_wins or 0)
+    total_losses_count = int(row.total_losses_count or 0)
+    peak_bankroll = (
+        row.peak_bankroll if row.peak_bankroll is not None else user.current_bankroll
+    )
+    bottom_bankroll = (
+        row.bottom_bankroll if row.bottom_bankroll is not None else user.current_bankroll
+    )
 
     # Calculs
     net_profit = user.current_bankroll - user.initial_bankroll
