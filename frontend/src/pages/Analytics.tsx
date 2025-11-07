@@ -238,8 +238,8 @@ function SectionCard({ title, description, children }: { title: string; descript
   return (
     <section className="card space-y-6">
       <div className="space-y-1">
-        <h2 className="text-2xl font-semibold text-gray-900">{title}</h2>
-        <p className="text-gray-600">{description}</p>
+        <h2 className="text-2xl font-semibold text-white">{title}</h2>
+        <p className="text-slate-300">{description}</p>
       </div>
       {children}
     </section>
@@ -273,7 +273,7 @@ function SuggestionMetadata({ result }: { result: AnalyticsSearchResult }) {
     return null
   }
 
-  return <p className="text-xs text-gray-500">{segments.join(' • ')}</p>
+  return <p className="text-xs text-slate-400">{segments.join(' • ')}</p>
 }
 
 function SuggestionsList({
@@ -290,7 +290,7 @@ function SuggestionsList({
   emptyLabel: string
 }) {
   if (isLoading) {
-    return <p className="text-sm text-gray-500">Chargement des suggestions…</p>
+    return <p className="text-sm text-slate-400">Chargement des suggestions…</p>
   }
 
   if (error) {
@@ -298,7 +298,7 @@ function SuggestionsList({
   }
 
   if (!results?.length) {
-    return <p className="text-sm text-gray-500">{emptyLabel}</p>
+    return <p className="text-sm text-slate-400">{emptyLabel}</p>
   }
 
   return (
@@ -308,11 +308,11 @@ function SuggestionsList({
           <button
             type="button"
             onClick={() => onSelect(item)}
-            className="flex w-full flex-col rounded-lg border border-gray-200 bg-white px-4 py-3 text-left transition hover:border-indigo-300 hover:shadow-sm"
+            className="flex w-full flex-col rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:border-primary-300 hover:shadow-glow"
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-gray-900">{item.label}</span>
-              <span className="text-xs font-medium uppercase tracking-wide text-indigo-600">{item.id}</span>
+              <span className="text-sm font-semibold text-white">{item.label}</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-primary-200">{item.id}</span>
             </div>
             <SuggestionMetadata result={item} />
           </button>
@@ -324,31 +324,31 @@ function SuggestionsList({
 
 function BreakdownTable({ data, emptyLabel }: { data: PerformanceBreakdown[]; emptyLabel: string }) {
   if (!data.length) {
-    return <p className="text-gray-500">{emptyLabel}</p>
+    return <p className="text-slate-400">{emptyLabel}</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Catégorie</th>
-            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Courses</th>
-            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Victoires</th>
-            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Podiums</th>
-            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Taux de victoire</th>
-            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Taux de podium</th>
+            <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Catégorie</th>
+            <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Courses</th>
+            <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Victoires</th>
+            <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Podiums</th>
+            <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Taux de victoire</th>
+            <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Taux de podium</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody className="bg-white/5 divide-y divide-white/10">
           {data.map((item) => (
             <tr key={item.label}>
-              <td className="px-4 py-2 text-sm text-gray-900">{item.label}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.total)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.wins)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.podiums)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.win_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-white">{item.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.total)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(item.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(item.podium_rate)}</td>
             </tr>
           ))}
         </tbody>
@@ -366,37 +366,37 @@ function LeaderboardTable({
 }) {
   // Simplifie l'affichage des classements trans-entités pour l'explorateur analytics.
   if (!entries.length) {
-    return <p className="text-gray-500">{emptyLabel}</p>
+    return <p className="text-slate-400">{emptyLabel}</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">#</th>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Entité</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Courses</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Victoires</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Podiums</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux V</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux P</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Moy. place</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Dernière course</th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">#</th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">Entité</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Courses</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Victoires</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Podiums</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Taux V</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Taux P</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Moy. place</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Dernière course</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {entries.map((item, index) => (
             <tr key={item.entity_id}>
-              <td className="px-4 py-2 text-sm text-gray-700">#{index + 1}</td>
-              <td className="px-4 py-2 text-sm font-medium text-gray-900">{item.label}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.sample_size)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.wins)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(item.podiums)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.win_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(item.podium_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(item.average_finish)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatDate(item.last_seen)}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">#{index + 1}</td>
+              <td className="px-4 py-2 text-sm font-medium text-white">{item.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.sample_size)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(item.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(item.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(item.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(item.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatDate(item.last_seen)}</td>
             </tr>
           ))}
         </tbody>
@@ -408,35 +408,35 @@ function LeaderboardTable({
 function TrendTable({ points }: { points: PerformanceTrendPoint[] }) {
   // Met en forme l'évolution d'une entité période par période.
   if (!points.length) {
-    return <p className="text-gray-500">Aucune course sur la période sélectionnée.</p>
+    return <p className="text-slate-400">Aucune course sur la période sélectionnée.</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Période</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Courses</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Victoires</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Podiums</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux victoire</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Taux podium</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Arrivée moy.</th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Cote moy.</th>
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">Période</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Courses</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Victoires</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Podiums</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Taux victoire</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Taux podium</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Arrivée moy.</th>
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">Cote moy.</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody className="bg-white/5 divide-y divide-white/10">
           {points.map((point) => (
             <tr key={point.label}>
-              <td className="px-4 py-2 text-sm text-gray-900">{point.label}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.races)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.wins)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(point.podiums)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(point.win_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(point.podium_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(point.average_finish)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(point.average_odds)}</td>
+              <td className="px-4 py-2 text-sm text-white">{point.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(point.races)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(point.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(point.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(point.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(point.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(point.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(point.average_odds)}</td>
             </tr>
           ))}
         </tbody>
@@ -447,22 +447,22 @@ function TrendTable({ points }: { points: PerformanceTrendPoint[] }) {
 
 function RecentResults({ races }: { races: RecentRace[] }) {
   if (!races.length) {
-    return <p className="text-gray-500">Aucun historique récent disponible.</p>
+    return <p className="text-slate-400">Aucun historique récent disponible.</p>
   }
 
   return (
     <ul className="space-y-2">
       {races.map((race, index) => (
-        <li key={`${race.date}-${race.course_number}-${index}`} className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-2">
+        <li key={`${race.date}-${race.course_number}-${index}`} className="flex items-center justify-between rounded-lg border border-white/10 px-4 py-2">
           <div>
-            <p className="text-sm font-medium text-gray-900">
+            <p className="text-sm font-medium text-white">
               {race.hippodrome ?? 'Hippodrome inconnu'} • Course {race.course_number ?? '—'}
             </p>
-            <p className="text-xs text-gray-500">{formatDate(race.date)} • {race.distance ? `${race.distance} m` : 'Distance inconnue'}</p>
+            <p className="text-xs text-slate-400">{formatDate(race.date)} • {race.distance ? `${race.distance} m` : 'Distance inconnue'}</p>
           </div>
           <div className="text-right">
-            <p className="text-sm font-semibold text-gray-900">Position finale : {race.final_position ?? '—'}</p>
-            <p className="text-xs text-gray-500">Cote : {race.odds ?? '—'} • {race.is_win ? 'Victoire' : race.is_podium ? 'Podium' : 'Hors podium'}</p>
+            <p className="text-sm font-semibold text-white">Position finale : {race.final_position ?? '—'}</p>
+            <p className="text-xs text-slate-400">Cote : {race.odds ?? '—'} • {race.is_win ? 'Victoire' : race.is_podium ? 'Podium' : 'Hors podium'}</p>
           </div>
         </li>
       ))}
@@ -472,9 +472,9 @@ function RecentResults({ races }: { races: RecentRace[] }) {
 
 function SummaryStats({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-gray-900">{value}</p>
+    <div className="rounded-lg border border-white/10 bg-slate-950 px-4 py-3">
+      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-white">{value}</p>
     </div>
   )
 }
@@ -482,29 +482,29 @@ function SummaryStats({ label, value }: { label: string; value: ReactNode }) {
 function HeadToHeadTableView({ rows }: { rows: HeadToHeadBreakdown[] }) {
   // Rend lisible le bilan des confrontations directes entité par entité.
   if (!rows.length) {
-    return <p className="text-gray-500">Pas de duel direct enregistré.</p>
+    return <p className="text-slate-400">Pas de duel direct enregistré.</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10 text-sm">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left font-medium uppercase tracking-wide text-gray-500">Adversaire</th>
-            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Courses</th>
-            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Devant</th>
-            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Derrière</th>
-            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-gray-500">Indécis</th>
+            <th className="px-4 py-2 text-left font-medium uppercase tracking-wide text-slate-400">Adversaire</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-slate-400">Courses</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-slate-400">Devant</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-slate-400">Derrière</th>
+            <th className="px-4 py-2 text-right font-medium uppercase tracking-wide text-slate-400">Indécis</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {rows.map((row) => (
             <tr key={row.opponent_id}>
-              <td className="px-4 py-2 text-gray-900">{row.opponent_id}</td>
-              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.meetings)}</td>
-              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.ahead)}</td>
-              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.behind)}</td>
-              <td className="px-4 py-2 text-right text-gray-700">{formatNumber(row.ties)}</td>
+              <td className="px-4 py-2 text-white">{row.opponent_id}</td>
+              <td className="px-4 py-2 text-right text-slate-200">{formatNumber(row.meetings)}</td>
+              <td className="px-4 py-2 text-right text-slate-200">{formatNumber(row.ahead)}</td>
+              <td className="px-4 py-2 text-right text-slate-200">{formatNumber(row.behind)}</td>
+              <td className="px-4 py-2 text-right text-slate-200">{formatNumber(row.ties)}</td>
             </tr>
           ))}
         </tbody>
@@ -516,11 +516,11 @@ function HeadToHeadTableView({ rows }: { rows: HeadToHeadBreakdown[] }) {
 function ComparisonEntityCard({ entity }: { entity: ComparisonEntitySummary }) {
   // Présente les statistiques clés d'une entité comparée.
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-white/10 bg-white/5 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h4 className="text-lg font-semibold text-gray-900">{entity.label ?? entity.entity_id}</h4>
-          <p className="text-xs uppercase tracking-wide text-gray-500">{entity.entity_id}</p>
+          <h4 className="text-lg font-semibold text-white">{entity.label ?? entity.entity_id}</h4>
+          <p className="text-xs uppercase tracking-wide text-slate-400">{entity.entity_id}</p>
         </div>
         <SummaryStats label="Courses" value={formatNumber(entity.sample_size)} />
       </div>
@@ -543,7 +543,7 @@ function ComparisonEntityCard({ entity }: { entity: ComparisonEntitySummary }) {
       </div>
 
       <div>
-        <h5 className="mb-2 text-sm font-semibold text-gray-900">Duels directs</h5>
+        <h5 className="mb-2 text-sm font-semibold text-white">Duels directs</h5>
         <HeadToHeadTableView rows={entity.head_to_head} />
       </div>
     </div>
@@ -598,17 +598,17 @@ function HorseAnalyticsPanel({ data }: { data: HorseAnalyticsResponse }) {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
-          <h3 className="mb-3 text-lg font-semibold text-gray-900">Résultats récents</h3>
+          <h3 className="mb-3 text-lg font-semibold text-white">Résultats récents</h3>
           <RecentResults races={data.recent_results} />
         </div>
         <div>
-          <h3 className="mb-3 text-lg font-semibold text-gray-900">Répartition par hippodrome</h3>
+          <h3 className="mb-3 text-lg font-semibold text-white">Répartition par hippodrome</h3>
           <BreakdownTable data={data.hippodrome_breakdown} emptyLabel="Pas de répartition disponible." />
         </div>
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Répartition par distance</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Répartition par distance</h3>
         <BreakdownTable data={data.distance_breakdown} emptyLabel="Pas de répartition disponible." />
       </div>
     </div>
@@ -643,17 +643,17 @@ function PersonAnalyticsPanel({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
-          <h3 className="mb-3 text-lg font-semibold text-gray-900">Résultats récents</h3>
+          <h3 className="mb-3 text-lg font-semibold text-white">Résultats récents</h3>
           <RecentResults races={data.recent_results} />
         </div>
         <div>
-          <h3 className="mb-3 text-lg font-semibold text-gray-900">Top chevaux</h3>
+          <h3 className="mb-3 text-lg font-semibold text-white">Top chevaux</h3>
           <BreakdownTable data={'horse_breakdown' in data ? data.horse_breakdown : []} emptyLabel="Pas de répartition disponible." />
         </div>
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Répartition par hippodrome</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Répartition par hippodrome</h3>
         <BreakdownTable data={data.hippodrome_breakdown} emptyLabel="Pas de répartition disponible." />
       </div>
     </div>
@@ -677,7 +677,7 @@ function CoupleAnalyticsPanel({ data }: { data: CoupleAnalyticsResponse }) {
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Résultats récents</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Résultats récents</h3>
         <RecentResults races={data.recent_results} />
       </div>
     </div>
@@ -697,30 +697,30 @@ function CourseAnalyticsPanel({ data }: { data: CourseAnalyticsResponse }) {
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Partants ({data.partants.length})</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Partants ({data.partants.length})</h3>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-white/10">
+            <thead className="bg-slate-950">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">N°</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cheval</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jockey</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Entraîneur</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Cote</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Forme</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Jours depuis</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">N°</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Cheval</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Jockey</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Entraîneur</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Cote</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Forme</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">Jours depuis</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white/5 divide-y divide-white/10">
               {data.partants.map((partant) => (
                 <tr key={`${partant.numero}-${partant.horse_id}`}> 
-                  <td className="px-4 py-2 text-sm text-gray-700">{partant.numero ?? '—'}</td>
-                  <td className="px-4 py-2 text-sm text-gray-900">{partant.horse_name ?? partant.horse_id ?? 'Cheval inconnu'}</td>
-                  <td className="px-4 py-2 text-sm text-gray-700">{partant.jockey_name ?? partant.jockey_id ?? '—'}</td>
-                  <td className="px-4 py-2 text-sm text-gray-700">{partant.trainer_name ?? partant.trainer_id ?? '—'}</td>
-                  <td className="px-4 py-2 text-sm text-right text-gray-700">{partant.odds ?? partant.probable_odds ?? '—'}</td>
-                  <td className="px-4 py-2 text-sm text-right text-gray-700">{partant.recent_form ?? '—'}</td>
-                  <td className="px-4 py-2 text-sm text-right text-gray-700">{partant.days_since_last_race ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-slate-200">{partant.numero ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-white">{partant.horse_name ?? partant.horse_id ?? 'Cheval inconnu'}</td>
+                  <td className="px-4 py-2 text-sm text-slate-200">{partant.jockey_name ?? partant.jockey_id ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-slate-200">{partant.trainer_name ?? partant.trainer_id ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-right text-slate-200">{partant.odds ?? partant.probable_odds ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-right text-slate-200">{partant.recent_form ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm text-right text-slate-200">{partant.days_since_last_race ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -752,15 +752,15 @@ function InsightsPanel({ data }: { data: AnalyticsInsightsResponse }) {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-900">Top Chevaux</h3>
+          <h3 className="text-lg font-semibold text-white">Top Chevaux</h3>
           <LeaderboardTable entries={data.top_horses} emptyLabel="Aucun cheval identifié sur la période." />
         </div>
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-900">Top Jockeys</h3>
+          <h3 className="text-lg font-semibold text-white">Top Jockeys</h3>
           <LeaderboardTable entries={data.top_jockeys} emptyLabel="Aucun jockey identifié sur la période." />
         </div>
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-900">Top Entraîneurs</h3>
+          <h3 className="text-lg font-semibold text-white">Top Entraîneurs</h3>
           <LeaderboardTable entries={data.top_trainers} emptyLabel="Aucun entraîneur identifié sur la période." />
         </div>
       </div>
@@ -802,7 +802,7 @@ function TrendPanel({ data }: { data: PerformanceTrendResponse }) {
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Historique des performances</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Historique des performances</h3>
         <TrendTable points={data.points} />
       </div>
     </div>
@@ -812,37 +812,37 @@ function TrendPanel({ data }: { data: PerformanceTrendResponse }) {
 function StreakHistoryTable({ items }: { items: PerformanceStreak[] }) {
   // Table simplifiée listant les meilleures séries détectées.
   if (!items.length) {
-    return <p className="text-gray-500">Aucune série détectée sur la période étudiée.</p>
+    return <p className="text-slate-400">Aucune série détectée sur la période étudiée.</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
               Type
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Longueur
             </th>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
               Période
             </th>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
               Statut
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {items.map((item, index) => (
             <tr key={`${item.type}-${item.start_date ?? 'unknown'}-${index}`}>
-              <td className="px-4 py-2 text-sm text-gray-900">{formatStreakType(item.type)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{item.length}</td>
-              <td className="px-4 py-2 text-sm text-gray-700">
+              <td className="px-4 py-2 text-sm text-white">{formatStreakType(item.type)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{item.length}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">
                 {`${formatDate(item.start_date)} → ${formatDate(item.end_date)}`}
               </td>
-              <td className="px-4 py-2 text-sm text-gray-700">
+              <td className="px-4 py-2 text-sm text-slate-200">
                 {item.is_active ? 'En cours' : 'Terminée'}
               </td>
             </tr>
@@ -899,7 +899,7 @@ function StreakPanel({ data }: { data: AnalyticsStreakResponse }) {
       </div>
 
       <div>
-        <h3 className="mb-3 text-lg font-semibold text-gray-900">Historique des séries</h3>
+        <h3 className="mb-3 text-lg font-semibold text-white">Historique des séries</h3>
         <StreakHistoryTable items={data.streak_history} />
       </div>
     </div>
@@ -909,51 +909,51 @@ function StreakPanel({ data }: { data: AnalyticsStreakResponse }) {
 function DistributionTable({ buckets }: { buckets: DistributionBucket[] }) {
   // Table dédiée pour visualiser la répartition des résultats par segment.
   if (!buckets.length) {
-    return <p className="text-gray-500">Aucune distribution disponible pour ces filtres.</p>
+    return <p className="text-slate-400">Aucune distribution disponible pour ces filtres.</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
               Segment
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Courses
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Victoires
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Podiums
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Taux de victoire
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Taux de podium
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Moy. arrivée
             </th>
-            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
               Cote moyenne
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {buckets.map((bucket) => (
             <tr key={bucket.label}>
-              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.races)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.wins)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatNumber(bucket.podiums)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatPercent(bucket.win_rate)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatPercent(bucket.podium_rate)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatAverage(bucket.average_finish)}</td>
-              <td className="px-4 py-2 text-right text-sm text-gray-700">{formatAverage(bucket.average_odds)}</td>
+              <td className="px-4 py-2 text-sm font-medium text-white">{bucket.label}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatNumber(bucket.races)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-right text-sm text-slate-200">{formatAverage(bucket.average_odds)}</td>
             </tr>
           ))}
         </tbody>
@@ -965,7 +965,7 @@ function DistributionTable({ buckets }: { buckets: DistributionBucket[] }) {
 function FormRaceTimeline({ races }: { races: FormRace[] }) {
   // Restitue la séquence des courses utilisées pour le calcul de la forme.
   if (!races.length) {
-    return <p className="text-gray-500">Aucune course récente disponible sur la période.</p>
+    return <p className="text-slate-400">Aucune course récente disponible sur la période.</p>
   }
 
   return (
@@ -973,22 +973,22 @@ function FormRaceTimeline({ races }: { races: FormRace[] }) {
       {races.map((race, index) => (
         <li
           key={`${race.date ?? 'inconnue'}-${race.course_number ?? index}`}
-          className="flex items-center justify-between rounded-lg border border-indigo-100 bg-white px-4 py-3 shadow-sm"
+          className="flex items-center justify-between rounded-lg border border-primary-300/40 bg-white/5 px-4 py-3 shadow-sm"
         >
           <div>
-            <p className="text-sm font-semibold text-gray-900">
+            <p className="text-sm font-semibold text-white">
               {race.hippodrome ?? 'Hippodrome inconnu'} • Course {race.course_number ?? '—'}
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-slate-400">
               {formatDate(race.date)} • {race.distance ? `${race.distance} m` : 'Distance inconnue'}
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-slate-400">
               {race.is_win ? 'Victoire' : race.is_podium ? 'Podium' : 'Hors podium'} • Position {race.final_position ?? '—'}
             </p>
           </div>
           <div className="text-right">
-            <p className="text-sm font-semibold text-indigo-600">Score: {race.score} / 5</p>
-            <p className="text-xs text-gray-500">Cote : {race.odds ?? '—'}</p>
+            <p className="text-sm font-semibold text-primary-200">Score: {race.score} / 5</p>
+            <p className="text-xs text-slate-400">Cote : {race.odds ?? '—'}</p>
           </div>
         </li>
       ))}
@@ -1035,7 +1035,7 @@ function FormPanel({ data }: { data: AnalyticsFormResponse }) {
       </div>
 
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-gray-900">Courses prises en compte</h3>
+        <h3 className="text-lg font-semibold text-white">Courses prises en compte</h3>
         <FormRaceTimeline races={data.races} />
       </div>
     </div>
@@ -1091,51 +1091,51 @@ function DistributionPanel({ data }: { data: PerformanceDistributionResponse }) 
 
 function SeasonalityTable({ buckets }: { buckets: SeasonalityBucket[] }) {
   if (!buckets.length) {
-    return <p className="text-sm text-gray-500">Aucune période ne respecte vos critères.</p>
+    return <p className="text-sm text-slate-400">Aucune période ne respecte vos critères.</p>
   }
 
   return (
     <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Période
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Courses
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Victoires
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Podiums
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Taux victoire
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Taux podium
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Arrivée moy.
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote moy.
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {buckets.map((bucket) => (
             <tr key={bucket.key}>
-              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.races)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.wins)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.podiums)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.win_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.podium_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_finish)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_odds)}</td>
+              <td className="px-4 py-2 text-sm font-medium text-white">{bucket.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.races)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.average_odds)}</td>
             </tr>
           ))}
         </tbody>
@@ -1190,42 +1190,42 @@ function CalendarRaceTable({ details }: { details: CalendarRaceDetail[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Hippodrome
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Course
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Distance
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Position
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {details.map((detail, index) => {
             const key = `${detail.hippodrome ?? 'hippo'}-${detail.course_number ?? index}`
             return (
               <tr key={key}>
-                <td className="px-4 py-2 text-sm text-gray-900">{detail.hippodrome ?? '—'}</td>
-                <td className="px-4 py-2 text-sm text-gray-900">
+                <td className="px-4 py-2 text-sm text-white">{detail.hippodrome ?? '—'}</td>
+                <td className="px-4 py-2 text-sm text-white">
                   {detail.course_number != null ? `N° ${detail.course_number}` : '—'}
                 </td>
-                <td className="px-4 py-2 text-sm text-gray-900">
+                <td className="px-4 py-2 text-sm text-white">
                   {detail.distance != null ? `${formatNumber(detail.distance)} m` : '—'}
                 </td>
-                <td className="px-4 py-2 text-sm text-gray-900">
+                <td className="px-4 py-2 text-sm text-white">
                   {detail.final_position != null ? detail.final_position : '—'}
                 </td>
-                <td className="px-4 py-2 text-sm text-gray-900">
+                <td className="px-4 py-2 text-sm text-white">
                   {detail.odds != null ? detail.odds.toFixed(2) : '—'}
                 </td>
               </tr>
@@ -1242,10 +1242,10 @@ function CalendarDayCard({ day }: { day: CalendarDaySummary }) {
   const hippoLabel = day.hippodromes.length ? day.hippodromes.join(', ') : 'Tous hippodromes'
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 p-4">
+    <div className="space-y-4 rounded-lg border border-white/10 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-lg font-semibold text-gray-900">{formatDate(day.date)}</h4>
-        <span className="text-sm text-gray-500">{hippoLabel}</span>
+        <h4 className="text-lg font-semibold text-white">{formatDate(day.date)}</h4>
+        <span className="text-sm text-slate-400">{hippoLabel}</span>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -1300,53 +1300,53 @@ function CalendarPanel({ data }: { data: AnalyticsCalendarResponse }) {
 
 function ValueOpportunitiesTable({ samples }: { samples: ValueOpportunitySample[] }) {
   if (!samples.length) {
-    return <p className="text-sm text-gray-500">Aucune opportunité retenue.</p>
+    return <p className="text-sm text-slate-400">Aucune opportunité retenue.</p>
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 rounded-lg border">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10 rounded-lg border">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Date</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Hippodrome
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Course
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Distance
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Position
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote observée
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote probable
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Écart
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Gain unitaire
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {samples.map((sample, index) => (
             <tr key={`${sample.date}-${sample.course_number}-${index}`}>
-              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(sample.date ?? null)}</td>
-              <td className="px-4 py-2 text-sm text-gray-700">{sample.hippodrome ?? '—'}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.course_number)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.distance)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.final_position)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds_actual)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds_implied)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.edge)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.profit)}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">{formatDate(sample.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">{sample.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(sample.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(sample.distance)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(sample.final_position)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.odds_actual)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.odds_implied)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.edge)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.profit)}</td>
             </tr>
           ))}
         </tbody>
@@ -1401,61 +1401,61 @@ function ValuePanel({ data }: { data: AnalyticsValueResponse }) {
 
 function VolatilityTable({ races }: { races: VolatilityRaceSample[] }) {
   if (!races.length) {
-    return <p className="text-sm text-gray-500">Aucune course disponible pour calculer la volatilité.</p>
+    return <p className="text-sm text-slate-400">Aucune course disponible pour calculer la volatilité.</p>
   }
 
   return (
     <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Date
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Hippodrome
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Course
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Distance
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Arrivée
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote observée
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote probable
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Écart
             </th>
-            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
               Victoire
             </th>
-            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
               Podium
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {races.map((race, index) => (
             <tr key={`${race.date}-${race.course_number}-${index}`}>
-              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
-              <td className="px-4 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">
+              <td className="px-4 py-2 text-sm text-slate-200">{formatDate(race.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">{race.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(race.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">
                 {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
               </td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds_actual)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds_implied)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(race.edge)}</td>
-              <td className="px-4 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
-              <td className="px-4 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(race.final_position)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(race.odds_actual)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(race.odds_implied)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(race.edge)}</td>
+              <td className="px-4 py-2 text-sm text-center text-slate-200">{race.is_win ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-center text-slate-200">{race.is_podium ? 'Oui' : 'Non'}</td>
             </tr>
           ))}
         </tbody>
@@ -1517,63 +1517,63 @@ function VolatilityPanel({ data }: { data: AnalyticsVolatilityResponse }) {
 
 function EfficiencyTable({ samples }: { samples: EfficiencySample[] }) {
   if (!samples.length) {
-    return <p className="text-sm text-gray-500">Aucune course disposant d'une cote exploitable.</p>
+    return <p className="text-sm text-slate-400">Aucune course disposant d'une cote exploitable.</p>
   }
 
   return (
     <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Date
             </th>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Hippodrome
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Course
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Proba victoire
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Proba podium
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Arrivée
             </th>
-            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
               Victoire
             </th>
-            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
               Podium
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Edge
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {samples.map((sample, index) => (
             <tr key={`${sample.date}-${sample.course_number}-${index}`}>
-              <td className="px-4 py-2 text-sm text-gray-700">{formatDate(sample.date ?? null)}</td>
-              <td className="px-4 py-2 text-sm text-gray-700">{sample.hippodrome ?? '—'}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.course_number)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.odds)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">
+              <td className="px-4 py-2 text-sm text-slate-200">{formatDate(sample.date ?? null)}</td>
+              <td className="px-4 py-2 text-sm text-slate-200">{sample.hippodrome ?? '—'}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(sample.course_number)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.odds)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">
                 {formatPercent(sample.expected_win_probability, 1)}
               </td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">
+              <td className="px-4 py-2 text-sm text-right text-slate-200">
                 {formatPercent(sample.expected_podium_probability, 1)}
               </td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(sample.finish_position)}</td>
-              <td className="px-4 py-2 text-sm text-center text-gray-700">{sample.is_win ? 'Oui' : 'Non'}</td>
-              <td className="px-4 py-2 text-sm text-center text-gray-700">{sample.is_podium ? 'Oui' : 'Non'}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(sample.edge, 3)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(sample.finish_position)}</td>
+              <td className="px-4 py-2 text-sm text-center text-slate-200">{sample.is_win ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-center text-slate-200">{sample.is_podium ? 'Oui' : 'Non'}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(sample.edge, 3)}</td>
             </tr>
           ))}
         </tbody>
@@ -1648,59 +1648,59 @@ function EfficiencyPanel({ data }: { data: AnalyticsEfficiencyResponse }) {
 
 function OddsTable({ buckets }: { buckets: OddsBucketMetrics[] }) {
   if (!buckets.length) {
-    return <p className="text-sm text-gray-500">Aucune cote exploitable sur la période sélectionnée.</p>
+    return <p className="text-sm text-slate-400">Aucune cote exploitable sur la période sélectionnée.</p>
   }
 
   return (
     <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black/5">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-white/10">
+        <thead className="bg-slate-950">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Segment
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Courses
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Victoires
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Podiums
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Taux victoire
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Taux podium
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Arrivée moy.
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cote moy.
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Profit
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               ROI
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-white/10 bg-white/5">
           {buckets.map((bucket) => (
             <tr key={bucket.label}>
-              <td className="px-4 py-2 text-sm font-medium text-gray-900">{bucket.label}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.sample_size)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.wins)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(bucket.podiums)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.win_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPercent(bucket.podium_rate)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_finish)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.average_odds)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.profit)}</td>
-              <td className="px-4 py-2 text-sm text-right text-gray-700">{formatAverage(bucket.roi, 3)}</td>
+              <td className="px-4 py-2 text-sm font-medium text-white">{bucket.label}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.sample_size)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.wins)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(bucket.podiums)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(bucket.win_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatPercent(bucket.podium_rate)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.average_finish)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.average_odds)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.profit)}</td>
+              <td className="px-4 py-2 text-sm text-right text-slate-200">{formatAverage(bucket.roi, 3)}</td>
             </tr>
           ))}
         </tbody>
@@ -1794,8 +1794,8 @@ function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
       </div>
 
       {distributionEntries.length ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <h4 className="text-sm font-semibold text-gray-700">Répartition des repos</h4>
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <h4 className="text-sm font-semibold text-slate-200">Répartition des repos</h4>
           <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
             {distributionEntries.map(([label, count]) => (
               <div key={label} className="rounded-md bg-slate-50 p-3">
@@ -1807,55 +1807,55 @@ function WorkloadPanel({ data }: { data: AnalyticsWorkloadResponse }) {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-white/10">
+        <table className="min-w-full divide-y divide-white/10">
+          <thead className="bg-slate-950">
             <tr>
-              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Date
               </th>
-              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Hippodrome
               </th>
-              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Course
               </th>
-              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Distance
               </th>
-              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Arrivée
               </th>
-              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Repos
               </th>
-              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Cote
               </th>
-              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Victoire
               </th>
-              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Podium
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className="divide-y divide-white/10 bg-white/5">
             {timeline.map((race: WorkloadTimelineEntry, index) => (
               <tr key={`${race.date}-${race.course_number}-${index}`}>
-                <td className="px-3 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
-                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
-                <td className="px-3 py-2 text-sm text-right text-gray-700">
+                <td className="px-3 py-2 text-sm text-slate-200">{formatDate(race.date ?? null)}</td>
+                <td className="px-3 py-2 text-sm text-slate-200">{race.hippodrome ?? '—'}</td>
+                <td className="px-3 py-2 text-sm text-right text-slate-200">{formatNumber(race.course_number)}</td>
+                <td className="px-3 py-2 text-sm text-right text-slate-200">
                   {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
                 </td>
-                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
-                <td className="px-3 py-2 text-sm text-right text-gray-700">
+                <td className="px-3 py-2 text-sm text-right text-slate-200">{formatNumber(race.final_position)}</td>
+                <td className="px-3 py-2 text-sm text-right text-slate-200">
                   {race.rest_days != null ? `${race.rest_days} j` : '—'}
                 </td>
-                <td className="px-3 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds)}</td>
-                <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
-                <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+                <td className="px-3 py-2 text-sm text-right text-slate-200">{formatAverage(race.odds)}</td>
+                <td className="px-3 py-2 text-sm text-center text-slate-200">{race.is_win ? 'Oui' : 'Non'}</td>
+                <td className="px-3 py-2 text-sm text-center text-slate-200">{race.is_podium ? 'Oui' : 'Non'}</td>
               </tr>
             ))}
           </tbody>
@@ -1902,7 +1902,7 @@ function ProgressionPanel({ data }: { data: AnalyticsProgressionResponse }) {
       case 'initial':
         return 'bg-slate-100 text-slate-700'
       default:
-        return 'bg-gray-100 text-gray-600'
+        return 'bg-gray-100 text-slate-300'
     }
   }
 
@@ -1936,39 +1936,39 @@ function ProgressionPanel({ data }: { data: AnalyticsProgressionResponse }) {
         />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200">
+      <div className="overflow-hidden rounded-lg border border-white/10">
+        <table className="min-w-full divide-y divide-white/10">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Date
               </th>
-              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Hippodrome
               </th>
-              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Arrivée
               </th>
-              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Précédente
               </th>
-              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Variation
               </th>
-              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Tendance
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className="divide-y divide-white/10 bg-white/5">
             {races.map((race, index) => (
               <tr key={`${race.date ?? 'unknown'}-${index}`}>
-                <td className="px-4 py-2 text-sm text-gray-700">{formatDate(race.date)}</td>
-                <td className="px-4 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
-                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
-                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatNumber(race.previous_position)}</td>
-                <td className="px-4 py-2 text-sm text-right text-gray-700">{formatChange(race.change)}</td>
-                <td className="px-4 py-2 text-sm text-gray-700">
+                <td className="px-4 py-2 text-sm text-slate-200">{formatDate(race.date)}</td>
+                <td className="px-4 py-2 text-sm text-slate-200">{race.hippodrome ?? '—'}</td>
+                <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(race.final_position)}</td>
+                <td className="px-4 py-2 text-sm text-right text-slate-200">{formatNumber(race.previous_position)}</td>
+                <td className="px-4 py-2 text-sm text-right text-slate-200">{formatChange(race.change)}</td>
+                <td className="px-4 py-2 text-sm text-slate-200">
                   <span className={`rounded-full px-2 py-1 text-xs font-semibold ${trendBadgeClass(race.trend)}`}>
                     {trendLabel(race.trend)}
                   </span>
@@ -1984,15 +1984,15 @@ function ProgressionPanel({ data }: { data: AnalyticsProgressionResponse }) {
 
 function MomentumSliceTable({ title, slice }: { title: string; slice: MomentumSlice }) {
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-white/10 bg-white/5 p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-lg font-semibold text-gray-900">{title}</h4>
-          <p className="text-sm text-gray-500">
+          <h4 className="text-lg font-semibold text-white">{title}</h4>
+          <p className="text-sm text-slate-400">
             {`${formatDate(slice.start_date ?? null)} → ${formatDate(slice.end_date ?? null)}`}
           </p>
         </div>
-        <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700">
+        <span className="rounded-full bg-primary-500/10 px-3 py-1 text-sm font-medium text-primary-100">
           {slice.label}
         </span>
       </div>
@@ -2011,55 +2011,55 @@ function MomentumSliceTable({ title, slice }: { title: string; slice: MomentumSl
 
       {slice.races.length ? (
         <div className="overflow-x-auto rounded-lg ring-1 ring-black/5">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-white/10">
+            <thead className="bg-slate-950">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Date
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Hippodrome
                 </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Course
                 </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Distance
                 </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Arrivée
                 </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Cote
                 </th>
-                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Victoire
                 </th>
-                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Podium
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <tbody className="divide-y divide-white/10 bg-white/5">
               {slice.races.map((race, index) => (
                 <tr key={`${race.date}-${race.course_number}-${index}`}>
-                  <td className="px-3 py-2 text-sm text-gray-700">{formatDate(race.date ?? null)}</td>
-                  <td className="px-3 py-2 text-sm text-gray-700">{race.hippodrome ?? '—'}</td>
-                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.course_number)}</td>
-                  <td className="px-3 py-2 text-sm text-right text-gray-700">
+                  <td className="px-3 py-2 text-sm text-slate-200">{formatDate(race.date ?? null)}</td>
+                  <td className="px-3 py-2 text-sm text-slate-200">{race.hippodrome ?? '—'}</td>
+                  <td className="px-3 py-2 text-sm text-right text-slate-200">{formatNumber(race.course_number)}</td>
+                  <td className="px-3 py-2 text-sm text-right text-slate-200">
                     {race.distance ? `${race.distance.toLocaleString('fr-FR')} m` : '—'}
                   </td>
-                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatNumber(race.final_position)}</td>
-                  <td className="px-3 py-2 text-sm text-right text-gray-700">{formatAverage(race.odds)}</td>
-                  <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_win ? 'Oui' : 'Non'}</td>
-                  <td className="px-3 py-2 text-sm text-center text-gray-700">{race.is_podium ? 'Oui' : 'Non'}</td>
+                  <td className="px-3 py-2 text-sm text-right text-slate-200">{formatNumber(race.final_position)}</td>
+                  <td className="px-3 py-2 text-sm text-right text-slate-200">{formatAverage(race.odds)}</td>
+                  <td className="px-3 py-2 text-sm text-center text-slate-200">{race.is_win ? 'Oui' : 'Non'}</td>
+                  <td className="px-3 py-2 text-sm text-center text-slate-200">{race.is_podium ? 'Oui' : 'Non'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-slate-400">
           Aucune course ne correspond aux filtres pour cette fenêtre temporelle.
         </p>
       )}
@@ -2100,7 +2100,7 @@ function MomentumPanel({ data }: { data: AnalyticsMomentumResponse }) {
         {data.reference_window ? (
           <MomentumSliceTable title="Fenêtre de référence" slice={data.reference_window} />
         ) : (
-          <div className="rounded-lg border border-dashed border-gray-300 p-6 text-sm text-gray-500">
+          <div className="rounded-lg border border-dashed border-gray-300 p-6 text-sm text-slate-400">
             <p>
               Ajoutez davantage de courses (paramètre « baseline ») pour comparer la dynamique à une période
               précédente.
@@ -3432,11 +3432,11 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-10">
+    <div className="min-h-screen bg-slate-950 py-12">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
         <header className="space-y-2">
-          <h1 className="text-4xl font-bold text-gray-900">Analytics Aspiturf</h1>
-          <p className="text-gray-600">
+          <h1 className="text-4xl font-bold text-white">Analytics Aspiturf</h1>
+          <p className="text-slate-300">
             Explorez les statistiques avancées issues des fichiers Aspiturf pour éclairer vos décisions avant-course.
           </p>
         </header>
@@ -3484,7 +3484,7 @@ export default function AnalyticsPage() {
           </form>
           {insightError && <p className="text-sm text-red-600">{insightError}</p>}
           {insightsQuery.isLoading && (
-            <p className="text-sm text-gray-500">Calcul des classements en cours…</p>
+            <p className="text-sm text-slate-400">Calcul des classements en cours…</p>
           )}
         {insightsQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(insightsQuery.error as Error).message}</p>
@@ -3547,7 +3547,7 @@ export default function AnalyticsPage() {
         </form>
         {trendError && <p className="text-sm text-red-600">{trendError}</p>}
         {trendQuery.isPending && (
-          <p className="text-sm text-gray-500">Calcul des tendances en cours…</p>
+          <p className="text-sm text-slate-400">Calcul des tendances en cours…</p>
         )}
         {trendQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(trendQuery.error as Error).message}</p>
@@ -3611,7 +3611,7 @@ export default function AnalyticsPage() {
         </form>
         {formError && <p className="text-sm text-red-600">{formError}</p>}
       {formQuery.isPending && (
-        <p className="text-sm text-gray-500">Calcul de l'indice de forme en cours…</p>
+        <p className="text-sm text-slate-400">Calcul de l'indice de forme en cours…</p>
       )}
       {formQuery.isError && (
         <p className="text-sm text-red-600">Erreur: {(formQuery.error as Error).message}</p>
@@ -3666,7 +3666,7 @@ export default function AnalyticsPage() {
       </form>
       {volatilityError && <p className="text-sm text-red-600">{volatilityError}</p>}
       {volatilityQuery.isPending && (
-        <p className="text-sm text-gray-500">Calcul de la volatilité en cours…</p>
+        <p className="text-sm text-slate-400">Calcul de la volatilité en cours…</p>
       )}
     {volatilityQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(volatilityQuery.error as Error).message}</p>
@@ -3721,7 +3721,7 @@ export default function AnalyticsPage() {
     </form>
     {efficiencyError && <p className="text-sm text-red-600">{efficiencyError}</p>}
     {efficiencyQuery.isPending && (
-      <p className="text-sm text-gray-500">Calcul du différentiel attendu/observé…</p>
+      <p className="text-sm text-slate-400">Calcul du différentiel attendu/observé…</p>
     )}
     {efficiencyQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(efficiencyQuery.error as Error).message}</p>
@@ -3776,7 +3776,7 @@ export default function AnalyticsPage() {
     </form>
     {oddsError && <p className="text-sm text-red-600">{oddsError}</p>}
     {oddsQuery.isPending && (
-      <p className="text-sm text-gray-500">Calcul des segments de cotes en cours…</p>
+      <p className="text-sm text-slate-400">Calcul des segments de cotes en cours…</p>
     )}
     {oddsQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(oddsQuery.error as Error).message}</p>
@@ -3831,7 +3831,7 @@ export default function AnalyticsPage() {
     </form>
     {workloadError && <p className="text-sm text-red-600">{workloadError}</p>}
     {workloadQuery.isPending && (
-      <p className="text-sm text-gray-500">Calcul des rythmes de participation en cours…</p>
+      <p className="text-sm text-slate-400">Calcul des rythmes de participation en cours…</p>
     )}
     {workloadQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(workloadQuery.error as Error).message}</p>
@@ -3886,7 +3886,7 @@ export default function AnalyticsPage() {
     </form>
     {progressionError && <p className="text-sm text-red-600">{progressionError}</p>}
     {progressionQuery.isPending && (
-      <p className="text-sm text-gray-500">Analyse de la progression en cours…</p>
+      <p className="text-sm text-slate-400">Analyse de la progression en cours…</p>
     )}
     {progressionQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(progressionQuery.error as Error).message}</p>
@@ -3959,7 +3959,7 @@ export default function AnalyticsPage() {
       </form>
       {momentumError && <p className="text-sm text-red-600">{momentumError}</p>}
       {momentumQuery.isPending && (
-        <p className="text-sm text-gray-500">Analyse du momentum en cours…</p>
+        <p className="text-sm text-slate-400">Analyse du momentum en cours…</p>
       )}
       {momentumQuery.isError && (
         <p className="text-sm text-red-600">Erreur: {(momentumQuery.error as Error).message}</p>
@@ -4032,7 +4032,7 @@ export default function AnalyticsPage() {
       </form>
       {valueError && <p className="text-sm text-red-600">{valueError}</p>}
       {valueQuery.isPending && (
-        <p className="text-sm text-gray-500">Recherche des meilleures opportunités…</p>
+        <p className="text-sm text-slate-400">Recherche des meilleures opportunités…</p>
       )}
       {valueQuery.isError && (
         <p className="text-sm text-red-600">Erreur: {(valueQuery.error as Error).message}</p>
@@ -4103,7 +4103,7 @@ export default function AnalyticsPage() {
           comparisonSelections.map((item) => (
             <span
               key={item.id}
-              className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-sm text-indigo-700"
+              className="inline-flex items-center gap-2 rounded-full bg-primary-500/10 px-3 py-1 text-sm text-primary-100"
             >
               {item.label}
               <button
@@ -4116,14 +4116,14 @@ export default function AnalyticsPage() {
             </span>
           ))
         ) : (
-          <p className="text-sm text-gray-500">Sélectionnez au moins deux entités pour lancer la comparaison.</p>
+          <p className="text-sm text-slate-400">Sélectionnez au moins deux entités pour lancer la comparaison.</p>
         )}
       </div>
 
-      <div className="mt-4 space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+      <div className="mt-4 space-y-2 rounded-lg border border-dashed border-white/10 bg-slate-950 p-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
-          <span className="text-xs text-gray-500">2 lettres minimum</span>
+          <span className="text-sm font-medium text-slate-200">Recherche assistée</span>
+          <span className="text-xs text-slate-400">2 lettres minimum</span>
         </div>
         <input
           value={comparisonQuery}
@@ -4140,14 +4140,14 @@ export default function AnalyticsPage() {
             emptyLabel="Aucune entité ne correspond à cette recherche."
           />
         ) : (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-slate-400">
             Combinez l'autocomplétion et l'ajout manuel pour constituer votre liste de comparaisons.
           </p>
         )}
       </div>
 
       {comparisonQueryResult.isPending && (
-        <p className="text-sm text-gray-500">Analyse comparative en cours…</p>
+        <p className="text-sm text-slate-400">Analyse comparative en cours…</p>
       )}
       {comparisonQueryResult.isError && (
         <p className="text-sm text-red-600">Erreur: {(comparisonQueryResult.error as Error).message}</p>
@@ -4223,7 +4223,7 @@ export default function AnalyticsPage() {
         </form>
         {distributionError && <p className="text-sm text-red-600">{distributionError}</p>}
         {distributionQuery.isPending && (
-          <p className="text-sm text-gray-500">Calcul de la distribution en cours…</p>
+          <p className="text-sm text-slate-400">Calcul de la distribution en cours…</p>
         )}
         {distributionQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(distributionQuery.error as Error).message}</p>
@@ -4295,7 +4295,7 @@ export default function AnalyticsPage() {
     </form>
     {seasonalityError && <p className="text-sm text-red-600">{seasonalityError}</p>}
     {seasonalityQuery.isPending && (
-      <p className="text-sm text-gray-500">Analyse des rythmes saisonniers en cours…</p>
+      <p className="text-sm text-slate-400">Analyse des rythmes saisonniers en cours…</p>
     )}
     {seasonalityQuery.isError && (
       <p className="text-sm text-red-600">Erreur: {(seasonalityQuery.error as Error).message}</p>
@@ -4352,7 +4352,7 @@ export default function AnalyticsPage() {
       {calendarError && <p className="text-sm text-red-600">{calendarError}</p>}
 
       {calendarQuery.isPending && (
-        <p className="text-sm text-gray-500">Agrégation des résultats par journée…</p>
+        <p className="text-sm text-slate-400">Agrégation des résultats par journée…</p>
       )}
 
       {calendarQuery.isError && (
@@ -4409,7 +4409,7 @@ export default function AnalyticsPage() {
         </form>
         {streakError && <p className="text-sm text-red-600">{streakError}</p>}
         {streakQuery.isPending && (
-          <p className="text-sm text-gray-500">Calcul des séries en cours…</p>
+          <p className="text-sm text-slate-400">Calcul des séries en cours…</p>
         )}
         {streakQuery.isError && (
           <p className="text-sm text-red-600">Erreur: {(streakQuery.error as Error).message}</p>
@@ -4439,14 +4439,14 @@ export default function AnalyticsPage() {
             </button>
           </form>
           {horseError && <p className="text-sm text-red-600">{horseError}</p>}
-          {horseQuery.isPending && <p className="text-sm text-gray-500">Chargement des statistiques cheval…</p>}
+          {horseQuery.isPending && <p className="text-sm text-slate-400">Chargement des statistiques cheval…</p>}
           {horseQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(horseQuery.error as Error).message}</p>
           )}
-          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div className="space-y-2 rounded-lg border border-dashed border-white/10 bg-slate-950 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
-              <span className="text-xs text-gray-500">2 lettres minimum</span>
+              <span className="text-sm font-medium text-slate-200">Recherche assistée</span>
+              <span className="text-xs text-slate-400">2 lettres minimum</span>
             </div>
             <input
               value={horseNameQuery}
@@ -4463,7 +4463,7 @@ export default function AnalyticsPage() {
                 emptyLabel="Aucune correspondance trouvée pour cette recherche."
               />
             ) : (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-400">
                 Tapez au moins deux lettres pour lister les chevaux correspondants dans le CSV Aspiturf.
               </p>
             )}
@@ -4493,14 +4493,14 @@ export default function AnalyticsPage() {
             </button>
           </form>
           {jockeyError && <p className="text-sm text-red-600">{jockeyError}</p>}
-          {jockeyQuery.isPending && <p className="text-sm text-gray-500">Chargement des statistiques jockey…</p>}
+          {jockeyQuery.isPending && <p className="text-sm text-slate-400">Chargement des statistiques jockey…</p>}
           {jockeyQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(jockeyQuery.error as Error).message}</p>
           )}
-          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div className="space-y-2 rounded-lg border border-dashed border-white/10 bg-slate-950 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
-              <span className="text-xs text-gray-500">2 lettres minimum</span>
+              <span className="text-sm font-medium text-slate-200">Recherche assistée</span>
+              <span className="text-xs text-slate-400">2 lettres minimum</span>
             </div>
             <input
               value={jockeyNameQuery}
@@ -4517,7 +4517,7 @@ export default function AnalyticsPage() {
                 emptyLabel="Aucun jockey ne correspond à cette recherche."
               />
             ) : (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-400">
                 Utilisez la recherche pour récupérer rapidement l'identifiant Aspiturf d'un jockey.
               </p>
             )}
@@ -4547,14 +4547,14 @@ export default function AnalyticsPage() {
             </button>
           </form>
           {trainerError && <p className="text-sm text-red-600">{trainerError}</p>}
-          {trainerQuery.isPending && <p className="text-sm text-gray-500">Chargement des statistiques entraîneur…</p>}
+          {trainerQuery.isPending && <p className="text-sm text-slate-400">Chargement des statistiques entraîneur…</p>}
           {trainerQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(trainerQuery.error as Error).message}</p>
           )}
-          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div className="space-y-2 rounded-lg border border-dashed border-white/10 bg-slate-950 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Recherche assistée</span>
-              <span className="text-xs text-gray-500">2 lettres minimum</span>
+              <span className="text-sm font-medium text-slate-200">Recherche assistée</span>
+              <span className="text-xs text-slate-400">2 lettres minimum</span>
             </div>
             <input
               value={trainerNameQuery}
@@ -4571,7 +4571,7 @@ export default function AnalyticsPage() {
                 emptyLabel="Aucun entraîneur ne correspond à cette recherche."
               />
             ) : (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-400">
                 Trouvez instantanément l'identifiant Aspiturf d'un entraîneur pour l'analyse détaillée.
               </p>
             )}
@@ -4607,7 +4607,7 @@ export default function AnalyticsPage() {
             </button>
           </form>
           {coupleError && <p className="text-sm text-red-600">{coupleError}</p>}
-          {coupleQuery.isPending && <p className="text-sm text-gray-500">Chargement des statistiques du couple…</p>}
+          {coupleQuery.isPending && <p className="text-sm text-slate-400">Chargement des statistiques du couple…</p>}
           {coupleQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(coupleQuery.error as Error).message}</p>
           )}
@@ -4642,14 +4642,14 @@ export default function AnalyticsPage() {
             </button>
           </form>
           {courseError && <p className="text-sm text-red-600">{courseError}</p>}
-          {courseQuery.isPending && <p className="text-sm text-gray-500">Chargement des informations course…</p>}
+          {courseQuery.isPending && <p className="text-sm text-slate-400">Chargement des informations course…</p>}
           {courseQuery.isError && (
             <p className="text-sm text-red-600">Erreur: {(courseQuery.error as Error).message}</p>
           )}
-          <div className="space-y-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div className="space-y-2 rounded-lg border border-dashed border-white/10 bg-slate-950 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Rechercher un hippodrome</span>
-              <span className="text-xs text-gray-500">2 lettres minimum</span>
+              <span className="text-sm font-medium text-slate-200">Rechercher un hippodrome</span>
+              <span className="text-xs text-slate-400">2 lettres minimum</span>
             </div>
             <input
               value={courseHippoQuery}
@@ -4666,7 +4666,7 @@ export default function AnalyticsPage() {
                 emptyLabel="Aucun hippodrome trouvé avec ce terme."
               />
             ) : (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-400">
                 Sélectionnez un hippodrome pour pré-remplir les filtres des différents formulaires.
               </p>
             )}
