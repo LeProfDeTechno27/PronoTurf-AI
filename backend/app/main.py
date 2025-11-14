@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from app.core.config import settings
 from app.core.database import init_db
@@ -107,6 +107,37 @@ def _should_serve_spa() -> bool:
     return FRONTEND_DIST_PATH is not None and FRONTEND_INDEX_FILE is not None
 
 
+def _build_frontend_redirect(path: Optional[str] = None) -> Optional[RedirectResponse]:
+    """Construit une redirection vers FRONTEND_URL si configuré."""
+
+    if not settings.FRONTEND_URL:
+        return None
+
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    if not base_url:
+        return None
+
+    if path:
+        target = f"{base_url}/{path.lstrip('/')}"
+    else:
+        target = base_url
+
+    return RedirectResponse(url=target, status_code=307)
+
+
+def _frontend_response(path: Optional[str] = None):
+    """Retourne soit un fichier SPA soit une redirection vers FRONTEND_URL."""
+
+    if _should_serve_spa():
+        return _spa_file_response(path)
+
+    redirect = _build_frontend_redirect(path)
+    if redirect is not None:
+        return redirect
+
+    return None
+
+
 def _spa_file_response(path: Optional[str] = None) -> FileResponse:
     assert FRONTEND_DIST_PATH is not None
     assert FRONTEND_INDEX_FILE is not None
@@ -133,8 +164,9 @@ def _spa_file_response(path: Optional[str] = None) -> FileResponse:
 async def root():
     """Health check JSON ou SPA selon la configuration."""
 
-    if _should_serve_spa():
-        return _spa_file_response()
+    spa_response = _frontend_response()
+    if spa_response is not None:
+        return spa_response
 
     return JSONResponse(
         content={
@@ -255,17 +287,19 @@ app.include_router(
 # )
 
 
-# SPA fallback routes (doivent être enregistrées après les routes API)
-if _should_serve_spa():
+# SPA fallback route (doit être enregistré après les routes API)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    api_prefix = settings.API_V1_PREFIX.strip("/")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        api_prefix = settings.API_V1_PREFIX.strip("/")
+    if api_prefix and full_path.startswith(api_prefix):
+        raise HTTPException(status_code=404)
 
-        if api_prefix and full_path.startswith(api_prefix):
-            raise HTTPException(status_code=404)
+    spa_response = _frontend_response(full_path)
+    if spa_response is not None:
+        return spa_response
 
-        return _spa_file_response(full_path)
+    raise HTTPException(status_code=404)
 
 # Exception handlers
 @app.exception_handler(404)
