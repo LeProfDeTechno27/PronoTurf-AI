@@ -8,11 +8,30 @@ SQLAlchemy avec support asynchrone (aiomysql)
 """
 
 from typing import AsyncGenerator
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from .config import settings
+
+
+def _convert_to_sync_url(async_url: str) -> str:
+    """Convertit une URL SQLAlchemy asynchrone vers son équivalent synchrone."""
+
+    url = make_url(async_url)
+
+    if "+aiomysql" in url.drivername:
+        driver = url.drivername.replace("+aiomysql", "+pymysql")
+    elif "+asyncpg" in url.drivername:
+        driver = url.drivername.replace("+asyncpg", "+psycopg")
+    elif "+sqlite+aiosqlite" in url.drivername:
+        driver = url.drivername.replace("+aiosqlite", "")
+    else:
+        driver = url.drivername
+
+    return url.set(drivername=driver).render_as_string(hide_password=False)
 
 # Create async engine
 engine = create_async_engine(
@@ -29,6 +48,18 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
+)
+
+# Create sync engine + session maker for Celery / background tasks
+sync_engine = create_engine(
+    _convert_to_sync_url(settings.DATABASE_URL),
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=sync_engine,
 )
 
 # Base class for ORM models

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.py.class
+
+# Environment files
+.env
+.env.*
+backend/.env
+streamlit/.env
+frontend/.env
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# Node / frontend artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Editor directories
+.idea/
+.vscode/
+.DS_Store
