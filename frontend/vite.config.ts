@@ -18,6 +18,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
+    allowedHosts: ['pronoturf-ai.fr'],
     watch: {
       usePolling: true,
     },
@@ -26,5 +27,6 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
+    allowedHosts: ['pronoturf-ai.fr'],
   },
 })
