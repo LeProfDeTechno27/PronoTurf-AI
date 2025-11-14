@@ -44,10 +44,18 @@
       (function redirectToSpa() {
         var pathWithQuery = (window.location.pathname || '/') + (window.location.search || '');
         var normalizedPath = pathWithQuery.startsWith('/') ? pathWithQuery : '/' + pathWithQuery;
-        if (normalizedPath === '/' || normalizedPath === '/index.html' || normalizedPath === '/404.html') {
+        var hashSuffix = window.location.hash || '';
+
+        if (window.location.pathname === '/index.html') {
           return;
         }
-        var newUrl = '/#' + normalizedPath + (window.location.hash || '');
+
+        var finalHash = hashSuffix || normalizedPath || '/';
+        if (!finalHash.startsWith('#')) {
+          finalHash = '#' + finalHash;
+        }
+
+        var newUrl = '/index.html' + finalHash;
         window.location.replace(newUrl);
       })();
     </script>
