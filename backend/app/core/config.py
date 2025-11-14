@@ -7,7 +7,7 @@ Configuration de l'application PronoTurf
 Utilise pydantic-settings pour la gestion des variables d'environnement
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
 
     # CORS
-    CORS_ORIGINS: List[str] = Field(
+    CORS_ORIGINS: Union[List[str], str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
             "http://localhost:8501",
