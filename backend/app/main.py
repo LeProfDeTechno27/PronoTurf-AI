@@ -7,9 +7,12 @@ Point d'entrée principal de l'application FastAPI PronoTurf
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from pathlib import Path
+from typing import Optional, Tuple
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from app.core.config import settings
 from app.core.database import init_db
@@ -72,12 +75,99 @@ app.add_middleware(
 )
 
 
-# Root endpoint
-@app.get("/")
+def _resolve_frontend_paths() -> Tuple[Optional[Path], Optional[Path]]:
+    """Retourne les chemins vers le build frontend si disponible."""
+
+    if not settings.SERVE_FRONTEND:
+        return None, None
+
+    if settings.FRONTEND_DIST_PATH:
+        candidate = Path(settings.FRONTEND_DIST_PATH).expanduser()
+        if not candidate.is_absolute():
+            base_dir = Path(__file__).resolve().parents[2]
+            candidate = base_dir / candidate
+    else:
+        candidate = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+    candidate = candidate.resolve()
+    index_file = candidate / "index.html"
+
+    if candidate.is_dir() and index_file.is_file():
+        print(f"[frontend] Serving static files from: {candidate}")
+        return candidate, index_file
+
+    print("[frontend] Build directory not found, SPA serving disabled.")
+    return None, None
+
+
+FRONTEND_DIST_PATH, FRONTEND_INDEX_FILE = _resolve_frontend_paths()
+
+
+def _should_serve_spa() -> bool:
+    return FRONTEND_DIST_PATH is not None and FRONTEND_INDEX_FILE is not None
+
+
+def _build_frontend_redirect(path: Optional[str] = None) -> Optional[RedirectResponse]:
+    """Construit une redirection vers FRONTEND_URL si configuré."""
+
+    if not settings.FRONTEND_URL:
+        return None
+
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    if not base_url:
+        return None
+
+    if path:
+        target = f"{base_url}/{path.lstrip('/')}"
+    else:
+        target = base_url
+
+    return RedirectResponse(url=target, status_code=307)
+
+
+def _frontend_response(path: Optional[str] = None):
+    """Retourne soit un fichier SPA soit une redirection vers FRONTEND_URL."""
+
+    if _should_serve_spa():
+        return _spa_file_response(path)
+
+    redirect = _build_frontend_redirect(path)
+    if redirect is not None:
+        return redirect
+
+    return None
+
+
+def _spa_file_response(path: Optional[str] = None) -> FileResponse:
+    assert FRONTEND_DIST_PATH is not None
+    assert FRONTEND_INDEX_FILE is not None
+
+    if not path:
+        return FileResponse(FRONTEND_INDEX_FILE)
+
+    requested_path = (FRONTEND_DIST_PATH / path).resolve()
+
+    try:
+        requested_path.relative_to(FRONTEND_DIST_PATH)
+    except ValueError:
+        # Tentative d'accès en dehors du dossier frontend
+        return FileResponse(FRONTEND_INDEX_FILE)
+
+    if requested_path.is_file():
+        return FileResponse(requested_path)
+
+    return FileResponse(FRONTEND_INDEX_FILE)
+
+
+# Root endpoint / SPA entrypoint
+@app.get("/", include_in_schema=False)
 async def root():
-    """
-    Endpoint racine - Health check
-    """
+    """Health check JSON ou SPA selon la configuration."""
+
+    spa_response = _frontend_response()
+    if spa_response is not None:
+        return spa_response
+
     return JSONResponse(
         content={
             "app": settings.APP_NAME,
@@ -196,6 +286,20 @@ app.include_router(
 #     tags=["Analytics"]
 # )
 
+
+# SPA fallback route (doit être enregistré après les routes API)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    api_prefix = settings.API_V1_PREFIX.strip("/")
+
+    if api_prefix and full_path.startswith(api_prefix):
+        raise HTTPException(status_code=404)
+
+    spa_response = _frontend_response(full_path)
+    if spa_response is not None:
+        return spa_response
+
+    raise HTTPException(status_code=404)
 
 # Exception handlers
 @app.exception_handler(404)
