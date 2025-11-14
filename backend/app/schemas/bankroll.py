@@ -8,10 +8,12 @@ Schémas Pydantic pour la gestion de bankroll
 
 from typing import List, Optional
 from datetime import date as date_type, datetime
-from pydantic import BaseModel, Field
 from decimal import Decimal
 
+from pydantic import BaseModel, Field
+
 from app.models.bankroll_history import TransactionType
+from app.models.user import BankrollStrategy
 
 
 class BankrollHistoryBase(BaseModel):
@@ -61,16 +63,42 @@ class BankrollSummary(BaseModel):
     is_critical: bool = Field(..., description="Bankroll critique (< 20%)")
 
 
-class BankrollReset(BaseModel):
-    """Schéma pour réinitialiser le bankroll"""
-    new_amount: Decimal = Field(..., gt=0, description="Nouveau montant initial")
-    reason: Optional[str] = Field(None, max_length=500, description="Raison de la réinitialisation")
+class BankrollResponse(BaseModel):
+    """État actuel de la bankroll d'un utilisateur"""
+
+    user_id: int = Field(..., description="Identifiant utilisateur")
+    initial_bankroll: Decimal = Field(..., ge=0, description="Bankroll initiale")
+    current_bankroll: Decimal = Field(..., ge=0, description="Bankroll actuelle")
+    profit_loss: Decimal = Field(..., description="Gain ou perte net(e)")
+    profit_loss_percentage: float = Field(..., description="Performance en pourcentage")
+    preferred_strategy: Optional[BankrollStrategy] = Field(
+        None, description="Stratégie de gestion de bankroll"
+    )
+    is_critical: bool = Field(..., description="Bankroll sous le seuil critique")
+    last_updated: datetime = Field(..., description="Horodatage de mise à jour")
 
 
-class BankrollAdjustment(BaseModel):
-    """Schéma pour ajuster manuellement le bankroll"""
-    amount: Decimal = Field(..., description="Montant de l'ajustement (positif ou négatif)")
-    reason: str = Field(..., min_length=5, max_length=500, description="Raison de l'ajustement")
+class BankrollResetRequest(BaseModel):
+    """Payload pour réinitialiser complètement la bankroll"""
+
+    new_initial_amount: Decimal = Field(
+        ..., gt=0, description="Nouveau montant initial de la bankroll"
+    )
+    reason: Optional[str] = Field(
+        None, max_length=500, description="Raison facultative de la réinitialisation"
+    )
+
+
+class BankrollAdjustRequest(BaseModel):
+    """Payload pour ajuster la bankroll d'un utilisateur (admin)"""
+
+    user_id: int = Field(..., description="Identifiant utilisateur ciblé")
+    adjustment_amount: Decimal = Field(
+        ..., description="Montant (positif ou négatif) à appliquer"
+    )
+    reason: Optional[str] = Field(
+        None, max_length=500, description="Raison de l'ajustement"
+    )
 
 
 class BankrollChart(BaseModel):
@@ -95,3 +123,35 @@ class BankrollPeriodStats(BaseModel):
     best_day_profit: Optional[Decimal] = None
     worst_day: Optional[date_type] = Field(None, description="Pire jour")
     worst_day_loss: Optional[Decimal] = None
+
+
+class BankrollStatsResponse(BaseModel):
+    """Statistiques agrégées de la bankroll"""
+
+    user_id: int
+    initial_bankroll: Decimal
+    current_bankroll: Decimal
+    peak_bankroll: Decimal
+    bottom_bankroll: Decimal
+    net_profit: Decimal
+    roi_percentage: float
+    total_transactions: int
+    total_bets: int
+    total_gains: Decimal
+    total_losses: Decimal
+    win_rate: float
+    preferred_strategy: Optional[BankrollStrategy]
+    is_critical: bool
+
+
+class BankrollPeriodStatsResponse(BaseModel):
+    """Statistiques agrégées sur une période donnée"""
+
+    period: str = Field(..., description="Identifiant de la période (jour/semaine/mois)")
+    period_start: date_type
+    period_end: date_type
+    gains: Decimal
+    losses: Decimal
+    net_profit: Decimal
+    transactions: int
+    ending_balance: Decimal
