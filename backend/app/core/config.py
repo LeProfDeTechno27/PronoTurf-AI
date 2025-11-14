@@ -123,8 +123,10 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "noreply@pronoturf.ai"
     EMAIL_ENABLED: bool = False
 
-    # Frontend URL for email links
+    # Frontend URL for email links / serving
     FRONTEND_URL: str = "http://localhost:3000"
+    SERVE_FRONTEND: bool = True
+    FRONTEND_DIST_PATH: Optional[str] = None
 
     # Sentry (optional)
     SENTRY_DSN: Optional[str] = None
