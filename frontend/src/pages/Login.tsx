@@ -2,9 +2,77 @@
 // This source code is proprietary and confidential.
 // Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
 
-import { Link } from 'react-router-dom'
+import { ChangeEvent, FormEvent, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { isAxiosError } from 'axios'
+
+import { loginUser } from '../services/auth'
+
+type LoginFormState = {
+  email: string
+  password: string
+  rememberMe: boolean
+}
+
+const initialState: LoginFormState = {
+  email: '',
+  password: '',
+  rememberMe: false,
+}
 
 export default function Login() {
+  const navigate = useNavigate()
+  const [formState, setFormState] = useState<LoginFormState>(initialState)
+  const [statusMessage, setStatusMessage] = useState<
+    { type: 'success' | 'error'; text: string } | null
+  >(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const { name, value, type, checked } = event.target
+    setFormState((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value,
+    }))
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setStatusMessage(null)
+    setIsSubmitting(true)
+
+    try {
+      const response = await loginUser({
+        email: formState.email.trim(),
+        password: formState.password,
+      })
+
+      const storage = formState.rememberMe ? window.localStorage : window.sessionStorage
+      storage.setItem('access_token', response.access_token)
+      storage.setItem('refresh_token', response.refresh_token)
+      storage.setItem('token_type', response.token_type)
+
+      setStatusMessage({ type: 'success', text: 'Connexion réussie. Redirection en cours…' })
+
+      setTimeout(() => {
+        navigate('/dashboard')
+      }, 800)
+    } catch (error) {
+      let message = 'Impossible de vous connecter. Veuillez vérifier vos identifiants.'
+
+      if (isAxiosError(error)) {
+        const detail = error.response?.data?.detail
+        if (typeof detail === 'string' && detail.trim().length > 0) {
+          message = detail
+        }
+      }
+
+      setStatusMessage({ type: 'error', text: message })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-6 py-16">
       <div className="pointer-events-none absolute inset-0">
@@ -43,7 +111,7 @@ export default function Login() {
             <h2 className="mt-6 text-3xl font-heading text-white">Connectez-vous</h2>
             <p className="mt-2 text-sm text-slate-300">Ravi de vous revoir sur la plateforme.</p>
           </div>
-          <form className="space-y-6" action="#" method="POST">
+          <form className="space-y-6" onSubmit={handleSubmit} noValidate>
             <div className="space-y-4">
               <div className="text-left">
                 <label htmlFor="email-address" className="mb-2 block text-sm font-semibold text-slate-200">
@@ -57,6 +125,8 @@ export default function Login() {
                   required
                   className="input"
                   placeholder="vous@exemple.com"
+                  value={formState.email}
+                  onChange={handleChange}
                 />
               </div>
               <div className="text-left">
@@ -71,6 +141,8 @@ export default function Login() {
                   required
                   className="input"
                   placeholder="••••••••"
+                  value={formState.password}
+                  onChange={handleChange}
                 />
               </div>
             </div>
@@ -82,6 +154,13 @@ export default function Login() {
                   name="remember-me"
                   type="checkbox"
                   className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-400"
+                  checked={formState.rememberMe}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      rememberMe: event.target.checked,
+                    }))
+                  }
                 />
                 Se souvenir de moi
               </label>
@@ -90,7 +169,19 @@ export default function Login() {
               </a>
             </div>
 
-            <button type="submit" className="btn btn-primary w-full py-3 text-lg">
+            {statusMessage && (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm ${
+                  statusMessage.type === 'success'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+                }`}
+              >
+                {statusMessage.text}
+              </div>
+            )}
+
+            <button type="submit" className="btn btn-primary w-full py-3 text-lg" disabled={isSubmitting}>
               Se connecter
             </button>
           </form>
