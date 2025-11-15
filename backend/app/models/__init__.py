@@ -11,6 +11,7 @@ from .hippodrome import Hippodrome
 from .reunion import Reunion
 from .course import Course
 from .horse import Horse
+from .performance_historique import PerformanceHistorique
 from .jockey import Jockey
 from .trainer import Trainer
 from .partant import Partant
@@ -29,6 +30,7 @@ __all__ = [
     "Reunion",
     "Course",
     "Horse",
+    "PerformanceHistorique",
     "Jockey",
     "Trainer",
     "Partant",
