@@ -12,11 +12,25 @@ SET NAMES utf8mb4;
 -- ============================
 -- Password for all test users: "Password123!"
 -- Hash generated with bcrypt (cost factor 12)
-INSERT INTO users (email, password_hash, first_name, last_name, role, initial_bankroll, current_bankroll, preferred_strategy, is_active) VALUES
-('admin@pronoturf.ai', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Admin', 'PronoTurf', 'admin', 10000.00, 10000.00, 'kelly', TRUE),
-('subscriber@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Jean', 'Dupont', 'subscriber', 1000.00, 1000.00, 'flat', TRUE),
-('guest@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Marie', 'Martin', 'guest', 500.00, 500.00, 'flat', TRUE),
-('test@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Test', 'User', 'subscriber', 2000.00, 2000.00, 'martingale', TRUE);
+INSERT INTO users (
+    email,
+    password_hash,
+    first_name,
+    last_name,
+    role,
+    telegram_id,
+    telegram_notifications_enabled,
+    telegram_linked_at,
+    email_notifications_enabled,
+    initial_bankroll,
+    current_bankroll,
+    preferred_strategy,
+    is_active
+) VALUES
+('admin@pronoturf.ai', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Admin', 'PronoTurf', 'admin', 'ADMIN_TELEGRAM_ID', TRUE, '2025-01-01 00:00:00', TRUE, 10000.00, 10000.00, 'kelly', TRUE),
+('subscriber@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Jean', 'Dupont', 'subscriber', NULL, FALSE, NULL, TRUE, 1000.00, 1000.00, 'flat', TRUE),
+('guest@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Marie', 'Martin', 'guest', NULL, FALSE, NULL, TRUE, 500.00, 500.00, 'flat', TRUE),
+('test@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7fOr4hQd8C', 'Test', 'User', 'subscriber', NULL, FALSE, NULL, TRUE, 2000.00, 2000.00, 'martingale', TRUE);
 
 -- ============================
 -- Seed User Preferences
