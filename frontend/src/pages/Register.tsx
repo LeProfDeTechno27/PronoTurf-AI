@@ -2,9 +2,94 @@
 // This source code is proprietary and confidential.
 // Unauthorized copying, modification, distribution, or derivative works are strictly prohibited without prior written consent.
 
-import { Link } from 'react-router-dom'
+import { ChangeEvent, FormEvent, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { isAxiosError } from 'axios'
+
+import { registerUser } from '../services/auth'
+
+type RegisterFormState = {
+  firstName: string
+  lastName: string
+  email: string
+  password: string
+  confirmPassword: string
+  acceptTerms: boolean
+}
+
+const initialState: RegisterFormState = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+  acceptTerms: false,
+}
 
 export default function Register() {
+  const navigate = useNavigate()
+  const [formState, setFormState] = useState<RegisterFormState>(initialState)
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const { name, value, type, checked } = event.target
+    setFormState((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value,
+    }))
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setStatusMessage(null)
+
+    if (formState.password !== formState.confirmPassword) {
+      setStatusMessage({ type: 'error', text: 'Les mots de passe ne correspondent pas.' })
+      return
+    }
+
+    if (!formState.acceptTerms) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Vous devez accepter les conditions d’utilisation pour continuer.',
+      })
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await registerUser({
+        email: formState.email.trim(),
+        password: formState.password,
+        first_name: formState.firstName.trim() || undefined,
+        last_name: formState.lastName.trim() || undefined,
+      })
+
+      setStatusMessage({
+        type: 'success',
+        text: 'Votre compte a été créé avec succès. Vous allez être redirigé vers la connexion.',
+      })
+
+      setTimeout(() => {
+        navigate('/login')
+      }, 1600)
+    } catch (error) {
+      let message = "Impossible de finaliser l'inscription. Veuillez réessayer."
+
+      if (isAxiosError(error)) {
+        const detail = error.response?.data?.detail
+        if (typeof detail === 'string' && detail.trim().length > 0) {
+          message = detail
+        }
+      }
+
+      setStatusMessage({ type: 'error', text: message })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-6 py-16">
       <div className="pointer-events-none absolute inset-0">
@@ -45,7 +130,7 @@ export default function Register() {
               Activez votre espace personnel et synchronisez vos préférences.
             </p>
           </div>
-          <form className="space-y-6" action="#" method="POST">
+          <form className="space-y-6" onSubmit={handleSubmit} noValidate>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="text-left">
                 <label htmlFor="first-name" className="mb-2 block text-sm font-semibold text-slate-200">
@@ -53,11 +138,13 @@ export default function Register() {
                 </label>
                 <input
                   id="first-name"
-                  name="first-name"
+                  name="firstName"
                   type="text"
                   autoComplete="given-name"
                   className="input"
                   placeholder="Jean"
+                  value={formState.firstName}
+                  onChange={handleChange}
                 />
               </div>
               <div className="text-left">
@@ -66,11 +153,13 @@ export default function Register() {
                 </label>
                 <input
                   id="last-name"
-                  name="last-name"
+                  name="lastName"
                   type="text"
                   autoComplete="family-name"
                   className="input"
                   placeholder="Dupont"
+                  value={formState.lastName}
+                  onChange={handleChange}
                 />
               </div>
               <div className="sm:col-span-2 text-left">
@@ -85,6 +174,8 @@ export default function Register() {
                   required
                   className="input"
                   placeholder="jean.dupont@example.com"
+                  value={formState.email}
+                  onChange={handleChange}
                 />
               </div>
               <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
@@ -100,6 +191,8 @@ export default function Register() {
                     required
                     className="input"
                     placeholder="••••••••"
+                    value={formState.password}
+                    onChange={handleChange}
                   />
                 </div>
                 <div className="text-left">
@@ -108,12 +201,14 @@ export default function Register() {
                   </label>
                   <input
                     id="password-confirm"
-                    name="password-confirm"
+                    name="confirmPassword"
                     type="password"
                     autoComplete="new-password"
                     required
                     className="input"
                     placeholder="••••••••"
+                    value={formState.confirmPassword}
+                    onChange={handleChange}
                   />
                 </div>
               </div>
@@ -122,10 +217,12 @@ export default function Register() {
             <label className="flex items-start gap-3 text-sm text-slate-300">
               <input
                 id="terms"
-                name="terms"
+                name="acceptTerms"
                 type="checkbox"
                 required
                 className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-400"
+                checked={formState.acceptTerms}
+                onChange={handleChange}
               />
               <span>
                 J’accepte les{' '}
@@ -135,8 +232,26 @@ export default function Register() {
               </span>
             </label>
 
-            <button type="submit" className="btn btn-primary w-full py-3 text-lg">
-              S'inscrire
+            {statusMessage && (
+              <p
+                className={`rounded-xl border px-4 py-3 text-sm ${
+                  statusMessage.type === 'error'
+                    ? 'border-red-500/40 bg-red-500/10 text-red-100'
+                    : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                }`}
+                role="status"
+                aria-live="polite"
+              >
+                {statusMessage.text}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className="btn btn-primary w-full py-3 text-lg disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Création du compte…' : "S'inscrire"}
             </button>
           </form>
 

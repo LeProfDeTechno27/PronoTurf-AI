@@ -103,6 +103,25 @@ npm run build
 docker compose config
 ```
 
+### Dépannage MySQL
+
+Si le conteneur `mysql` se bloque avec des messages du type :
+
+```
+Cannot create redo log files because data files are corrupt or the database was not shut down cleanly
+```
+
+c'est que le volume `mysql_data` contient des fichiers InnoDB corrompus (souvent après un arrêt forcé ou un changement de
+machine). Vous pouvez réinitialiser proprement la base locale (les données seront recréées à partir de `database/init.sql` et
+`database/seed.sql`) via :
+
+```bash
+./scripts/reset_mysql.sh
+```
+
+Le script exécute `docker compose down --volumes --remove-orphans`, supprime le volume `mysql_data` puis relance uniquement MySQL.
+Une fois le service `mysql` en bonne santé, redémarrez le reste de la stack avec `docker compose up -d`.
+
 ## Sécurité
 
 Bonnes pratiques en place :

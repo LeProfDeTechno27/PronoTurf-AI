@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 -- ============================
 CREATE TABLE IF NOT EXISTS hippodromes (
     hippodrome_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(10) UNIQUE NOT NULL,
+    code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(200) NOT NULL,
     city VARCHAR(100),
     country VARCHAR(50) DEFAULT 'France',
