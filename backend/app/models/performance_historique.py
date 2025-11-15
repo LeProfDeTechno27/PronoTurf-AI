@@ -1,7 +1,7 @@
 from sqlalchemy import Column, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 
-from app.db.base_class import Base
+from app.core.database import Base
 
 
 class PerformanceHistorique(Base):
